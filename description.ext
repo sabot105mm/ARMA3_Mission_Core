@@ -1,0 +1,978 @@
+// UI base classes - defined in full here so every dialog renders correctly. Do NOT inherit from
+// engine RscText/RscButton/RscListBox via bare forward declarations (class RscText;) - that only
+// creates an empty stub with no properties ("no type entry" warnings, invisible controls).
+class RscText {
+    type = 0; idc = -1; x = 0; y = 0; w = 0.1; h = 0.04;
+    style = 0; text = ""; font = "RobotoCondensed"; sizeEx = 0.04; shadow = 0;
+    colorText[] = {1,1,1,1}; colorBackground[] = {0,0,0,0};
+};
+class RscButton: RscText {
+    type = 1; style = 2;
+    colorText[] = {1,1,1,1}; colorBackground[] = {0.35,0.35,0.35,1};
+    colorDisabled[] = {0.4,0.4,0.4,1}; colorTextDisabled[] = {0.5,0.5,0.5,1};
+    colorBackgroundActive[] = {0.55,0.55,0.55,1}; colorBackgroundDisabled[] = {0.15,0.15,0.15,0.5};
+    colorFocused[] = {0,0,0,0};
+    offsetX = 0; offsetY = 0; offsetPressedX = 0; offsetPressedY = 0;
+    borderSize = 0; colorShadow[] = {0,0,0,0}; colorBorder[] = {0,0,0,0};
+    soundEnter[] = {"",0.1,1}; soundPush[] = {"",0.1,1}; soundClick[] = {"",0.1,1}; soundEscape[] = {"",0.1,1};
+};
+class RscCheckbox: RscText {
+    type = 4;
+    style = 0;
+    checked = 0;
+    width = 0.025;
+    height = 0.025;
+    text = "";
+    colorText[] = {0.9,0.8,0.4,1};
+    colorBackground[] = {0,0,0,0};
+    colorChecked[] = {0.6,0.9,0.4,1};
+    colorCheckedBackground[] = {0,0,0,0.4};
+    colorDisabled[] = {0.4,0.4,0.4,0.8};
+    // Placeholder values silence the engine's checkbox-template warnings ("No entry ... colorSelect /
+    // soundSelect / ComboScrollBar / wholeHeight / maxHistoryDelay / arrowEmpty / arrowFull") that Arma
+    // emits on every load for any CT_CHECKBOX defined in description.ext. A single checkbox never uses
+    // these, but the engine probes them from the base config; defining them here stops the noise.
+    colorSelect[] = {0,0,0,1};
+    soundSelect[] = {"",0.1,1};
+    soundExpand[] = {"",0.1,1};
+    soundCollapse[] = {"",0.1,1};
+    maxHistoryDelay = 1;
+    wholeHeight = 0;
+    arrowEmpty = "\A3\ui_f\data\gui\cfg\scrollbar\arrowEmpty_ca.paa";
+    arrowFull = "\A3\ui_f\data\gui\cfg\scrollbar\arrowFull_ca.paa";
+    class ComboScrollBar: RscText
+    {
+        class ScrollBar: RscText
+        {
+            color[] = {1,1,1,1};
+            width = 0.016;
+            height = 0.016;
+            borderSize = 0;
+            thumb[] = {1,1,1,1};
+            arrowEmpty[] = {1,1,1,1};
+            arrowFull[] = {1,1,1,1};
+            border[] = {1,1,1,1};
+        };
+    };
+    font = "RobotoCondensed";
+    sizeEx = 0.02;
+    soundEnter[] = {"",0.1,1}; soundPush[] = {"",0.1,1}; soundClick[] = {"",0.1,1}; soundEscape[] = {"",0.1,1};
+};
+class RscListBox: RscText {
+    type = 5; style = 0;
+    color[] = {1,1,1,1}; colorSelect[] = {0,0,0,1};
+    colorBackground[] = {0,0,0,0.5}; colorSelectBackground[] = {0.3,0.6,0.8,0.7};
+    colorScrollbar[] = {0.5,0.5,0.5,0.6}; colorDisabled[] = {0.5,0.5,0.5,1};
+    font = "RobotoCondensed"; sizeEx = 0.03; rowHeight = 0.035;
+    soundSelect[] = {"", 0.1, 1};
+    maxHistoryDelay = 1;
+    arrowEmpty = "\A3\ui_f\data\gui\cfg\scrollbar\arrowEmpty_ca.paa";
+    arrowFull = "\A3\ui_f\data\gui\cfg\scrollbar\arrowFull_ca.paa";
+    border = "\A3\ui_f\data\gui\cfg\scrollbar\border_ca.paa";
+    thumb = "\A3\ui_f\data\gui\cfg\scrollbar\thumb_ca.paa";
+    class ListScrollBar: RscText {
+        color[] = {0.5,0.5,0.5,0.6};
+        colorActive[] = {0.6,0.6,0.6,1};
+        colorDisabled[] = {0.3,0.3,0.3,0.4};
+        thumb = "\A3\ui_f\data\gui\cfg\scrollbar\thumb_ca.paa";
+        arrowEmpty = "\A3\ui_f\data\gui\cfg\scrollbar\arrowEmpty_ca.paa";
+        arrowFull = "\A3\ui_f\data\gui\cfg\scrollbar\arrowFull_ca.paa";
+        border = "\A3\ui_f\data\gui\cfg\scrollbar\border_ca.paa";
+        shadow = 0;
+        scrollSpeed = 0.05;
+        width = 0;
+        height = 0;
+        autoScrollEnabled = 0;
+    };
+};
+
+class RscStructuredText: RscText {
+    type = 13; style = 0;
+    colorBackground[] = {0,0,0,0};
+    sizeEx = 0.032;
+    size = 0.032;
+    text = "";
+    shadow = 0;
+};
+
+class Header { gameType = Coop; minPlayers = 1; maxPlayers = 16; };
+author = "Dynamic Operations";
+respawn = "NONE";
+respawnDelay = 10;
+respawnTemplates[] = {};
+joinUnassigned = 0;
+class DYNOPS_SpawnSelector
+{
+    idd = 1500;
+    movingEnable = 1;
+    onLoad = "uiNamespace setVariable ['DYNOPS_SpawnSelector', _this select 0]";
+    class Controls
+    {
+        class Title: RscText
+        {
+            idc = 1501;
+            x = 0.3; y = 0.2; w = 0.4; h = 0.04;
+            text = "SELECT SPAWN LOCATION";
+            colorBackground[] = {0,0,0,0.8};
+        };
+        class List: RscListBox
+        {
+            idc = 1502;
+            x = 0.3; y = 0.25; w = 0.4; h = 0.4;
+        };
+        class SpawnBtn: RscButton
+        {
+            idc = 1503;
+            x = 0.4; y = 0.67; w = 0.2; h = 0.04;
+            text = "SPAWN";
+            action = "[] call MISSION_CORE_fnc_onSpawnSelect;";
+        };
+        class CancelBtn: RscButton
+        {
+            idc = 1504;
+            x = 0.3; y = 0.72; w = 0.4; h = 0.04;
+            text = "CANCEL";
+            action = "closeDialog 0;";
+        };
+    };
+};
+
+class DYNOPS_Recruitment
+{
+    idd = 1510;
+    movingEnable = 1;
+    onLoad = "uiNamespace setVariable ['DYNOPS_Recruitment', _this select 0]";
+    class Controls
+    {
+        class Title: RscText
+        {
+            idc = 1511;
+            x = 0.3; y = 0.2; w = 0.4; h = 0.04;
+            text = "RECRUIT UNITS";
+            colorBackground[] = {0,0,0,0.8};
+        };
+        class List: RscListBox
+        {
+            idc = 1512;
+            x = 0.3; y = 0.25; w = 0.4; h = 0.35;
+            onLBDblClick = "[_this select 0, _this select 1] call MISSION_CORE_fnc_onRecruit;";
+        };
+        class CloseBtn: RscButton
+        {
+            idc = 1513;
+            x = 0.3; y = 0.62; w = 0.4; h = 0.04;
+            text = "CLOSE";
+            action = "closeDialog 0;";
+        };
+    };
+};
+
+class DYNOPS_DefenseBuilder
+{
+    idd = 1520;
+    movingEnable = 0;
+    onLoad = "uiNamespace setVariable ['DYNOPS_DefenseBuilder', _this select 0];";
+    onUnload = "call MISSION_CORE_fnc_exitDefenseBuilder;";
+    class Controls
+    {
+        class PanelBg: RscText
+        {
+            idc = -1;
+            x = 0; y = 0.08; w = 0.36; h = 0.84;
+            text = "";
+            colorBackground[] = {0.02,0.03,0.05,0.92};
+        };
+        class Title: RscText
+        {
+            idc = 1521;
+            x = 0.01; y = 0.09; w = 0.34; h = 0.035;
+            text = "DEFENSE BUILDER";
+            colorText[] = {0.8,0.75,0.3,1};
+            colorBackground[] = {0,0,0,0};
+        };
+        class Points: RscText
+        {
+            idc = 1522;
+            x = 0.01; y = 0.13; w = 0.34; h = 0.03;
+            text = "POINTS: 0";
+            colorText[] = {0.5,0.9,0.5,1};
+            colorBackground[] = {0,0,0,0};
+        };
+        class CatBunker: RscButton
+        {
+            idc = 1530;
+            x = 0.01; y = 0.175; w = 0.066; h = 0.04;
+            text = "BUNKER";
+            sizeEx = 0.025;
+            colorBackground[] = {0.16,0.35,0.22,0.95};
+            action = "'bunker' call MISSION_CORE_fnc_builderSelectCategory;";
+        };
+        class CatTank: RscButton
+        {
+            idc = 1531;
+            x = 0.078; y = 0.175; w = 0.05; h = 0.04;
+            text = "TANK";
+            sizeEx = 0.025;
+            colorBackground[] = {0.16,0.35,0.22,0.95};
+            action = "'tank' call MISSION_CORE_fnc_builderSelectCategory;";
+        };
+        class CatEmplace: RscButton
+        {
+            idc = 1532;
+            x = 0.13; y = 0.175; w = 0.05; h = 0.04;
+            text = "GUN";
+            sizeEx = 0.025;
+            colorBackground[] = {0.16,0.35,0.22,0.95};
+            action = "'emplace' call MISSION_CORE_fnc_builderSelectCategory;";
+        };
+        class CatBarrier: RscButton
+        {
+            idc = 1533;
+            x = 0.182; y = 0.175; w = 0.055; h = 0.04;
+            text = "WALL";
+            sizeEx = 0.025;
+            colorBackground[] = {0.16,0.35,0.22,0.95};
+            action = "'barrier' call MISSION_CORE_fnc_builderSelectCategory;";
+        };
+        class CatSandbag: RscButton
+        {
+            idc = 1534;
+            x = 0.239; y = 0.175; w = 0.055; h = 0.04;
+            text = "BAG";
+            sizeEx = 0.025;
+            colorBackground[] = {0.16,0.35,0.22,0.95};
+            action = "'sandbag' call MISSION_CORE_fnc_builderSelectCategory;";
+        };
+        class ItemList: RscListBox
+        {
+            idc = 1535;
+            x = 0.01; y = 0.23; w = 0.34; h = 0.55;
+            onLBSelChanged = "_this call MISSION_CORE_fnc_builderSelectItem;";
+        };
+        class ItemCost: RscText
+        {
+            idc = 1536;
+            x = 0.01; y = 0.79; w = 0.34; h = 0.03;
+            text = "COST: -";
+            colorText[] = {0.9,0.85,0.4,1};
+            colorBackground[] = {0,0,0,0};
+        };
+        class HelpText: RscText
+        {
+            idc = 1537;
+            x = 0.01; y = 0.825; w = 0.34; h = 0.09;
+            text = "WASD: move   DRAG: look   WHEEL: zoom   LMB: place   RMB: rotate   ESC: exit";
+            colorText[] = {0.7,0.7,0.7,1};
+            colorBackground[] = {0,0,0,0};
+        };
+    };
+};
+
+class DYNOPS_HelpMenu
+{
+    idd = 1570;
+    movingEnable = 1;
+    onLoad = "[] call MISSION_CORE_fnc_helpMenuLoad";
+    class Controls
+    {
+        class PanelBg: RscText
+        {
+            idc = -1;
+            x = 0.1; y = 0.08; w = 0.8; h = 0.84;
+            colorBackground[] = {0.02,0.03,0.05,0.94};
+        };
+        class Title: RscText
+        {
+            idc = 1571;
+            x = 0.12; y = 0.10; w = 0.76; h = 0.04;
+            text = "FIELD MANUAL";
+            colorText[] = {0.8,0.75,0.3,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.045;
+        };
+        class TopicList: RscListBox
+        {
+            idc = 1572;
+            x = 0.12; y = 0.16; w = 0.22; h = 0.70;
+            onLBSelChanged = "_this call MISSION_CORE_fnc_helpMenuSelect;";
+        };
+        class Body: RscStructuredText
+        {
+            idc = 1573;
+            x = 0.36; y = 0.16; w = 0.52; h = 0.70;
+            text = "";
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.032;
+            size = 0.032;
+            class Attributes
+            {
+                font = "PuristaLight";
+            };
+        };
+        class CloseBtn: RscButton
+        {
+            idc = 1574;
+            x = 0.36; y = 0.875; w = 0.52; h = 0.035;
+            text = "CLOSE";
+            action = "closeDialog 0;";
+        };
+    };
+};
+
+class DYNOPS_RecruitMenu
+{
+    idd = 1600;
+    movingEnable = 0;
+    onLoad = "uiNamespace setVariable ['DYNOPS_RecruitMenu', _this select 0]; [] call MISSION_CORE_fnc_recruitMenuLoad;";
+    onUnload = "[] call MISSION_CORE_fnc_recruitMenuExit;";
+    class Controls
+    {
+        class Background: RscText
+        {
+            idc = -1;
+            x = 0.15; y = 0.1; w = 0.7; h = 0.82;
+            colorBackground[] = {0.02,0.03,0.05,0.94};
+        };
+        class ManpowerText: RscText
+        {
+            idc = 1604;
+            x = 0.3; y = 0.12; w = 0.3; h = 0.035;
+            text = "MANPOWER: 0";
+            colorText[] = {0.5,0.9,0.5,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.035;
+        };
+        class RefreshBtn: RscButton
+        {
+            idc = 1607;
+            x = 0.17; y = 0.115; w = 0.11; h = 0.028;
+            text = "REFRESH";
+            sizeEx = 0.018;
+            colorBackground[] = {0.3,0.3,0.4,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitManualRefresh;";
+        };
+        class Title: RscText
+        {
+            idc = 1606;
+            x = 0.17; y = 0.16; w = 0.56; h = 0.04;
+            text = "RECRUIT FORCES";
+            colorText[] = {0.8,0.75,0.3,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.04;
+        };
+        class TabPlayer: RscButton
+        {
+            idc = 1601;
+            x = 0.17; y = 0.21; w = 0.18; h = 0.04;
+            text = "PLAYER GROUP";
+            sizeEx = 0.025;
+            colorBackground[] = {0.3,0.5,0.2,0.95};
+            action = "0 call MISSION_CORE_fnc_recruitMenuTab;";
+        };
+        class TabDefend: RscButton
+        {
+            idc = 1602;
+            x = 0.36; y = 0.21; w = 0.18; h = 0.04;
+            text = "GARRISON";
+            sizeEx = 0.025;
+            colorBackground[] = {0.2,0.3,0.5,0.95};
+            action = "1 call MISSION_CORE_fnc_recruitMenuTab;";
+        };
+        class TabAttack: RscButton
+        {
+            idc = 1603;
+            x = 0.55; y = 0.21; w = 0.18; h = 0.04;
+            text = "ATTACK";
+            sizeEx = 0.025;
+            colorBackground[] = {0.5,0.2,0.2,0.95};
+            action = "2 call MISSION_CORE_fnc_recruitMenuTab;";
+        };
+        class TabSeparator: RscText
+        {
+            idc = -1;
+            x = 0.17; y = 0.26; w = 0.56; h = 0.005;
+            colorBackground[] = {0.4,0.4,0.4,0.6};
+        };
+
+        // --- PLAYER TAB CONTROLS (IDC 1610-1619) ---
+        class PlayerPanel: RscText
+        {
+            idc = 1610;
+            x = 0.17; y = 0.27; w = 0.56; h = 0.58;
+            colorBackground[] = {0,0,0,0};
+        };
+        class PlayerLabel: RscText
+        {
+            idc = 1611;
+            x = 0.18; y = 0.275; w = 0.54; h = 0.03;
+            text = "Double-click a unit to recruit into your squad.";
+            colorText[] = {0.7,0.7,0.7,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.025;
+        };
+        class PlayerList: RscListBox
+        {
+            idc = 1612;
+            x = 0.18; y = 0.31; w = 0.54; h = 0.49;
+            onLBSelChanged = "_this call MISSION_CORE_fnc_recruitPlayerSelect;";
+        };
+        class PlayerCost: RscText
+        {
+            idc = 1614;
+            x = 0.18; y = 0.81; w = 0.35; h = 0.03;
+            text = "COST: -";
+            colorText[] = {0.9,0.85,0.4,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.03;
+        };
+        class PlayerRecruitBtn: RscButton
+        {
+            idc = 1613;
+            x = 0.55; y = 0.81; w = 0.17; h = 0.035;
+            text = "RECRUIT";
+            sizeEx = 0.025;
+            colorBackground[] = {0.16,0.35,0.22,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitPlayerUnit;";
+        };
+
+        // --- GARRISON TAB CONTROLS (IDC 1620-1625, 1641-1659) ---
+        class DefendPanel: RscText
+        {
+            idc = 1620;
+            x = 0.17; y = 0.27; w = 0.56; h = 0.58;
+            colorBackground[] = {0,0,0,0};
+        };
+        class DefendLabel: RscText
+        {
+            idc = 1621;
+            x = 0.18; y = 0.275; w = 0.54; h = 0.03;
+            text = "Garrison manager - select a BLUFOR marker.";
+            colorText[] = {0.7,0.7,0.7,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.025;
+        };
+        class DefendMarkerLabel: RscText
+        {
+            idc = 1651;
+            x = 0.18; y = 0.315; w = 0.25; h = 0.03;
+            text = "BLUFOR MARKERS";
+            colorText[] = {0.6,0.8,1,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.022;
+        };
+        class DefendMarkerList: RscListBox
+        {
+            idc = 1623;
+            x = 0.18; y = 0.35; w = 0.25; h = 0.17;
+            onLBSelChanged = "_this call MISSION_CORE_fnc_recruitGarrisonMarkerSelect;";
+        };
+        class GarrisonStatusText: RscText
+        {
+            idc = 1650;
+            x = 0.18; y = 0.545; w = 0.25; h = 0.03;
+            text = "";
+            colorText[] = {0.8,0.8,0.8,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.022;
+        };
+        class GarrisonListLabel: RscText
+        {
+            idc = 1652;
+            x = 0.185; y = 0.385; w = 0.3; h = 0.03;
+            text = "CURRENT GARRISON (select to remove)";
+            colorText[] = {0.9,0.6,0.5,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.02;
+        };
+        class GarrisonList: RscListBox
+        {
+            idc = 1641;
+            x = 0.18; y = 0.615; w = 0.25; h = 0.13;
+        };
+        class GarrisonRemoveBtn: RscButton
+        {
+            idc = 1642;
+            x = 0.18; y = 0.775; w = 0.12; h = 0.03;
+            text = "REMOVE";
+            sizeEx = 0.02;
+            colorBackground[] = {0.5,0.15,0.15,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitGarrisonRemove;";
+        };
+        class GarrisonRefreshBtn: RscButton
+        {
+            idc = 1659;
+            x = 0.31; y = 0.775; w = 0.12; h = 0.03;
+            text = "REFRESH";
+            sizeEx = 0.02;
+            colorBackground[] = {0.3,0.3,0.4,0.95};
+            action = "call MISSION_CORE_fnc_recruitGarrisonRefreshDetail;";
+        };
+        class DefendCost: RscText
+        {
+            idc = 1625;
+            x = 0.18; y = 0.815; w = 0.35; h = 0.03;
+            text = "COST: -";
+            colorText[] = {0.9,0.85,0.4,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.03;
+        };
+        // Right column: add squad / add vehicle
+        class DefendSquadLabel: RscText
+        {
+            idc = 1653;
+            x = 0.615; y = 0.315; w = 0.18; h = 0.03;
+            text = "SQUAD TEMPLATE";
+            colorText[] = {0.6,0.8,1,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.022;
+        };
+        class DefendSquadList: RscListBox
+        {
+            idc = 1622;
+            x = 0.46; y = 0.35; w = 0.27; h = 0.17;
+            onLBSelChanged = "_this call MISSION_CORE_fnc_recruitGarrisonSquadSelect;";
+        };
+        class DefendDeployBtn: RscButton
+        {
+            idc = 1624;
+            x = 0.46; y = 0.545; w = 0.27; h = 0.03;
+            text = "ADD SQUAD";
+            sizeEx = 0.022;
+            colorBackground[] = {0.16,0.35,0.22,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitGarrisonDeploy;";
+        };
+        class GarrisonVehiclesLabel: RscText
+        {
+            idc = 1654;
+            x = 0.185; y = 0.705; w = 0.28; h = 0.03;
+            text = "VEHICLES / SUPPORT";
+            colorText[] = {0.6,0.8,1,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.022;
+        };
+        class GarrisonVehList: RscListBox
+        {
+            idc = 1645;
+            x = 0.46; y = 0.615; w = 0.27; h = 0.11;
+        };
+        class GarrisonVehKindLabel: RscText
+        {
+            idc = 1648;
+            x = 0.46; y = 0.73; w = 0.27; h = 0.03;
+            text = "KIND: TANK";
+            colorText[] = {0.8,0.8,0.3,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.022;
+        };
+        class GarrisonVehKindBtn: RscButton
+        {
+            idc = 1647;
+            x = 0.46; y = 0.775; w = 0.17; h = 0.03;
+            text = "CYCLE KIND";
+            sizeEx = 0.02;
+            colorBackground[] = {0.35,0.3,0.2,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitGarrisonCycleKind;";
+        };
+        class GarrisonAddVehBtn: RscButton
+        {
+            idc = 1646;
+            x = 0.64; y = 0.775; w = 0.09; h = 0.03;
+            text = "ADD";
+            sizeEx = 0.02;
+            colorBackground[] = {0.16,0.35,0.22,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitGarrisonAddVeh;";
+        };
+        class GarrisonPrioritizePortBtn: RscButton
+        {
+            idc = 1660;
+            x = 0.46; y = 0.815; w = 0.27; h = 0.03;
+            text = "PRIORITIZE PORT FOR TANK";
+            sizeEx = 0.017;
+            colorBackground[] = {0.3,0.45,0.3,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitGarrisonPrioritizePort;";
+        };
+        class GarrisonRefillCheck: RscCheckbox
+        {
+            idc = 1662;
+            type = 4;
+            x = 0.46; y = 0.85; w = 0.27; h = 0.03;
+            checked = 0;
+            text = "REFILL GARRISON ON DEATH (4x MP)";
+            sizeEx = 0.017;
+            onCheckedChanged = "_this param [1,0] call MISSION_CORE_fnc_recruitGarrisonRefillToggle;";
+        };
+        class GarrisonNoteText: RscText
+        {
+            idc = 1655;
+            x = 0.185; y = 0.85; w = 0.5; h = 0.03;
+            text = "Tanks arrive by depot/port delivery (4 MP). Add/remove anytime.";
+            colorText[] = {0.6,0.4,0.4,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.02;
+        };
+
+        // --- ATTACK TAB CONTROLS (IDC 1630-1649) ---
+        class AttackPanel: RscText
+        {
+            idc = 1630;
+            x = 0.17; y = 0.27; w = 0.56; h = 0.58;
+            colorBackground[] = {0,0,0,0};
+        };
+        class AttackLabel: RscText
+        {
+            idc = 1631;
+            x = 0.18; y = 0.275; w = 0.54; h = 0.03;
+            text = "Select a target and squad, then set waypoints and deploy.";
+            colorText[] = {0.7,0.7,0.7,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.025;
+        };
+        class AttackTargetLabel: RscText
+        {
+            idc = 1661;
+            x = 0.18; y = 0.31; w = 0.26; h = 0.03;
+            text = "TARGET (ENEMY)";
+            colorText[] = {1,0.5,0.5,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.025;
+        };
+        class AttackTargetList: RscListBox
+        {
+            idc = 1632;
+            x = 0.18; y = 0.34; w = 0.26; h = 0.22;
+        };
+        class AttackClickMapBtn: RscButton
+        {
+            idc = 1633;
+            x = 0.18; y = 0.57; w = 0.26; h = 0.035;
+            text = "CLICK MAP TO SELECT";
+            sizeEx = 0.022;
+            colorBackground[] = {0.4,0.2,0.2,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitAttackClickMap;";
+        };
+        class AttackSquadLabel: RscText
+        {
+            idc = 1662;
+            x = 0.46; y = 0.31; w = 0.27; h = 0.03;
+            text = "SQUAD TEMPLATE";
+            colorText[] = {0.6,0.8,1,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.025;
+        };
+        class AttackSquadList: RscListBox
+        {
+            idc = 1634;
+            x = 0.46; y = 0.34; w = 0.27; h = 0.22;
+        };
+        class AttackWPBtn: RscButton
+        {
+            idc = 1635;
+            x = 0.46; y = 0.57; w = 0.17; h = 0.035;
+            text = "SET WAYPOINTS";
+            sizeEx = 0.022;
+            colorBackground[] = {0.3,0.3,0.5,0.95};
+            action = "[] spawn MISSION_CORE_fnc_recruitAttackOpenWP;";
+        };
+        class AttackWPCount: RscText
+        {
+            idc = 1636;
+            x = 0.64; y = 0.57; w = 0.09; h = 0.035;
+            text = "0 WPs";
+            colorText[] = {0.7,0.7,1,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.022;
+        };
+
+        class AttackRERecruitLabel: RscText
+        {
+            idc = 1663;
+            x = 0.18; y = 0.615; w = 0.26; h = 0.03;
+            text = "RE-RECRUIT WIPED";
+            colorText[] = {1,0.7,0.3,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.025;
+        };
+        class AttackRERecruitList: RscListBox
+        {
+            idc = 1638;
+            x = 0.18; y = 0.645; w = 0.54; h = 0.13;
+        };
+        class AttackRERecruitBtn: RscButton
+        {
+            idc = 1639;
+            x = 0.46; y = 0.785; w = 0.17; h = 0.03;
+            text = "RE-RECRUIT";
+            sizeEx = 0.022;
+            colorBackground[] = {0.4,0.3,0.15,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitAttackRERecruit;";
+        };
+
+        class AttackCost: RscText
+        {
+            idc = 1640;
+            x = 0.18; y = 0.82; w = 0.35; h = 0.03;
+            text = "COST: -";
+            colorText[] = {0.9,0.85,0.4,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.03;
+        };
+        class AttackDeployBtn: RscButton
+        {
+            idc = 1637;
+            x = 0.55; y = 0.82; w = 0.17; h = 0.035;
+            text = "DEPLOY";
+            sizeEx = 0.025;
+            colorBackground[] = {0.5,0.15,0.15,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitAttackDeploy;";
+        };
+
+        class CloseBtn: RscButton
+        {
+            idc = 1605;
+            x = 0.67; y = 0.12; w = 0.15; h = 0.035;
+            text = "CLOSE";
+            sizeEx = 0.025;
+            action = "closeDialog 0;";
+        };
+    };
+};
+
+BLUFOR_FACTION = "BLU_F";
+REDFOR_FACTION = "OPF_F";
+B_MAX_TANKS = 4;
+O_MAX_TANKS = 4;
+DEFENSE_BUILD_POINTS_DEFAULT = 10000;
+DEFENSE_BUILD_POINTS_CAPTURE_REWARD = 50;
+
+class BLACKLIST {
+    class Units {
+        patterns[] = {"unarmed","Unarmed","Civilian","Citizen","Worker","Survivor","Hook"};
+    };
+    class Vehicles {
+        patterns[] = {"unarmed","Civilian","Quadbike","Van_02","Van_01"};
+    };
+    class Weapons {
+        patterns[] = {};
+    };
+};
+
+class LOCATION_TYPES {
+    class HQ        { prefix = "hq_";        type = "HQ";        priority = 1; };
+    class Airfield  { prefix = "airfield_";  type = "Airfield";  priority = 2; };
+    class Factory   { prefix = "factory_";   type = "Factory";   priority = 3; };
+    class Compound  { prefix = "compound_";  type = "Compound";  priority = 3; };
+    class Base      { prefix = "base_";      type = "Base";      priority = 2; };
+    class Town      { prefix = "town_";      type = "Town";      priority = 3; };
+    class Outpost   { prefix = "outpost_";   type = "Outpost";   priority = 4; };
+    class Depot     { prefix = "depot_";     type = "Depot";     priority = 4; };
+    class Port      { prefix = "port_";      type = "Port";      priority = 3; };
+};
+
+class DETECTION {
+    knowsAboutTrigger = 1.5;
+    detectionRadius = 500;
+    reinforceRadius = 800;
+};
+
+// === BALANCE TUNING (numbers only - tweak here, restart)
+// Mirrored verbatim from config\main.hpp -> read by MISSION_CORE_fnc_tune (fnc\fn_tune.sqf).
+class MISSION_CORE_TUNE {
+    footSquadRefMen = 6;
+    footSquadCapSquads = 10;
+
+    proxSpawnRadius = 700;
+    proxDespawnDist = 2500;
+    proxDespawnExhausted = 1500;
+    proxMaxActive = 6;
+    closeMarkerHysteresis = 50;
+
+    defenseRadius = 1800;
+    defenseRingsPerSide = 2;
+    defenseMinSpacing = 25;
+
+    houseSpawnRadius = 80;
+    houseDespawnRadius = 140;
+    houseMaxActive = 6;
+    houseMaxPerHouse = 2;
+
+    huntDetectRange = 1200;
+    huntFaintKnows = 0.1;
+    huntContactKnows = 0.7;
+    huntIntelDecay = 60;
+    huntSweepSeconds = 600;
+    huntReSpotRadius = 30;
+    huntRetargetEvery = 45;
+    huntClearEvery = 120;
+    huntMountDist = 700;
+    huntMaxContingents = 3;
+    huntSourceMaxRange = 2500;
+
+    armorLocalMbtImp3 = 2;
+    armorLocalMbtLo = 1;
+    armorOutpostMbtMax = 2;
+    armorReserveHold = 20;
+    armorGlobalFallback = 4;
+
+    tankBuildInterval = 600;
+    tankDepotCapSmall = 10;
+    tankDepotCapLarge = 20;
+    tankShipColumnMax = 3;
+    tankTravelSpeed = 18;
+    powerplantGlobalBonus = 0.2;
+    powerplantNeighborBonus = 0.5;
+    powerplantNeighborRange = 1500;
+    solarContribution = 0.25;
+
+    // ----- Manpower economy (ports -> bases -> requesting markers) -----
+    manpowerPerTickBase = 1;         // base manpower a port generates per 10s tick (6 men/min)
+    manpowerPortAccumTicks = 12;     // ticks a port accumulates before shipping to a requesting base
+    manpowerConvoySpeed = 14;        // abstract manpower convoy road speed m/s
+    manpowerPortSmall = 100;         // port full footprint (m) for the 0.3x size multiplier
+    manpowerPortLarge = 300;         // port full footprint (m) for the 0.9x size multiplier
+    manpowerPerUnit = 1;             // 1 manpower per soldier recruited
+    manpowerCaptureMult = 5;         // importance * this = manpower bonus on capture
+    manpowerPortPlayerIncome = 2;    // player pool: manpower per port per tick
+
+    captureHoldSeconds = 600;
+    retakeWindowSeconds = 1200;
+    contestedGraceSeconds = 45;
+    neighborRange = 4000;
+    retreatDespawnFallback = 300;
+
+    assaultCooldown = 2400;
+    assaultSupportRange = 1500;
+    assaultTankBase = 2;
+    assaultTankPerImp = 0.5;
+    assaultTankMax = 4;
+
+    replenishCapPerMarker = 5;
+    replenishRange = 2500;
+
+    objDefendRange = 2500;
+    objAttackNoteRange = 1500;
+    objNoteCooldown = 300;
+    objHouseThreatRadius = 600;
+    intelApproachRange = 400;
+
+    truckUnloadBuffer = 100;
+    truckUnloadPush = 50;
+    truckUnloadMaxPushes = 5;
+
+    // BLUFOR AI behavior (0 = disabled, 1 = enabled)
+    bluforAutoAttack = 0;
+    bluforPatrolMarkers = 0;
+
+    // Garrison tanks (player-recruited defenders) stay at their own marker: never pulled to
+    // ally-defend / counter-attack / assault. 1 = stay home (default), 0 = AI can re-task them.
+    garrisonStaysHome = 1;
+};
+
+class CfgDebriefing {
+    class Victory { title = "MISSION COMPLETE"; subtitle = "All objectives secured"; description = "Excellent work"; };
+    class Defeat { title = "MISSION FAILED"; subtitle = "BLUFOR forces eliminated"; description = "Better luck next time"; };
+};
+
+// Official notification templates (BIS_fnc_showNotification): [template, [title, description]]
+// Arguments fill %1 = title, %2 = description. Shown in the standard right-side notification boxes.
+class CfgNotifications {
+    class DynOps_Assault {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.9,0.3,0.2,1};
+        duration = 8;
+        priority = 7;
+        sound = "defaultNotification";
+    };
+    class DynOps_AssaultWarn {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.9,0.6,0.2,1};
+        duration = 8;
+        priority = 7;
+        sound = "defaultNotification";
+    };
+    class DynOps_AssaultRepelled {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.4,0.85,0.4,1};
+        duration = 8;
+        priority = 6;
+        sound = "defaultNotification";
+    };
+    class DynOps_MarkerOccupied {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {1,0.8,0.3,1};
+        duration = 8;
+        priority = 6;
+        sound = "defaultNotification";
+    };
+    class DynOps_MarkerLost {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.9,0.35,0.35,1};
+        duration = 8;
+        priority = 6;
+        sound = "defaultNotification";
+    };
+    class DynOps_MarkerCaptured {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.4,0.85,0.4,1};
+        duration = 8;
+        priority = 6;
+        sound = "defaultNotification";
+    };
+    class DynOps_ObjectiveAttack {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.85,0.55,0.2,1};
+        duration = 8;
+        priority = 7;
+        sound = "defaultNotification";
+    };
+    class DynOps_ObjectiveDefend {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.9,0.35,0.2,1};
+        duration = 8;
+        priority = 7;
+        sound = "defaultNotification";
+    };
+    class DynOps_ObjectiveComplete {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.4,0.85,0.4,1};
+        duration = 8;
+        priority = 6;
+        sound = "defaultNotification";
+    };
+    class DynOps_Intel {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.55,0.75,0.85,1};
+        duration = 15;
+        priority = 7;
+        sound = "defaultNotification";
+    };
+};

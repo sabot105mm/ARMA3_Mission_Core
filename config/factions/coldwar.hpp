@@ -1,0 +1,24 @@
+// Cold War - US Army vs Soviet Army
+class Faction_ColdWar {
+    class BLUFOR {
+        faction = "USA"; side = WEST;
+        class Groups {
+            class Squad_Standard { count = 8; units[] = {"B_Soldier_SL_F","B_Soldier_TL_F","B_soldier_AR_F","B_soldier_AR_F","B_soldier_A_F","B_soldier_LAT_F","B_medic_F","B_soldier_F"}; };
+            class Squad_Heavy  { count = 6; units[] = {"B_Soldier_SL_F","B_soldier_AR_F","B_soldier_AAR_F","B_medic_F","B_soldier_AAA_F","B_soldier_AT_F"}; };
+            class Team_Patrol  { count = 4; units[] = {"B_Soldier_TL_F","B_soldier_AR_F","B_soldier_LAT_F","B_medic_F"}; };
+            class Team_AT      { count = 3; units[] = {"B_Soldier_TL_F","B_soldier_AT_F","B_soldier_AAT_F"}; };
+            class Team_AA      { count = 3; units[] = {"B_Soldier_TL_F","B_soldier_AA_F","B_soldier_AAA_F"}; };
+            class Crew_Stationary { count = 2; units[] = {"B_soldier_F","B_soldier_F"}; };
+            class Vehicle_Transport { count = 2; units[] = {"B_Soldier_TL_F","B_soldier_F"}; vehicle = "B_Truck_01_transport_F"; };
+            class Vehicle_APC  { count = 3; units[] = {"B_Soldier_TL_F","B_soldier_F","B_soldier_F"}; vehicle = "B_APC_Wheeled_01_cannon_F"; };
+            class Vehicle_MBT  { count = 1; units[] = {"B_Soldier_TL_F"}; vehicle = "B_MBT_01_cannon_F"; };
+            class Vehicle_AA   { count = 2; units[] = {"B_Soldier_TL_F","B_soldier_F"}; vehicle = "B_APC_Tracked_01_AA_F"; };
+            class Air_Heli_Attack { count = 2; units[] = {"B_Helipilot_F","B_helipilot_F"}; vehicle = "B_Heli_Attack_01_F"; };
+            class Air_Heli_Transport { count = 4; units[] = {"B_Helipilot_F","B_soldier_F","B_soldier_F","B_soldier_F"}; vehicle = "B_Heli_Transport_01_F"; };
+            class Air_Plane_CAS { count = 1; units[] = {"B_Pilot_F"}; vehicle = "B_Plane_CAS_01_F"; };
+        };
+        class Stationary { machineguns[] = {"B_HMG_01_high_F","B_HMG_01_F"}; ATguns[] = {"B_static_AT_F"}; AAguns[] = {"B_static_AA_F"}; mortars[] = {"B_Mortar_01_F"}; };
+        class AmmoBoxes { boxTypes[] = {"Box_NATO_Wps_F","Box_NATO_Ammo_F","Box_NATO_Grenades_F","Box_NATO_Support_F"}; };
+        class Recruitment { units[] = {"B_Soldier_TL_F","B_soldier_AR_F","B_soldier_LAT_F","B_medic_F","B_soldier_F"}; };
+    };
+    class REDFOR { faction = "RU"; side = EAST; class Groups { class Squad_Standard { count = 8; units[] = {"O_Soldier_SL_F","O_Soldier_TL_F","O_soldier_AR_F","O_soldier_AR_F","O_soldier_A_F","O_soldier_LAT_F","O_medic_F","O_soldier_F"}; }; class Squad_Heavy { count = 6; units[] = {"O_Soldier_SL_F","O_soldier_AR_F","O_soldier_AAR_F","O_medic_F","O_soldier_AT_F"}; }; class Team_Patrol { count = 4; units[] = {"O_Soldier_TL_F","O_soldier_AR_F","O_soldier_LAT_F","O_medic_F"}; }; class Team_AT { count = 3; units[] = {"O_Soldier_TL_F","O_soldier_AT_F","O_soldier_AAT_F"}; }; class Team_AA { count = 3; units[] = {"O_Soldier_TL_F","O_soldier_AA_F","O_soldier_AAA_F"}; }; class Crew_Stationary { count = 2; units[] = {"O_soldier_F","O_soldier_F"}; }; class Vehicle_Transport { count = 2; units[] = {"O_Soldier_TL_F","O_soldier_F"}; vehicle = "O_Truck_02_transport_F"; }; class Vehicle_APC { count = 3; units[] = {"O_Soldier_TL_F","O_soldier_F","O_soldier_F"}; vehicle = "O_APC_Wheeled_02_rcws_F"; }; class Vehicle_MBT { count = 1; units[] = {"O_Soldier_TL_F"}; vehicle = "O_MBT_02_cannon_F"; }; class Vehicle_AA { count = 2; units[] = {"O_Soldier_TL_F","O_soldier_F"}; vehicle = "O_APC_Tracked_02_AA_F"; }; class Air_Heli_Attack { count = 2; units[] = {"O_Helipilot_F","O_helipilot_F"}; vehicle = "O_Heli_Attack_02_F"; }; class Air_Heli_Transport { count = 4; units[] = {"O_Helipilot_F","O_soldier_F","O_soldier_F","O_soldier_F"}; vehicle = "O_Heli_Transport_04_F"; }; class Air_Plane_CAS { count = 1; units[] = {"O_Pilot_F"}; vehicle = "O_Plane_CAS_02_F"; }; }; class Stationary { machineguns[] = {"O_HMG_01_high_F","O_HMG_01_F"}; ATguns[] = {"O_static_AT_F"}; AAguns[] = {"O_static_AA_F"}; mortars[] = {"O_Mortar_01_F"}; }; class AmmoBoxes { boxTypes[] = {"Box_East_Wps_F","Box_East_Ammo_F","Box_East_Grenades_F","Box_East_Support_F"}; }; }; };

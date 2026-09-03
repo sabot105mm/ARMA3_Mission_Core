@@ -1,0 +1,339 @@
+version=12;
+class Mission
+{
+    addOns[]=
+    {
+        "A3_Missions_F_Bootcamp"
+    };
+    addOnsAuto[]=
+    {
+        "A3_Missions_F_Bootcamp"
+    };
+    randomSeed=123456;
+    class Intel
+    {
+        timeOfChanges=1800.0002;
+        startWeather=0.3;
+        forecastWeather=0.3;
+        year=2035;
+        month=6;
+        day=15;
+        hour=12;
+        minute=0;
+        startFogDecay=0.013;
+        forecastFogDecay=0.013;
+        startFog=0;
+        forecastFog=0;
+        startFogBase=200;
+        forecastFogBase=200;
+        startWind=0.1;
+        forecastWind=0.1;
+        startWindDir=0;
+        forecastWindDir=0;
+        startWaves=0.1;
+        forecastWaves=0.1;
+        startGusts=0.1;
+        forecastGusts=0.1;
+        startLightnings=0.1;
+        forecastLightnings=0.1;
+        startRain=0.1;
+        forecastRain=0.1;
+    };
+    class Groups
+    {
+        items=1;
+        class Item0
+        {
+            side="WEST";
+            class Vehicles
+            {
+                items=1;
+                class Item0
+                {
+                    dataType="Object";
+                    position[]={6375.5,0,7812.3};
+                    angles[]={0,0,0};
+                    side="WEST";
+                    class Attributes
+                    {
+                        isPlayable=1;
+                    };
+                    id=0;
+                    type="B_Soldier_F";
+                };
+            };
+        };
+    };
+    class Markers
+    {
+        items=22;
+        class Item0
+        {
+            position[]={6375.5,0,7812.3};
+            name="hq_1";
+            text="hq_1";
+            colorName="ColorBLUFOR";
+            fillName="SolidBorder";
+            a=800;
+            b=600;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item1
+        {
+            position[]={13567.2,0,12890.4};
+            name="base_1";
+            text="base_1";
+            colorName="ColorBLUFOR";
+            fillName="SolidBorder";
+            a=1000;
+            b=800;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item2
+        {
+            position[]={20456.7,0,7890.2};
+            name="airfield_1";
+            text="airfield_1";
+            colorName="ColorBLUFOR";
+            fillName="SolidBorder";
+            a=1200;
+            b=600;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item3
+        {
+            position[]={11234.5,0,18765.3};
+            name="factory_1";
+            text="factory_1";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=500;
+            b=500;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item4
+        {
+            position[]={5678.9,0,14321.7};
+            name="compound_1";
+            text="compound_1";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=400;
+            b=400;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item5
+        {
+            position[]={17890.2,0,5432.1};
+            name="base_4";
+            text="base_4";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=800;
+            b=800;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item6
+        {
+            position[]={23456.7,0,10987.6};
+            name="town_1";
+            text="town_1";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=600;
+            b=600;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item7
+        {
+            position[]={8901.2,0,21098.7};
+            name="depot_1";
+            text="depot_1";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=400;
+            b=400;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item8
+        {
+            position[]={15678.4,0,3456.8};
+            name="outpost_1";
+            text="outpost_1";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=300;
+            b=300;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item9
+        {
+            position[]={2567.3,0,9876.5};
+            name="watch_1";
+            text="watch_1";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=150;
+            b=150;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item10
+        {
+            position[]={10234.6,0,6543.2};
+            name="factory_2";
+            text="factory_2";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=500;
+            b=500;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item11
+        {
+            position[]={19876.5,0,15432.8};
+            name="compound_2";
+            text="compound_2";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=400;
+            b=400;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item12
+        {
+            position[]={3456.7,0,17654.3};
+            name="base_2";
+            text="base_2";
+            colorName="ColorBLUFOR";
+            fillName="SolidBorder";
+            a=800;
+            b=800;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item13
+        {
+            position[]={14321.8,0,8765.4};
+            name="town_2";
+            text="town_2";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=600;
+            b=600;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item14
+        {
+            position[]={7890.1,0,22345.6};
+            name="depot_2";
+            text="depot_2";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=400;
+            b=400;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item15
+        {
+            position[]={22345.6,0,4321.9};
+            name="outpost_2";
+            text="outpost_2";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=300;
+            b=300;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item16
+        {
+            position[]={4321.5,0,11234.7};
+            name="watch_2";
+            text="watch_2";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=150;
+            b=150;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item17
+        {
+            position[]={16789.3,0,18901.2};
+            name="factory_3";
+            text="factory_3";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=500;
+            b=500;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item18
+        {
+            position[]={2987.4,0,6789.1};
+            name="compound_3";
+            text="compound_3";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=400;
+            b=400;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item19
+        {
+            position[]={21098.7,0,13579.4};
+            name="base_3";
+            text="base_3";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=800;
+            b=800;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item20
+        {
+            position[]={12345.6,0,20987.3};
+            name="town_3";
+            text="town_3";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=600;
+            b=600;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+        class Item21
+        {
+            position[]={8765.4,0,24321.9};
+            name="depot_3";
+            text="depot_3";
+            colorName="ColorOPFOR";
+            fillName="SolidBorder";
+            a=400;
+            b=400;
+            drawBorder=1;
+            markerShape="ELLIPSE";
+        };
+    };
+    class Sensors
+    {
+        items=0;
+    };
+};
