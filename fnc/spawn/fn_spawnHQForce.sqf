@@ -18,16 +18,19 @@ MISSION_CORE_fnc_spawnHQForce = {
     private _crewClass = if (_side == WEST) then { "B_crew_F" } else { "O_crew_F" };
     private _isBLU = if (_side == WEST) then { "BLUFOR" } else { "REDFOR" };
 
-    // Spawn MBT section (2 tanks, one group each) at HQ; per-marker + global cap
+    // Spawn MBT section (2 tanks, one group each) at HQ; per-marker + global cap.
+    // Precompute a 2-tank road column so the section deploys in a line on the road.
     private _mbtCount = 2;
+    private _mbtSpots = [_targetPos, _markerSize, _mbtCount, 20] call MISSION_CORE_fnc_findVehicleColumnPos;
     for "_t" from 1 to _mbtCount do {
         // Pooled HQ: stop spawning MBTs once the HQ's tank pool is filled.
         if (_pooled && { ([_targetPos, _poolRadius] call MISSION_CORE_fnc_countArmorByHome) select 0 >= _tankPool }) exitWith {
             diag_log format ["DYNAMIC SPAWN: HQ %1 tank force stopped - pool full (%2)", _originName, _tankPool];
         };
         if ([_side, "mbt", _targetPos, _importance] call MISSION_CORE_fnc_armorCapOpen && count _mbtClasses > 0) then {
-            private _vehPos = [_targetPos, 0, 100, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
-            if (count _vehPos < 2) then { _vehPos = [_targetPos, _markerSize, 20, _dir] call MISSION_CORE_fnc_findVehiclePos; _vehPos = [_vehPos] call MISSION_CORE_fnc_ensureLandPos; };
+            private _vehPos = if (_t - 1 < count _mbtSpots) then { _mbtSpots select (_t - 1) } else { [] };
+            if (count _vehPos < 2) then { _vehPos = [_targetPos, _markerSize, 20, _dir] call MISSION_CORE_fnc_findVehiclePos; };
+            if (count _vehPos < 2) then { _vehPos = [_targetPos] call MISSION_CORE_fnc_ensureLandPos; };
             if (count _vehPos == 2) then { _vehPos pushBack 0; };
             private _tank = createVehicle [selectRandom _mbtClasses, [_vehPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
             private _grp = createGroup _side;
@@ -38,7 +41,7 @@ MISSION_CORE_fnc_spawnHQForce = {
             if (!isNull _d && isNull (driver _tank)) then { _d moveInDriver _tank; };
             if (!isNull _g && isNull (gunner _tank)) then { _g moveInGunner _tank; };
             if (!isNull _c && isNull (commander _tank)) then { _c moveInCommander _tank; };
-            _tank setDir random 360;
+            [_tank] call MISSION_CORE_fnc_alignVehicleToRoad;
             _grp setBehaviour "AWARE"; _grp setCombatMode "YELLOW"; _grp setSpeedMode "FULL";
             _grp setVariable [format ["MISSION_CORE_%1", _isBLU], true];
             _grp setVariable ["MISSION_CORE_MARKER_CENTER", _targetPos];
@@ -63,8 +66,8 @@ MISSION_CORE_fnc_spawnHQForce = {
 
     // Spawn 1 mech (APC + infantry squad) in its own group (per-marker cap: 1 mech alive)
     if ([_side, "mech", _targetPos, _importance] call MISSION_CORE_fnc_armorCapOpen && count _apcClasses > 0) then {
-        private _apcPos = [_targetPos, 0, 100, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
-        if (count _apcPos < 2) then { _apcPos = [_targetPos, _markerSize, 20, _dir] call MISSION_CORE_fnc_findVehiclePos; _apcPos = [_apcPos] call MISSION_CORE_fnc_ensureLandPos; };
+        private _apcPos = [_targetPos, _markerSize, 20, _dir] call MISSION_CORE_fnc_findVehiclePos;
+        if (count _apcPos < 2) then { _apcPos = [_targetPos] call MISSION_CORE_fnc_ensureLandPos; };
         if (count _apcPos == 2) then { _apcPos pushBack 0; };
         private _apc = createVehicle [selectRandom _apcClasses, [_apcPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
         private _grp = createGroup _side;
@@ -80,7 +83,7 @@ MISSION_CORE_fnc_spawnHQForce = {
             _u moveInCargo _apc;
             _infantry pushBack _u;
         };
-        _apc setDir random 360;
+        [_apc] call MISSION_CORE_fnc_alignVehicleToRoad;
         _grp setBehaviour "AWARE"; _grp setCombatMode "YELLOW"; _grp setSpeedMode "FULL";
         _grp setVariable [format ["MISSION_CORE_%1", _isBLU], true];
         _grp setVariable ["MISSION_CORE_MARKER_CENTER", _targetPos];

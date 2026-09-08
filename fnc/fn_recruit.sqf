@@ -263,7 +263,7 @@ MISSION_CORE_fnc_recruitMenuTab = {
     // Defend tab: 1620-1625, 1641-1659
     { (_disp displayCtrl _x) ctrlShow (_tab == 1) } forEach [1620, 1621, 1622, 1623, 1624, 1625, 1641, 1642, 1645, 1646, 1647, 1648, 1650, 1651, 1652, 1653, 1654, 1655, 1659, 1660];
     // Attack tab: 1630-1640, 1661-1663
-    { (_disp displayCtrl _x) ctrlShow (_tab == 2) } forEach [1630, 1631, 1632, 1633, 1634, 1635, 1636, 1637, 1638, 1639, 1640, 1661, 1662, 1663];
+    { (_disp displayCtrl _x) ctrlShow (_tab == 2) } forEach [1630, 1631, 1632, 1633, 1634, 1635, 1636, 1637, 1638, 1639, 1640, 1661, 1664, 1663];
 
     // Tab button highlight
     private _tabColors = [
@@ -901,13 +901,13 @@ MISSION_CORE_fnc_recruitSpawnTransport = {
 
     private _vw1 = _grp addWaypoint [_approachPos, 0];
     _vw1 setWaypointType "MOVE";
-    _vw1 setWaypointSpeed "FULL";
+    _vw1 setWaypointSpeed "LIMITED";
     _vw1 setWaypointCombatMode "GREEN";
     _vw1 setWaypointBehaviour "CARELESS";
 
     private _vw2 = _grp addWaypoint [_dropPos, 10];
     _vw2 setWaypointType "UNLOAD";
-    _vw2 setWaypointSpeed "FULL";
+    _vw2 setWaypointSpeed "LIMITED";
     _vw2 setWaypointCombatMode "GREEN";
     _vw2 setWaypointBehaviour "CARELESS";
 
@@ -917,7 +917,7 @@ MISSION_CORE_fnc_recruitSpawnTransport = {
 
     // Run transport_unload.sqf the moment the group reaches the UNLOAD waypoint: it kicks every
     // member (including the driver) out, locks the transport, and applies the assault waypoints.
-    _vw2 setWaypointScript "transport_unload.sqf";
+    _vw2 setWaypointScript "fnc\commander\transport_unload.sqf";
 
     _grp setCurrentWaypoint _vw1;
 
@@ -937,6 +937,15 @@ MISSION_CORE_fnc_recruitSpawnTransport = {
         };
         if (!alive _veh || { { alive _x } count units _grp == 0 }) exitWith {};
         _veh lock false;
+        // Stop the truck before forcing anyone out - this fallback can fire while the truck is still
+        // rolling toward the drop area, and moveOut/getOut from a moving vehicle kills the ejected men.
+        if (alive _veh) then {
+            _veh setSpeedMode "LIMITED";
+            private _drvStop = driver _veh;
+            if (!isNull _drvStop) then { _drvStop doStop; };
+            private _stopBy = time + 6;
+            waitUntil { sleep 0.2; isNull _veh || { !(alive _veh) } || { speed _veh < 2 } || { time > _stopBy } };
+        };
         private _drv = driver _veh;
         if (!isNull _drv && { vehicle _drv == _veh }) then {
             unassignVehicle _drv;
@@ -1061,6 +1070,10 @@ MISSION_CORE_fnc_recruitAttackDeploy = {
     private _grp = [_spawnPos, side player, _cfgPath] call BIS_fnc_spawnGroup;
     if (isNull _grp) exitWith { hint "Failed to spawn group."; };
 
+    // BIS_fnc_spawnGroup drops vehicles wherever the config formation lands - pull them back
+    // onto a road column near the deploy point so recruited attack armor deploys on the road.
+    [_grp, _spawnPos, [200, 200]] call MISSION_CORE_fnc_alignGroupVehiclesToRoad;
+
     // Auto-load dismounted infantry into transport for mech/motor groups
     private _isMotorized = _catName find "Motorized" > -1 || _subCat find "motor" > -1;
     private _isMechanized = _catName find "Mechanized" > -1 || _subCat find "mech" > -1;
@@ -1165,6 +1178,10 @@ MISSION_CORE_fnc_recruitAttackRERecruit = {
     private _cfgPath = configFile >> "CfgGroups" >> "West" >> _faction >> _catName >> _grpName;
     private _grp = [_spawnPos, side player, _cfgPath] call BIS_fnc_spawnGroup;
     if (isNull _grp) exitWith { hint "Failed to spawn group."; };
+
+    // BIS_fnc_spawnGroup drops vehicles wherever the config formation lands - pull them back
+    // onto a road column near the deploy point so recruited attack armor deploys on the road.
+    [_grp, _spawnPos, [200, 200]] call MISSION_CORE_fnc_alignGroupVehiclesToRoad;
 
     // Auto-load dismounted infantry into transport for mech/motor groups
     private _isMotorized = _catName find "Motorized" > -1 || _subCat find "motor" > -1;

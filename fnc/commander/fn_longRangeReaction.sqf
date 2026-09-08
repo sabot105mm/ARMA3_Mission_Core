@@ -22,6 +22,9 @@ MISSION_CORE_fnc_longRangeReactionTick = {
             if ((_loc select 4) != _side) then { continue; };
             private _locName = _loc select 0;
             private _locPos = _loc select 1;
+            // PERMANENT RULE: outposts / powerplants / solar are static tiny garrisons - they
+            // never dispatch a long-range counter to a shooter (sniper response, tank strike).
+            if ([_loc] call MISSION_CORE_fnc_isLightInfrastructure) then { continue; };
             if (!(MISSION_CORE_SPAWNED_LOCATIONS getOrDefault [_locName, false])) then { continue; };
             private _lastReact = MISSION_CORE_LONG_RANGE_COOLDOWN getOrDefault [_locName, -99999];
             if (time - _lastReact < 120) then { continue; };
@@ -81,7 +84,11 @@ MISSION_CORE_fnc_longRangeReactionTick = {
                     { (_x getVariable ["MISSION_CORE_ORIGIN_MARKER", ""]) == _locName } &&
                     { { alive _x } count units _x > 0 } &&
                     { { !(_x isKindOf "Man") } count units _x == 0 } &&
-                    { (_x getVariable ["MISSION_CORE_ORDER", ""]) in ["", "defend", "engage"] }
+                    { (_x getVariable ["MISSION_CORE_ORDER", ""]) in ["", "defend", "engage"] } &&
+                    // Never yank a squad that is staged for (or already holding) a quadrant order -
+                    // the quadrant response owns those foot groups.
+                    { !([_x] call MISSION_CORE_fnc_isQuadrantStaged) } &&
+                    { !((_x getVariable ["MISSION_CORE_ORDER", ""]) == "engage" && { (_x getVariable ["MISSION_CORE_QUAD_MARKER", ""]) != "" }) }
                 };
                 private _grp = if (count _foot > 0) then { _foot select 0 } else { grpNull };
                 if (isNull _grp) then {

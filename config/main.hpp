@@ -39,6 +39,8 @@ class LOCATION_TYPES {
     class Outpost   { prefix = "outpost_";   type = "Outpost";   radius[] = {50,150};  priority = 4; };
     class Depot     { prefix = "depot_";     type = "Depot";     radius[] = {50,200};  priority = 4; };
     class Port      { prefix = "port_";      type = "Port";      radius[] = {75,300};  priority = 3; };
+    class Powerplant { prefix = "power_";    type = "Powerplant"; radius[] = {75,300}; priority = 3; };
+    class Solar     { prefix = "solar_";     type = "Solar";     radius[] = {50,200};  priority = 4; };
 };
 
 // === DETECTION SETTINGS ===
@@ -69,10 +71,27 @@ class MISSION_CORE_TUNE {
     defenseMinSpacing = 25;         // min spacing between placed defense comps
 
     // ----- House occupation -----
-    houseSpawnRadius = 80;          // occupant spawns when player within this
-    houseDespawnRadius = 140;       // occupant despawns when player beyond this
+    houseSpawnRadius = 80;          // base spawn radius (priority 4/5 houses)
+    houseDespawnRadius = 100;       // occupant despawns when player beyond this (uniform)
     houseMaxActive = 6;             // hard active-house cap (exempt from foot budget)
     houseMaxPerHouse = 2;           // max occupants per house (1-2)
+    houseOverrideRadius = 20;       // player this close -> spawn house regardless of cap
+    housePriorityRadiusMult = 2;    // bunker/military/guard-post houses spawn at spawnRadius x this
+    cargoTowerSpawnRadius = 600;    // cargo towers: first defenders (top deck) spawn when player is within this
+    cargoTowerDespawnRadius = 800;  // cargo towers: garrison despawns when the player withdraws beyond this
+    cargoTowerMaxCount = 8;         // hard cap on defenders per cargo tower
+    cargoTowerCount1 = 4;           // defenders once inside cargoTowerSpawnRadius (deck)
+    cargoTowerCount2 = 6;           // +2 at 0.7x radius (floor below the deck)
+    cargoTowerCount3 = 8;           // +2 at 0.5x radius (floor below that / ground)
+
+    // ----- Quadrant engagement -----
+    quadrantPerTargetMax = 99;      // max REDFOR foot groups staged per engaged player-quadrant per wave (99 = every eligible foot group; waves paced by quadrantBatchInterval)
+    quadrantReleasePerTick = 3;     // groups dispatched per quadrant per commander tick (3 = three at a time)
+    quadrantBatchInterval = 90;     // seconds to WAIT between per-target batches (send a wave, pause, see if more players spotted, send the next wave)
+    quadrantMinSpanDeg = 20;        // minimum patrol sector wedge angle (large markers never go below this)
+    quadrantSpanFalloffSize = 500;  // marker avg half-axis where the sector span halves (90 -> 45 deg); smaller markers stay wider
+    quadrantReEvalInterval = 300;   // seconds between quadrant re-evals (repoint squads whose player moved to another sector)
+    quadrantGraceTime = 600;        // keep streaming the quadrant response this long after the last live contact (sight lost)
 
     // ----- Hunt director -----
     huntDetectRange = 1200;         // player "near a marker" proximity for hunt tracking
@@ -141,5 +160,10 @@ class MISSION_CORE_TUNE {
     truckUnloadBuffer = 100;         // trucks stop this far outside the contested ellipse
     truckUnloadPush = 50;            // each truck-kill streak pushes the ring 50m further
     truckUnloadMaxPushes = 5;
+
+    // ----- Ordered-vehicle cleanup -----
+    stuckVehicleTime = 240;          // seconds an ordered vehicle may sit at spawn before it is considered stuck
+    stuckVehicleRadius = 150;        // vehicle must have left this far from spawn to prove it is moving
+    stuckVehicleTick = 30;           // sweep interval of the ordered-vehicle cleanup loop
 };
 

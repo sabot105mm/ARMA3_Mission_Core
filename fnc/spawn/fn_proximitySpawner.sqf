@@ -113,6 +113,10 @@ MISSION_CORE_fnc_proximitySpawner = {
         sleep 10 + random 5;
         private _players = allPlayers select { alive _x };
         private _playerSides = _players apply { side _x };
+        // Snapshot allUnits once per tick and reuse for every marker below, instead of re-fetching
+        // the full list per marker (despawn & garrison-gate checks). Behavior-neutral: allUnits only
+        // changes between frames, not while this tick iterates the markers.
+        private _snapUnits = allUnits;
         {
             private _loc = _x;
             private _locPos = _loc select 1;
@@ -132,7 +136,7 @@ MISSION_CORE_fnc_proximitySpawner = {
                     // distance and simply re-spawns when the player returns.
                     private _owner = _loc select 4;
                     private _enemySide = if (_owner == WEST) then { EAST } else { WEST };
-                    private _underAttack = { alive _x && { side _x == _enemySide } && { _x distance _locPos < 1500 } } count allUnits > 0;
+                    private _underAttack = { alive _x && { side _x == _enemySide } && { _x distance _locPos < 1500 } } count _snapUnits > 0;
                     if (!_underAttack) then {
                         [_locName, _locPos] call MISSION_CORE_fnc_despawnLocation;
                     };
@@ -170,7 +174,7 @@ MISSION_CORE_fnc_proximitySpawner = {
                         // An already-spawned marker is left to its normal despawn logic.
                         if (_side == WEST && { !(MISSION_CORE_SPAWNED_LOCATIONS getOrDefault [_locName, false]) }) then {
                             private _gateR = ["proxSpawnRadius", 700] call MISSION_CORE_fnc_tune;
-                            private _enemyNear = { alive _x && { side _x == EAST } && { _x distance _locPos < _gateR } } count allUnits > 0;
+                            private _enemyNear = { alive _x && { side _x == EAST } && { _x distance _locPos < _gateR } } count _snapUnits > 0;
                             if (!_enemyNear) then { continue; };
                         };
                         // PERMANENT RULE: an occupied marker (in the 10-min hold phase) fields NO

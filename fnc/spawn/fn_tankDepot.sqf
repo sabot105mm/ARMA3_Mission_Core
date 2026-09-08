@@ -122,7 +122,7 @@ MISSION_CORE_fnc_tankParkPos = {
     private _col = _parkCount mod _rowMax;
     private _dx = (_col - (_rowMax - 1) * 0.5) * _spacing;
     private _dy = _row * 20;
-    private _rad = _dir * (pi / 180);
+    private _rad = _dir;
     private _ox = _dx * cos _rad - _dy * sin _rad;
     private _oy = _dx * sin _rad + _dy * cos _rad;
     ([(_center select 0) + _ox, (_center select 1) + _oy, 0])
@@ -149,6 +149,28 @@ MISSION_CORE_fnc_tankReserveSpawn = {
         _pos = [_center, 0, _maxR, 15, 0, 0.5, 0] call BIS_fnc_findSafePos;
         if (count _pos < 2) then { _pos = +_parkPos; };
         if (count _pos == 2) then { _pos pushBack 0; };
+    };
+    // PERMANENT RULE: parked rows sit 50m+ from any house/building - armor never parks against a
+    // house. Verify the resolved spot before spawning; if a house is within 50m, step the parked
+    // position outward AWAY from the nearest house (bounded to 500m) until a house-free spot is
+    // found. If no clear spot exists, park at the candidate that ended up farthest from houses.
+    private _houseTypesNear = ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"];
+    if ((count (nearestObjects [_pos, _houseTypesNear, 50])) > 0) then {
+        private _bestSpot = _pos;
+        private _bestHouseDist = 1e10;
+        private _foundClear = false;
+        private _nearH0 = nearestObjects [_pos, _houseTypesNear, 50] select 0;
+        private _awayV = _pos vectorDiff (getPos _nearH0);
+        private _awayLen = vectorMagnitude _awayV;
+        if (_awayLen > 0) then { _awayV = _awayV vectorMultiply (1 / _awayLen); };
+        for "_s" from 1 to 25 do {
+            private _cand = (_pos vectorAdd (_awayV vectorMultiply (_s * 20))) call MISSION_CORE_fnc_ensureLandPos;
+            private _near = nearestObjects [_cand, _houseTypesNear, 100];
+            private _dHouse = if (count _near > 0) then { _cand distance2D (_near select 0) } else { 1e10 };
+            if (_dHouse < _bestHouseDist) then { _bestHouseDist = _dHouse; _bestSpot = _cand; };
+            if (_dHouse >= 50) exitWith { _pos = _cand; _foundClear = true; };
+        };
+        if (!_foundClear) then { _pos = _bestSpot; };
     };
     _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos;
     private _veh = createVehicle [selectRandom _mbtClasses, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 0, "CAN_COLLIDE"];

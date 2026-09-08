@@ -89,8 +89,10 @@ MISSION_CORE_fnc_startConvoy = {
     if (_total < 50) exitWith { MISSION_CORE_LOCATION_SUPPLY set [_providerName, _provSupply]; };
     private _speed = 14; // m/s ~ truck road speed
     private _travelTime = _total / _speed;
-    // [_provider, _recipient, _roadPath, _cum, _travelTime, _departTime, _amount, _state, _truck, _grp]
-    MISSION_CORE_CONVOYS pushBack [_providerName, _recipientName, _roadPath, _cum, _travelTime, time, _supplyAmount, 0, objNull, grpNull];
+    // [_provider, _recipient, _roadPath, _cum, _travelTime, _departTime, _amount, _state, _truck, _grp, _cid, _killed, _marker]
+    if (isNil "MISSION_CORE_CONVOY_ID") then { MISSION_CORE_CONVOY_ID = 0; };
+    MISSION_CORE_CONVOY_ID = MISSION_CORE_CONVOY_ID + 1;
+    MISSION_CORE_CONVOYS pushBack [_providerName, _recipientName, _roadPath, _cum, _travelTime, time, _supplyAmount, 0, objNull, grpNull, MISSION_CORE_CONVOY_ID, false, ""];
     diag_log format ["DYNAMIC CONVOY: %1 -> %2 (%3 supply, %4m via road, ETA %5s)", _providerName, _recipientName, _supplyAmount, round _total, round _travelTime];
 };
 
@@ -103,6 +105,9 @@ MISSION_CORE_fnc_convoyLoop = {
         private _keep = [];
         {
             _x params ["_prov", "_recv", "_roadPath", "_cum", "_travelTime", "_departTime", "_amount", "_state", "_truck", "_grp"];
+            // Force Recon abstract kill: convoy struck while still abstract - already resolved
+            // (ammo box dropped by the recon system), just drop it from the queue.
+            if (count _x > 11 && { _x select 11 }) then { continue; };
             if (_state == 0) then {
                 private _frac = ((time - _departTime) / _travelTime) min 1;
                 if (_frac >= 1) then {
@@ -121,6 +126,7 @@ MISSION_CORE_fnc_convoyLoop = {
                         if (_truckClass == "") then { _truckClass = "O_Truck_02_covered_F"; };
                         private _spawn = [_curPos] call MISSION_CORE_fnc_ensureLandPos;
                         private _truck = createVehicle [_truckClass, [_spawn] call MISSION_CORE_fnc_liftSpawn, [], 0, "CAN_COLLIDE"];
+                        [_truck] call MISSION_CORE_fnc_alignVehicleToRoad;
                         _truck setVariable ["MISSION_CORE_CONVOY_TRUCK", true];
                         _truck setVariable ["MISSION_CORE_TRUCK_ORIGIN", _spawn];
                         private _drvGrp = createGroup EAST;
@@ -146,6 +152,11 @@ MISSION_CORE_fnc_convoyLoop = {
                 };
             } else {
                 if (isNull _truck || { !(alive _truck) }) then {
+                    // Player-killed or Force Recon-struck convoy: renown for the team + a loot box.
+                    private _renownGain = [["renownPerConvoy", 15] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_awardRenown;
+                    ["DynOps_ConvoyDestroyed",
+                        ["CONVOY DESTROYED", format ["Supply convoy %1 -> %2 lost! Renown +%3", _prov, _recv, _renownGain]]
+                    ] remoteExec ["BIS_fnc_showNotification", 0];
                     if (!isNull _truck) then {
                         private _boxClass = "";
                         {

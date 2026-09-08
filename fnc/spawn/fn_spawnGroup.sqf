@@ -29,6 +29,11 @@ MISSION_CORE_fnc_spawnGroup = {
     private _grp = createGroup _side;
     if (count _units == 0) exitWith { _grp };
     private _vehList = [];
+    // A template may carry several vehicles in one group (tank section, mech platoon, etc):
+    // precompute ONE road column so the whole section deploys in a line on the same road
+    // instead of scattering across the marker. Each vehicle consumes the next column slot.
+    private _vehIdx = 0;
+    private _vehSpots = [_position, _markerSize, { !(_x isKindOf "Man") } count _units, 30] call MISSION_CORE_fnc_findVehicleColumnPos;
     {
         private _uClass = _x;
         if (_uClass isKindOf "Man") then {
@@ -48,13 +53,16 @@ MISSION_CORE_fnc_spawnGroup = {
         } else {
             if (_uClass isKindOf "AllVehicles") then {
                 // A group may carry several vehicles in one template (tank section, mech platoon,
-                // etc). Never stack them all on the same spot - each vehicle gets its own clear
-                // position inside the big clearing so the group deploys spread out, not piled up.
-                private _vehPos = [_position, 0, 100, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
-                if (count _vehPos < 2) then { _vehPos = [_position, _markerSize, 30, random 360] call MISSION_CORE_fnc_findVehiclePos; };
+                // etc). Place them all in a road column (spawnGroup.sqf precomputed the spots) so
+                // the section deploys ON the road in a line, not piled up / scattered in a field.
+                private _vehPos = if (_vehIdx < count _vehSpots) then { _vehSpots select _vehIdx } else { [] };
+                _vehIdx = _vehIdx + 1;
+                if (count _vehPos < 2) then { _vehPos = [_position, _markerSize, 30, 0] call MISSION_CORE_fnc_findVehiclePos; };
+                if (count _vehPos < 2) then { _vehPos = [_position] call MISSION_CORE_fnc_ensureLandPos; };
                 if (count _vehPos == 2) then { _vehPos pushBack 0; };
                 private _veh = _uClass createVehicle ([_vehPos] call MISSION_CORE_fnc_liftSpawn);
                 _grp addVehicle _veh;
+                [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
                 _vehList pushBack _veh;
             };
         };
@@ -100,6 +108,18 @@ MISSION_CORE_fnc_spawnGroup = {
         private _ma = _markerSize select 0;
         private _mb = _markerSize select 1;
         private _mDir = if (count _markerSize > 2) then { _markerSize select 2 } else { 0 };
+        // SMALL MARKER SPREAD: outpost/powerplant/solar markers have tiny footprints. Widen the
+        // PATROL BOX well past the small footprint so the garrison spreads out over the terrain
+        // around the marker instead of clumping inside a ~100m circle. Only the patrol geometry
+        // changes - the stored MISSION_CORE_MARKER_SIZE keeps the small footprint for threat tests.
+        if !(isNil "MISSION_CORE_CACHED_POSITIONS") then {
+            private _locAt = [_markerCenter] call MISSION_CORE_fnc_getLocByPos;
+            if (count _locAt > 2 && { [_locAt] call MISSION_CORE_fnc_isLightInfrastructure }) then {
+                private _spreadR = ["lightInfraPatrolRadius", 300] call MISSION_CORE_fnc_tune;
+                if (_ma < _spreadR) then { _ma = _spreadR; };
+                if (_mb < _spreadR) then { _mb = _spreadR; };
+            };
+        };
         for "_i" from 1 to _patrolCount do {
             private _ang = random 360;
             // Patrol INSIDE the marker only. Distribution: 25% of waypoints on the outer 90% ring,

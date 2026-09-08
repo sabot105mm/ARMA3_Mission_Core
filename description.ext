@@ -319,6 +319,103 @@ class DYNOPS_HelpMenu
     };
 };
 
+class DYNOPS_UnlockMenu
+{
+    idd = 1580;
+    movingEnable = 1;
+    onLoad = "[] call MISSION_CORE_fnc_unlockMenuLoad";
+    class Controls
+    {
+        class PanelBg: RscText
+        {
+            idc = -1;
+            x = 0.2; y = 0.1; w = 0.6; h = 0.8;
+            colorBackground[] = {0.02,0.03,0.05,0.94};
+        };
+        class Title: RscText
+        {
+            idc = 1581;
+            x = 0.22; y = 0.12; w = 0.56; h = 0.04;
+            text = "MARINE FORCE RECON HQ";
+            colorText[] = {0.8,0.75,0.3,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.045;
+        };
+        class RenownLbl: RscText
+        {
+            idc = 1582;
+            x = 0.22; y = 0.175; w = 0.56; h = 0.03;
+            text = "RENOWN: 0";
+            colorText[] = {0.4,0.85,0.4,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.03;
+        };
+        class UnitLbl: RscText
+        {
+            idc = -1;
+            x = 0.22; y = 0.23; w = 0.26; h = 0.025;
+            text = "RECON UNITS";
+            colorText[] = {0.8,0.75,0.3,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.02;
+        };
+        class UnitList: RscListBox
+        {
+            idc = 1583;
+            x = 0.22; y = 0.26; w = 0.26; h = 0.34;
+            onLBSelChanged = "_this call MISSION_CORE_fnc_unlockMenuSelect;";
+        };
+        class UnlockBtn: RscButton
+        {
+            idc = 1584;
+            x = 0.22; y = 0.615; w = 0.26; h = 0.04;
+            text = "UNLOCK SELECTED UNIT";
+            action = "[] call MISSION_CORE_fnc_unlockUnit;";
+        };
+        class EquipLbl: RscText
+        {
+            idc = -1;
+            x = 0.52; y = 0.23; w = 0.26; h = 0.025;
+            text = "RECON EQUIPMENT";
+            colorText[] = {0.8,0.75,0.3,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.02;
+        };
+        class EquipList: RscListBox
+        {
+            idc = 1585;
+            x = 0.52; y = 0.26; w = 0.26; h = 0.34;
+            onLBSelChanged = "_this call MISSION_CORE_fnc_unlockMenuSelect;";
+        };
+        class EquipBtn: RscButton
+        {
+            idc = 1586;
+            x = 0.52; y = 0.615; w = 0.26; h = 0.04;
+            text = "BUY EQUIPMENT";
+            action = "[] call MISSION_CORE_fnc_buyEquip;";
+        };
+        class Info: RscStructuredText
+        {
+            idc = 1587;
+            x = 0.22; y = 0.675; w = 0.56; h = 0.18;
+            text = "";
+            colorBackground[] = {0,0,0,0};
+            size = 0.028;
+            class Attributes
+            {
+                font = "PuristaLight";
+            };
+        };
+        class CloseBtn: RscButton
+        {
+            idc = 1588;
+            x = 0.44; y = 0.865; w = 0.12; h = 0.035;
+            text = "CLOSE";
+            action = "closeDialog 0;";
+        };
+    };
+};
+
 class DYNOPS_RecruitMenu
 {
     idd = 1600;
@@ -652,7 +749,7 @@ class DYNOPS_RecruitMenu
         };
         class AttackSquadLabel: RscText
         {
-            idc = 1662;
+            idc = 1664;
             x = 0.46; y = 0.31; w = 0.27; h = 0.03;
             text = "SQUAD TEMPLATE";
             colorText[] = {0.6,0.8,1,1};
@@ -766,6 +863,8 @@ class LOCATION_TYPES {
     class Outpost   { prefix = "outpost_";   type = "Outpost";   priority = 4; };
     class Depot     { prefix = "depot_";     type = "Depot";     priority = 4; };
     class Port      { prefix = "port_";      type = "Port";      priority = 3; };
+    class Powerplant { prefix = "power_";    type = "Powerplant"; priority = 3; };
+    class Solar     { prefix = "solar_";     type = "Solar";     priority = 4; };
 };
 
 class DETECTION {
@@ -791,9 +890,26 @@ class MISSION_CORE_TUNE {
     defenseMinSpacing = 25;
 
     houseSpawnRadius = 80;
-    houseDespawnRadius = 140;
+    houseDespawnRadius = 100;
     houseMaxActive = 6;
     houseMaxPerHouse = 2;
+    houseOverrideRadius = 20;
+    housePriorityRadiusMult = 2;
+    cargoTowerSpawnRadius = 600;
+    cargoTowerDespawnRadius = 800;
+    cargoTowerMaxCount = 8;
+    cargoTowerCount1 = 4;
+    cargoTowerCount2 = 6;
+    cargoTowerCount3 = 8;
+
+    // ----- Quadrant engagement -----
+    quadrantPerTargetMax = 99;
+    quadrantReleasePerTick = 3;
+    quadrantBatchInterval = 90;
+    quadrantMinSpanDeg = 20;
+    quadrantSpanFalloffSize = 500;
+    quadrantReEvalInterval = 300;
+    quadrantGraceTime = 600;
 
     huntDetectRange = 1200;
     huntFaintKnows = 0.1;
@@ -857,6 +973,11 @@ class MISSION_CORE_TUNE {
     truckUnloadBuffer = 100;
     truckUnloadPush = 50;
     truckUnloadMaxPushes = 5;
+
+    // ----- Ordered-vehicle cleanup -----
+    stuckVehicleTime = 240;
+    stuckVehicleRadius = 150;
+    stuckVehicleTick = 30;
 
     // BLUFOR AI behavior (0 = disabled, 1 = enabled)
     bluforAutoAttack = 0;
@@ -974,5 +1095,185 @@ class CfgNotifications {
         duration = 15;
         priority = 7;
         sound = "defaultNotification";
+    };
+    class DynOps_ReconIntel {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.55,0.75,0.85,1};
+        duration = 15;
+        priority = 7;
+        sound = "defaultNotification";
+    };
+    class DynOps_ReconStrike {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.85,0.55,0.2,1};
+        duration = 12;
+        priority = 8;
+        sound = "defaultNotification";
+    };
+    class DynOps_ConvoyDestroyed {
+        title = "%1";
+        description = "%2";
+        iconPicture = "\A3\ui_f\data\map\mapcontrol\taskIcon_CA.paa";
+        iconText = "";
+        color[] = {0.9,0.35,0.35,1};
+        duration = 12;
+        priority = 8;
+        sound = "defaultNotification";
+    };
+};
+
+// === ADVANCED HINTS / FIELD MANUAL (BIS_fnc_advHint) ===
+// missionConfigFile CfgHints: only the FIRST top-level class is shown in the ESC Field Manual
+// (auto-renamed "<Mission>"); every hint class inside it is individually callable via
+// BIS_fnc_advHint from fnc\fn_advHints.sqf. dlc = -1 stops diary-log spam on every display.
+class CfgHints
+{
+    class DynOps
+    {
+        dlc = -1;
+        displayName = "Dynamic Operations";
+
+        class Welcome
+        {
+            dlc = -1;
+            displayName = "Welcome to Dynamic Operations";
+            displayNameShort = "Welcome";
+            description = "<t size='1.15' color='#ffd24a'>Dynamic Operations</t><br/>You are <t color='#7ee07e'>BLUFOR</t> fighting to capture <t color='#ff9a9a'>REDFOR</t> territory. The map is a front of markers - each is a location with its own garrison, industry and AI.<br/><br/>Your goals:<br/>- Capture enemy markers and hold them through the OCCUPIED window.<br/>- Defend your own markers from counter-attacks and assaults.<br/>- Deny the enemy industry (factories, power, ports) so their tanks stop coming.<br/><br/>Press <t color='#ffd24a'>H</t> for this manual any time.";
+            tip = "Capture markers, hold them, and starve the enemy industry.";
+        };
+        class Markers
+        {
+            dlc = -1;
+            displayName = "Markers & Territory";
+            displayNameShort = "Markers & Territory";
+            description = "Every named location on the map is a <t color='#7ee07e'>marker</t> with an owner.<br/><t color='#ff9a9a'>RED markers = REDFOR</t> - capture them.<br/><t color='#7ee07e'>BLUE markers = BLUFOR</t> - defend them.<br/><t color='#ffd24a'>grey loc_ markers</t> are auto-generated towns and villages that can change hands.<br/><br/>Types matter: <t color='#ff9a9a'>HQ</t> command center, <t color='#ff9a9a'>Factory</t> builds tanks, <t color='#ff9a9a'>Depot</t> tank reserve, <t color='#ff9a9a'>Base</t> armor, <t color='#ff9a9a'>Town / Compound / Outpost</t> garrisoned strongpoints, <t color='#ff9a9a'>Port</t> manpower, <t color='#ff9a9a'>Power Plant / Solar</t> tank-production boost.";
+            tip = "Marker type decides what a location does - and what you gain by taking it.";
+        };
+        class Garrisons
+        {
+            dlc = -1;
+            displayName = "Garrisons & Spawning";
+            displayNameShort = "Garrisons & Spawning";
+            description = "Markers field their garrison only while a player is <t color='#7ee07e'>nearby</t> (~700m from center; wide markers instead spawn when you are 100m past their edge). Far-away markers stay dormant.<br/><br/>Leave the area and the garrison despawns again - the map stays alive without swamping the server.<br/><br/>A marker that is actively fought (contested) keeps its garrison front and center.";
+            tip = "Garrisons wake up as you close in - expect resistance near any marker you approach.";
+        };
+        class Capturing
+        {
+            dlc = -1;
+            displayName = "Capturing a Marker";
+            displayNameShort = "Capturing";
+            description = "1. Engage and reduce the marker garrison (the AI counter-attacks while you fight).<br/>2. Walk in once it is wiped or has retreated.<br/>3. The marker becomes <t color='#ffd24a'>OCCUPIED</t> - hold it for 10 minutes while the previous owner fights to take it back.<br/>4. After the hold it flips to you permanently.<br/><br/>If you leave or die during the hold, it relapses to the previous owner. Only a marker you actually fought can be captured.";
+            tip = "Every capture is a 10-minute hold - plan to stay.";
+        };
+        class LightInfra
+        {
+            dlc = -1;
+            displayName = "Light Infrastructure (Outposts / Power / Solar)";
+            displayNameShort = "Light Infrastructure";
+            description = "Outposts, Power Plants and Solar plants are <t color='#ffd24a'>light infrastructure</t>: small static garrisons.<br/><br/>They will <t color='#ff9a9a'>never</t>:<br/>- pull counter-attacks or reinforcements in from neighbours,<br/>- launch hunts or quadrant dispatches,<br/>- commit squads off their own marker.<br/><br/>They only defend in place with a small, widely spread garrison, and their own replenishment arrives from tree cover outside the marker.<br/><br/>Take them when it suits you - attacking one never drags the whole region into the fight.";
+            tip = "Light markers fight alone; they never pull neighbours into the fight.";
+        };
+        class EnemyAI
+        {
+            dlc = -1;
+            displayName = "Enemy AI & Counter-Attacks";
+            displayNameShort = "Enemy AI";
+            description = "The enemy commander reacts to a <t color='#ffd24a'>contested marker</t>:<br/>- Neighbouring markers dispatch counter-attack squads and tanks toward it.<br/>- Enemy markers launch full scripted assaults on your bases.<br/>- If they <t color='#ff9a9a'>actually see you</t>, nearby squads hunt your last known position.<br/>- A heavily mauled garrison retreats to a friendly marker and despawns.<br/><br/>Fighting them off-marker, near good cover, breaks their reaction chain.";
+            tip = "Contested markers call in neighbours - expect reinforcements while you fight.";
+        };
+        class Houses
+        {
+            dlc = -1;
+            displayName = "House Occupation (Red Squares)";
+            displayNameShort = "House Occupation";
+            description = "In built-up markers, small <t color='#ff9a9a'>red squares</t> mark houses that may hide ambushers.<br/><br/>As you get close, 1-2 enemy soldiers spawn inside at random positions and wait silently. Clear the building to be safe.<br/><br/>When the occupants are dead the square turns <t color='#7ee07e'>green</t> - that house never harbours ambushers again.";
+            tip = "Red squares = ambush risk. Green = cleared for good.";
+        };
+        class Hunt
+        {
+            dlc = -1;
+            displayName = "Player Hunts";
+            displayNameShort = "Player Hunts";
+            description = "REDFOR hunts you only when they genuinely <t color='#ff9a9a'>see you</t>: real line of sight plus awareness. Raw distance is never sight - no wallhacks.<br/><br/>Shared intel decays after ~60 seconds; hunt squads sweep your last known position and recorded heading.<br/><br/>Break line of sight and move off that heading - they chase stale intel.<br/><br/>If a hunt contingent finds you, its real sighting publishes fresh intel and every marked quadrant re-aims onto you instantly.";
+            tip = "Stay out of their sight - they only sweep where they last saw you.";
+        };
+        class Quadrants
+        {
+            dlc = -1;
+            displayName = "Quadrant Defense";
+            displayNameShort = "Quadrant Defense";
+            description = "A contested garrison splits its squads into four <t color='#ffd24a'>quadrant</t> sectors (NE / SE / SW / NW) that sweep the whole marker to corner you.<br/><br/>Cross from one sector to another and the sweep re-aims to your new sector.<br/>A hunt squad's real re-sight re-aims every marked quadrant onto your position immediately.";
+            tip = "Sector sweeps keep track of which quarter of the marker you are in.";
+        };
+        class Industry
+        {
+            dlc = -1;
+            displayName = "Tank Industry & Power";
+            displayNameShort = "Tank Industry";
+            description = "Tanks come from a real economy:<br/>- <t color='#ffd24a'>Factories</t> build tanks into their storage (1 per 10 minutes).<br/>- <t color='#ffd24a'>Power Plants</t> speed up every factory (+0.2x each), plus +0.5x to a factory within 1500m.<br/>- <t color='#ffd24a'>Solar Plants</t> count as 0.25x of a power plant each.<br/>- <t color='#ffd24a'>Depots / Bases</t> store tank reserves and fill requests.<br/><br/>Capturing enemy factories and power cuts their tank supply; holding your own keeps yours flowing.";
+            tip = "Deny enemy power and factories - their tanks stop rolling.";
+        };
+        class Power
+        {
+            dlc = -1;
+            displayName = "Power Plants";
+            displayNameShort = "Power Plants";
+            description = "<t color='#ffd24a'>Power Plants</t> generate electricity for tank production.<br/><br/><t color='#7ee07e'>Global bonus:</t> each held plant gives +0.2x tank production to EVERY factory on your side. Three plants = 60% faster factories.<br/><br/><t color='#7ee07e'>Neighbour bonus:</t> a plant within 1500m of a factory adds a further +0.5x to that factory.<br/><br/>Example: a factory next to one plant, with two more plants on your side, builds at 1 + 0.2*3 + 0.5 = 2.1x speed.<br/><br/>They are high-value strategic targets even though their garrison is light infrastructure.";
+            tip = "Power plants are worth taking even when lightly defended.";
+        };
+        class Solar
+        {
+            dlc = -1;
+            displayName = "Solar Plants";
+            displayNameShort = "Solar Plants";
+            description = "<t color='#ffd24a'>Solar Plants</t> are small generators - solar farms or arrays that produce less than a full power plant.<br/><br/>Each solar plant counts as <t color='#7ee07e'>0.25x of a power plant</t> for tank-production bonuses. Four solar plants equal one full plant.<br/><br/>They are lightly defended light infrastructure - a cheap way to boost factory output while denying the enemy power.";
+            tip = "Four solar plants equal one power plant.";
+        };
+        class Manpower
+        {
+            dlc = -1;
+            displayName = "Manpower Economy";
+            displayNameShort = "Manpower Economy";
+            description = "Ports generate <t color='#ffd24a'>manpower</t>, accumulate it over time, and ship it to requesting bases, which deliver it to the markers that need men.<br/><br/>Recruiting any unit costs manpower; capturing a marker grants importance x 5 manpower.<br/><br/>Starving the enemy's ports starves their garrisons - replacements only flow where manpower already flows.";
+            tip = "Ports = manpower. Cut them and the enemy stops refilling.";
+        };
+        class Recruit
+        {
+            dlc = -1;
+            displayName = "Recruitment (X)";
+            displayNameShort = "Recruitment";
+            description = "Press <t color='#ffd24a'>X</t> (or use the Recruit Forces action) to open the three-tab recruitment menu:<br/><t color='#7ee07e'>Player Group</t>: recruit units into your own squad.<br/><t color='#7ee07e'>Garrison</t>: add or remove squads and vehicles at your markers - tanks arrive by depot/port delivery and cost 4 manpower each.<br/><t color='#ff9a9a'>Attack</t>: pick an enemy target and a squad, set waypoints, deploy. Wiped attacker groups can be re-recruited.";
+            tip = "Recruit to grow your squad, garrison your markers, or launch attacks.";
+        };
+        class Build
+        {
+            dlc = -1;
+            displayName = "Defense Builder (B)";
+            displayNameShort = "Defense Builder";
+            description = "Press <t color='#ffd24a'>B</t> to open the Defense Builder: spend build points on bunkers, tanks, static guns, walls and sandbags at your owned markers. Build points are earned from captures.<br/><br/>Controls: <t color='#7ee07e'>WASD</t> move, <t color='#7ee07e'>drag</t> look, <t color='#7ee07e'>mouse wheel</t> zoom, <t color='#7ee07e'>LMB</t> place, <t color='#7ee07e'>RMB</t> rotate, <t color='#7ee07e'>ESC</t> exit.";
+            tip = "Spend capture points on defenses before they come for your base.";
+        };
+        class Notify
+        {
+            dlc = -1;
+            displayName = "Notifications & Notes";
+            displayNameShort = "Notifications";
+            description = "Right-side <t color='#ffd24a'>notification boxes</t> report assaults, marker captures/losses, and intel as they happen - mirrored to system chat so nothing is missed.<br/><br/>Approaching an enemy marker shows a note explaining what it does and why to take it (a power plant's tank bonus, a port's manpower, ...).";
+            tip = "Watch the notifications - they tell you where the front is moving.";
+        };
+        class Controls
+        {
+            dlc = -1;
+            displayName = "Controls";
+            displayNameShort = "Controls";
+            description = "<t color='#ffd24a'>H</t> - Field Manual (this screen)<br/><t color='#ffd24a'>B</t> - Defense Builder<br/><t color='#ffd24a'>X</t> - Recruitment<br/><t color='#ffd24a'>M</t> - Map<br/><t color='#ffd24a'>ESC</t> - close menus";
+            tip = "H manual, B build, X recruit, M map.";
+        };
     };
 };

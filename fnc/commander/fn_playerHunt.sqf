@@ -65,6 +65,9 @@ MISSION_CORE_fnc_playerHunt = {
         if (isNil "MISSION_CORE_CACHED_POSITIONS") then { continue; };
         private _players = allPlayers select { alive _x && { side _x == _enemySide } };
         if (count _players == 0) then { continue; };
+        // Snapshot this side's units once per tick and reuse for all players. Avoids an allUnits
+        // refetch per player (the list only changes between frames, not mid-loop-body).
+        private _snapUnits = allUnits select { side _x == _side };
 
         // Spawned REDFOR markers = the "eyes" that eventually spot a player loitering nearby.
         private _redSpawned = MISSION_CORE_CACHED_POSITIONS select {
@@ -85,8 +88,8 @@ MISSION_CORE_fnc_playerHunt = {
             // A CURRENT live sighting: any REDFOR unit with a real LOS + knowsAbout saw the player
             // this tick. This is a genuine "we know where he is right now" - enough to hunt even when
             // the player is not near a spawned marker (e.g. a field patrol or convoy spotted him).
-            private _liveSight = (allUnits findIf {
-                side _x == _side && { [_x, _p] call MISSION_CORE_fnc_huntSeesPlayer }
+            private _liveSight = (_snapUnits findIf {
+                [_x, _p] call MISSION_CORE_fnc_huntSeesPlayer
             }) != -1;
 
             // Always track position + heading for everyone (so a fresh sweep still knows which
@@ -115,8 +118,8 @@ MISSION_CORE_fnc_playerHunt = {
             // still fresh (<60s). No observation = no hunt.
             private _intel = MISSION_CORE_HUNT_INTEL getOrDefault [_pKey, []];
             private _intelFresh = count _intel >= 3 && { (time - (_intel select 2)) <= (["huntIntelDecay", 60] call MISSION_CORE_fnc_tune) };
-            private _faintContact = allUnits findIf {
-                side _x == _side && { alive _x } && { _x distance2D _pPos < (_detectRange + 300) && { _x knowsAbout _p > (["huntFaintKnows", 0.1] call MISSION_CORE_fnc_tune) } }
+            private _faintContact = _snapUnits findIf {
+                alive _x && { _x distance2D _pPos < (_detectRange + 300) && { _x knowsAbout _p > (["huntFaintKnows", 0.1] call MISSION_CORE_fnc_tune) } }
             } != -1;
             if (!_faintContact && { !_intelFresh }) then { continue; };
 
@@ -148,6 +151,11 @@ MISSION_CORE_fnc_huntDispatch = {
 
     private _cands = MISSION_CORE_CACHED_POSITIONS select { (_x select 4) == _side };
     if (count _cands == 0) exitWith {};
+    // PERMANENT RULE: Outposts are static tiny garrisons - they never dispatch hunt contingents.
+    _cands = _cands select { !([_x] call MISSION_CORE_fnc_isLightInfrastructure) };
+    // AMMO: a source marker with <30% ammo is defensive and never spares men to hunt. At 0 ammo
+    // it is fully passive. Only markers with enough ammo may field a hunt contingent.
+    _cands = _cands select { ([(_x select 0)] call MISSION_CORE_fnc_getAmmoFraction) >= 0.3 };
     private _maxN = ["huntMaxContingents", 3] call MISSION_CORE_fnc_tune;
     private _srcRange = ["huntSourceMaxRange", 2500] call MISSION_CORE_fnc_tune;
     // Exclude markers that CONTAIN the aim point (you can't attack your own yard with 0m run).
@@ -180,6 +188,8 @@ MISSION_CORE_fnc_huntDispatch = {
 
         private _grp = [_player, _lkp, _heading, _side, _sideVar, _factionData, _srcName, _srcPos, _srcSize, _srcImp, _srcD] call MISSION_CORE_fnc_huntSpawnContingent;
         if (isNull _grp) then { continue; };
+        // AMMO: dispatching a hunt contingent costs the source marker ammo.
+        [_srcName, ["ammoCostHunt", 2] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_consumeAmmo;
 
         private _list = MISSION_CORE_HUNT_ACTIVE getOrDefault [_playerKey, []];
         _list pushBack _grp;
@@ -329,6 +339,45 @@ MISSION_CORE_fnc_huntSweep = {
     private _isGun = _mounted && { [vehicle _ldr] call MISSION_CORE_fnc_hasMountedGun };
     if (_isGun) then { _truck = objNull; };
 
+    // HUNT CONTACT RULE: fight on foot, never from the truck.
+    //   - Plain cargo truck           -> everyone out (the dedicated driver group keeps the truck).
+    //   - Gun truck (gun MRAP)        -> the DRIVER and GUNNER stay mounted as mobile fire support,
+    //                                   the CARGO dismounts. Re-embarking is locked out.
+    // After the unload the step behaves COMBAT + combat mode RED.
+    private _disembark = {
+        params ["_g"];
+        private _gLdr = leader _g;
+        private _v = vehicle _gLdr;
+        if (isNull _v || { _v == _gLdr }) exitWith {};
+        // Bring the truck to a FULL STOP before ejecting anyone. The arrival/re-spot code can fire
+        // while the truck is still rolling toward the contact, and ejecting at speed kills the men.
+        // New waypoints assigned right after the drop cancel the doStop so the truck can drive on.
+        if (alive _v) then {
+            _v setSpeedMode "LIMITED";
+            private _drvStop = driver _v;
+            if (!isNull _drvStop) then { _drvStop doStop; };
+            private _stopBy = time + 6;
+            waitUntil { sleep 0.2; isNull _v || { !(alive _v) } || { speed _v < 2 } || { time > _stopBy } };
+        };
+        private _keepCrew = [_v] call MISSION_CORE_fnc_hasMountedGun;
+        private _gDrv = driver _v;
+        _v lock false;
+        {
+            if (_x isEqualTo _gDrv) then { continue; };
+            if (_keepCrew && { _x isEqualTo (gunner _v) }) then { continue; };
+            if (_keepCrew && { _x isEqualTo (commander _v) }) then { continue; };
+            if (vehicle _x != _v) then { continue; };
+            unassignVehicle _x;
+            [_x] orderGetIn false;
+            _x action ["getOut", _v];
+        } forEach (crew _v);
+        sleep 0.6;
+        _v lockCargo true;
+        _g setCombatMode "RED";
+        _g setBehaviour "COMBAT";
+        diag_log format ["PLAYER HUNT: %1 dismounted (%2 stayed mounted, cargo unloaded)", groupId _g, if (_keepCrew) then { "driver+gunner" } else { "driver only" }];
+    };
+
     if (_mounted && { !_isGun }) then {
         // Cargo truck - add GETOUT at the LKP (driven by a waypoint script so the dismount is
         // precision-timed to arrival); the driver group gets a TR UNLOAD ring at the LKP.
@@ -336,7 +385,7 @@ MISSION_CORE_fnc_huntSweep = {
         private _wpG = _grp addWaypoint [_lkp, 60];
         _wpG setWaypointType "GETOUT";
         _wpG setWaypointSpeed "FULL";
-        _wpG setWaypointScript "transport_assaultUnload.sqf";
+        _wpG setWaypointScript "fnc\commander\transport_assaultUnload.sqf";
         private _drvGrp = _truck getVariable ["MISSION_CORE_DRIVER_GROUP", grpNull];
         if (!isNull _drvGrp) then {
             [_drvGrp] call MISSION_CORE_fnc_clearGroupWaypoints;
@@ -366,6 +415,11 @@ MISSION_CORE_fnc_huntSweep = {
         { time > _arrival }
     };
 
+    // Arrival done - get the squad on the ground. Cargo trucks already unloaded via the GETOUT
+    // waypoint script; a gun truck only now gets its cargo out (driver+gunner stay). No-op when
+    // already on foot.
+    [_grp] call _disembark;
+
     // The hunt squad is on the ground now - the support truck's job is done. Turn the driver
     // group loose to drive it back toward the source marker and despawn there, so an empty truck
     // never idles at the LKP for the whole sweep.
@@ -373,19 +427,17 @@ MISSION_CORE_fnc_huntSweep = {
         private _drvGrp = _truck getVariable ["MISSION_CORE_DRIVER_GROUP", grpNull];
         if (!isNull _drvGrp) then {
             private _tHome = if (_srcPos distance [0, 0, 0] > 1) then { _srcPos } else { getPos _truck };
-            [_drvGrp, _truck, _tHome] spawn {
-                params ["_dg", "_veh", "_home"];
-                _dg setBehaviour "CARELESS";
-                _dg setSpeedMode "FULL";
-                { if (!isNull _x) then { _x doMove _home; }; } forEach (units _dg);
-                private _t = time + 300;
-                waitUntil { sleep 5; isNull _veh || { !(alive _veh) } || { (getPos _veh) distance2D _home < 200 } || { time > _t } };
-                if (!isNull _veh && { alive _veh }) then {
-                    { if (!isNull _x) then { deleteVehicle _x; }; } forEach (units _dg);
-                    deleteVehicle _veh;
-                };
-                deleteGroup _dg;
-            };
+            // Turn the driver group loose on a MOVE waypoint home; transport_truckArrive.sqf
+            // despawns crew + truck + group on arrival - no 5s polling loop.
+            _drvGrp setBehaviour "CARELESS";
+            _drvGrp setSpeedMode "FULL";
+            [_drvGrp] call MISSION_CORE_fnc_clearGroupWaypoints;
+            private _wpHome = _drvGrp addWaypoint [_tHome, 30];
+            _wpHome setWaypointType "MOVE";
+            _wpHome setWaypointSpeed "FULL";
+            _wpHome setWaypointBehaviour "CARELESS";
+            _wpHome setWaypointScript "fnc\commander\transport_truckArrive.sqf";
+            _drvGrp setCurrentWaypoint _wpHome;
         };
     };
 
@@ -404,11 +456,11 @@ MISSION_CORE_fnc_huntSweep = {
             private _wp = _g addWaypoint [_pos, 60];
             _wp setWaypointType "MOVE";
             _wp setWaypointSpeed "NORMAL";
-            _wp setWaypointBehaviour "AWARE";
+            _wp setWaypointBehaviour "COMBAT";
             _wps pushBack _wp;
         };
         _g setCurrentWaypoint (_wps select 0);
-        _g setBehaviour "AWARE";
+        _g setBehaviour "COMBAT";
         _g setCombatMode "RED";
     };
 
@@ -430,8 +482,21 @@ MISSION_CORE_fnc_huntSweep = {
         private _sight = (units _grp findIf { [_x, _player] call MISSION_CORE_fnc_huntSeesPlayer }) != -1;
         private _close = (leader _grp) distance2D _player < (["huntReSpotRadius", 30] call MISSION_CORE_fnc_tune);
         if (_sight || _close) then {
-            // ABORT sweep - engage. The waypoint aims at the last position where a unit could
-            // actually see the player (his current pos IS a legit sighted position right now).
+            // PUBLISH the real sighting as shared intel immediately. Until this moment no group
+            // knew the player's EXACT position (the sweep ran on stale intel/LKP); this hunt squad
+            // just ACTUALLY laid eyes on him. Every marked quadrant for his contested marker repoints
+            // onto this fresh position right now - no waiting for the next director tick.
+            if (isNil "MISSION_CORE_HUNT_INTEL") then { MISSION_CORE_HUNT_INTEL = createHashMap; };
+            MISSION_CORE_HUNT_INTEL set [_playerKey, [getPos _player, _curHead, time]];
+            if (isNil "MISSION_CORE_PLAYER_LKP") then { MISSION_CORE_PLAYER_LKP = createHashMap; };
+            MISSION_CORE_PLAYER_LKP set [_playerKey, [getPos _player, _curHead, time]];
+            diag_log format ["PLAYER HUNT: %1 re-sighted player - publishing fresh intel", groupId _grp];
+            [_player, getPos _player] call MISSION_CORE_fnc_updateQuadrantsForPlayer;
+            // ABORT sweep - engage on foot: never fight from the truck. Gun trucks keep their
+            // driver+gunner mounted as fire support and dump the cargo; cargo trucks dump everyone.
+            [_grp] call _disembark;
+            // The waypoint aims at the last position where a unit could actually see the player
+            // (his current pos IS a legit sighted position right now).
             [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
             private _wp = _grp addWaypoint [getPos _player, 40];
             _wp setWaypointType "SAD";
@@ -509,6 +574,9 @@ MISSION_CORE_fnc_huntSweep = {
     // No re-contact within the window -> retreat to the closest same-side marker, despawn on arrival.
     if (!isNull _grp && { count units _grp > 0 }) then {
         diag_log format ["PLAYER HUNT: contingent %1 sweep over - retreating", groupId _grp];
+        // The hunt is over - release ownership so the commander can recommit this squad later.
+        _grp setVariable ["MISSION_CORE_HUNT_KEY", ""];
+        _grp setVariable ["MISSION_CORE_ORDER", ""];
         private _dest = [getPos (leader _grp), _side, [_srcName]] call MISSION_CORE_fnc_getRetreatDest;
         if (_dest distance [0, 0, 0] < 1) then {
             [_grp] call MISSION_CORE_fnc_deleteGroupCompletely;
@@ -520,13 +588,9 @@ MISSION_CORE_fnc_huntSweep = {
             private _wp = _grp addWaypoint [_dest, 100];
             _wp setWaypointType "MOVE";
             _wp setWaypointSpeed "FULL";
+            // Despawn on arrival - transport_retreatArrive.sqf fires on the MOVE completion.
+            _wp setWaypointScript "fnc\commander\transport_retreatArrive.sqf";
             _grp setCurrentWaypoint _wp;
-            [_grp, _dest] spawn {
-                params ["_g", "_dest"];
-                private _t = time + 300;
-                waitUntil { sleep 5; isNull _g || { { alive _x } count units _g == 0 } || { (leader _g) distance2D _dest < 150 } || { time > _t } };
-                if (!isNull _g) then { [_g] call MISSION_CORE_fnc_deleteGroupCompletely; };
-            };
         };
     } else {
         if (!isNull _grp) then { [_grp] call MISSION_CORE_fnc_deleteGroupCompletely; };

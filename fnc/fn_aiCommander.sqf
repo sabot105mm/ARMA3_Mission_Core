@@ -66,3 +66,6 @@ call compile preprocessFileLineNumbers "fnc\commander\fn_objectiveDirector.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_longRangeReaction.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_groupMaintenance.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_defenseSpotLoop.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_truckCleanupLoop.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_orderedVehicleCleanup.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_quadrantEngage.sqf";

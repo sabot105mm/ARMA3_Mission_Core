@@ -54,9 +54,22 @@ MISSION_CORE_fnc_getContestedMarkers = {
     } forEach _playersA;
 
     // Broadcast the names of currently contested markers so clients (recruit menu) can know which
-    // friendly markers are under attack / need defending.
-    MISSION_CORE_CONTESTED_MARKERS = _zones apply { _x select 0 };
-    publicVariable "MISSION_CORE_CONTESTED_MARKERS";
+    // friendly markers are under attack / need defending. Throttled: this function is called from
+    // many independent server loops every tick, so only push a broadcast when the contested set
+    // actually CHANGED (and at most once per 5s) - otherwise we serialize the same list over the
+    // network dozens of times a second. MISSION_CORE_CONTESTED_MARKERS always holds the last
+    // value sent, so a change that arrives mid-throttle is still detected and broadcast next pass.
+    private _zonedNames = _zones apply { _x select 0 };
+    if (isNil "MISSION_CORE_CONTESTED_LAST_BROADCAST") then { MISSION_CORE_CONTESTED_LAST_BROADCAST = -1e10; };
+    if (isNil "MISSION_CORE_CONTESTED_MARKERS") then { MISSION_CORE_CONTESTED_MARKERS = []; };
+    private _against = +MISSION_CORE_CONTESTED_MARKERS;
+    private _changed = { _x in _zonedNames } count _against != count _against
+        || { (_x in _against) } count _zonedNames != count _zonedNames;
+    if (_changed && { time - MISSION_CORE_CONTESTED_LAST_BROADCAST > 5 }) then {
+        MISSION_CORE_CONTESTED_LAST_BROADCAST = time;
+        MISSION_CORE_CONTESTED_MARKERS = _zonedNames;
+        publicVariable "MISSION_CORE_CONTESTED_MARKERS";
+    };
 
     _zones
 };

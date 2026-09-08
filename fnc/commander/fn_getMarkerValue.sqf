@@ -12,11 +12,13 @@ MISSION_CORE_fnc_getMarkerValue = {
         case "hq": { 100 };
         case "airfield": { 90 };
         case "factory": { 80 };
+        case "powerplant": { 70 };
         case "port": { 80 };
         case "base": { 75 };
         case "depot": { 70 };
         case "town": { 60 };
         case "compound": { 50 };
+        case "solar": { 35 };
         case "outpost": { 30 };
         default { _importance * 20 };
     };

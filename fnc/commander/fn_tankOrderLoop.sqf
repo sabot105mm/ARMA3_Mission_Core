@@ -114,13 +114,19 @@ MISSION_CORE_fnc_tankDeployAbstract = {
     private _spawn = [_spawnPos, 0, 100, 15, 0, 0.5, 0] call BIS_fnc_findSafePos;
     if (count _spawn < 2) then { _spawn = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
     if (count _spawn == 2) then { _spawn pushBack 0; };
+    // Column the tanks: an abstract arrival delivers _count tanks in a line on the road rather
+    // than stacking them all on the single safe spot.
+    private _colSpots = [_spawn, [150, 150], _count, 20] call MISSION_CORE_fnc_findVehicleColumnPos;
     private _vehs = [];
     private _grp = createGroup _side;
     for "_i" from 1 to _count do {
-        private _veh = createVehicle [_vehClass, [_spawn] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+        private _spot = if (_i - 1 < count _colSpots) then { _colSpots select (_i - 1) } else { _spawn };
+        if (count _spot == 2) then { _spot pushBack 0; };
+        private _veh = createVehicle [_vehClass, [_spot] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+        [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
         _vehs pushBack _veh;
         _grp addVehicle _veh;
-        for "_c" from 1 to 3 do { _grp createUnit [_crewClass, _spawn, [], 0, "NONE"]; };
+        for "_c" from 1 to 3 do { _grp createUnit [_crewClass, _spot, [], 0, "NONE"]; };
     };
     private _crewIdx = 0;
     {
@@ -406,7 +412,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
                                 _fwp setWaypointType "MOVE";
                                 _fwp setWaypointSpeed "NORMAL";
                                 _fwp setWaypointBehaviour "CARELESS";
-                                _fwp setWaypointScript "transport_tankWriteoff.sqf";
+                                _fwp setWaypointScript "fnc\commander\transport_tankWriteoff.sqf";
                                 _runnerGrp setCurrentWaypoint _fwp;
                                 diag_log format ["DYNAMIC TANK: %1 crew bailed (write-off) - running to %2", _sDepot, if (count _fb > 0) then { _fb select 0 } else { "home" }];
                             };
@@ -473,13 +479,19 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     private _spawn = [_curPos, 0, 100, 15, 0, 0.5, 0] call BIS_fnc_findSafePos;
                     if (count _spawn < 2) then { _spawn = [_curPos] call MISSION_CORE_fnc_ensureLandPos; };
                     if (count _spawn == 2) then { _spawn pushBack 0; };
+                    // Column the tanks: the materialized convoy spawns as a road line instead of all
+                    // tanks stacked on one spot (convoy driving style, closely spaced).
+                    private _colSpots = [_spawn, [150, 150], _sCount, 20] call MISSION_CORE_fnc_findVehicleColumnPos;
                     private _vehs = [];
                     private _grp = createGroup _sSide;
                     for "_i" from 1 to _sCount do {
-                        private _veh = createVehicle [selectRandom _mbtClasses, [_spawn] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+                        private _spot = if (_i - 1 < count _colSpots) then { _colSpots select (_i - 1) } else { _spawn };
+                        if (count _spot == 2) then { _spot pushBack 0; };
+                        private _veh = createVehicle [selectRandom _mbtClasses, [_spot] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+                        [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
                         _vehs pushBack _veh;
                         _grp addVehicle _veh;
-                        for "_c" from 1 to 3 do { _grp createUnit [_crewClass, _spawn, [], 0, "NONE"]; };
+                        for "_c" from 1 to 3 do { _grp createUnit [_crewClass, _spot, [], 0, "NONE"]; };
                     };
                     private _crewIdx = 0;
                     {
@@ -499,7 +511,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     _wp setWaypointType "MOVE";
                     _wp setWaypointSpeed "FULL";
                     _wp setWaypointBehaviour "CARELESS";
-                    _wp setWaypointScript "transport_tankArrival.sqf";
+                    _wp setWaypointScript "fnc\commander\transport_tankArrival.sqf";
                     _grp setCurrentWaypoint _wp;
                     // Destroyed-en-route cleanup: if players kill the WHOLE convoy while it drives, the
                     // arrival waypoint never completes so transport_tankArrival.sqf can never write it

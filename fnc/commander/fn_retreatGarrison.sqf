@@ -30,18 +30,10 @@ MISSION_CORE_fnc_retreatGarrison = {
             _wp setWaypointType "MOVE";
             _wp setWaypointSpeed "FULL";
             _wp setWaypointBehaviour "AWARE";
+            // Despawn when the squad reaches the closest friendly marker - transport_retreatArrive.sqf
+            // fires on the MOVE waypoint's completion, no 5s polling loop.
+            _wp setWaypointScript "fnc\commander\transport_retreatArrive.sqf";
             _x setCurrentWaypoint _wp;
-            // Despawn when the squad reaches the closest friendly marker (or the 5-min fallback).
-            [_x, _dest, _locName] spawn {
-                params ["_g", "_dest", "_srcName"];
-                private _t = time + 300;
-                waitUntil { sleep 5; isNull _g || { { alive _x } count units _g == 0 } || { (leader _g) distance2D _dest < 150 } || { time > _t } };
-                if (!isNull _g) then {
-                    diag_log format ["DYNAMIC RETREAT: %1 despawned %2 at %3", _srcName, groupId _g, _dest];
-                    // Also delete any dedicated foot-transport driver group + truck, not just the squad
-                    [_g] call MISSION_CORE_fnc_deleteGroupCompletely;
-                };
-            };
         };
     } forEach MISSION_CORE_SPAWNED_GROUPS;
     diag_log format ["DYNAMIC RETREAT: %1 garrison retreating to %2", _locName, _ally];

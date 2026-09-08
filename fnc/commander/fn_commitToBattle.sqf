@@ -34,6 +34,16 @@ MISSION_CORE_fnc_commitToBattle = {
             { !(_grp getVariable ["MISSION_CORE_AA_DEFENSE", false]) } &&
             { !(_grp getVariable ["MISSION_CORE_DEFENSE_GROUP", false]) } &&
             { (_grp getVariable ["MISSION_CORE_ORDER", ""]) in ["", "defend", "engage", "attack", "counterattack", "reinforce"] }) then {
+            // A squad the player-hunt director committed stays on its hunt - the commander never
+            // yanks a hunting squad to a different contested marker mid-sweep.
+            if ((_grp getVariable ["MISSION_CORE_HUNT_KEY", ""]) != "") then { continue; };
+            // A squad STAGED but not yet released for a quadrant is owned by the quadrant loop -
+            // committing it here would empty the staging queue and stall the quadrant response.
+            if ([_grp] call MISSION_CORE_fnc_isQuadrantStaged) then { continue; };
+            // A squad already RELEASED onto a quadrant patrol is owned by the quadrant loop too -
+            // its sweep must never collapse onto the marker center (sendCounterAttack has the same
+            // choke-point guard).
+            if ((_grp getVariable ["MISSION_CORE_ORDER", ""]) == "engage" && { (_grp getVariable ["MISSION_CORE_QUAD_MARKER", ""]) != "" }) then { continue; };
             private _gPos = getPos leader _grp;
             // PERMANENT RULE: a group that spawned from a contested zone defends ITS OWN fight -
             // never march a zone's garrison to a DIFFERENT contested zone. If this group's origin
@@ -60,14 +70,21 @@ MISSION_CORE_fnc_commitToBattle = {
                 } forEach _contested;
             };
             if (count _bestMkr > 0) then {
-                // Already counter-attacking this exact marker: leave it alone. Without this guard
-                // the battle loop re-issues the assault every tick and yanks the group's waypoints
-                // back and forth with the armor loop.
+                // Already dispatched to this exact contested marker: leave it alone. Without this
+                // guard the battle loop / defense watchdog re-issue the assault every couple of
+                // minutes, flipping the group's ORDER and yanking its waypoints back and forth, so
+                // the fight never settles. A group that has already been sent here (via footArrival,
+                // quadrant engage, or a previous commit) is owned by the quadrant/patrol handling and
+                // must NOT be re-routed to the marker center. This check is ORDER-independent because
+                // the defense watchdog can flip the group to "defend"/"attack".
+                if ((_grp getVariable ["MISSION_CORE_DISPATCH_MARKER", ""]) == (_bestMkr select 0)) then { continue; };
+                // ...or already counter-attacking this exact marker (the armor loop's guard).
                 private _cur = _grp getVariable ["MISSION_CORE_ORDER", ""];
                 private _at = _grp getVariable ["MISSION_CORE_ATTACK_TARGET", [0, 0, 0]];
                 if (_cur == "counterattack" && { (_bestMkr select 1) distance _at < 200 }) then { continue; };
                 if ({ vehicle _x == _x } count units _grp == count units _grp) then { _footCount = _footCount + 1; };
                 [_grp, _bestMkr select 1, _bestMkr select 2] call MISSION_CORE_fnc_sendCounterAttack;
+                _grp setVariable ["MISSION_CORE_DISPATCH_MARKER", _bestMkr select 0];
                 diag_log format ["AI COMMANDER: committed %1 to contested %2", groupId _grp, _bestMkr select 0];
                 _count = _count + 1;
             };

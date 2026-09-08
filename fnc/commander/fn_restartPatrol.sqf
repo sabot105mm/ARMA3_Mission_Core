@@ -4,6 +4,14 @@ MISSION_CORE_fnc_restartPatrol = {
     // Groups on a one-way attack task never revert to their old patrol waypoints - they stay on
     // the task. Defend/engage groups are temporary combat states and may resume patrol.
     if ((_group getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "counterattack", "reinforce"]) exitWith {};
+    // Quadrant-committed groups stay on their sector sweep - never revert them to a whole-marker
+    // random patrol (that scatters them across the center and the far side).
+    if ((_group getVariable ["MISSION_CORE_ORDER", ""]) == "engage" && { (_group getVariable ["MISSION_CORE_QUAD_MARKER", ""]) != "" }) exitWith {};
+    // A squad the player-hunt director committed stays on its hunt - no patrol restart mid-sweep.
+    // The hunt clears the key when it retreats.
+    if ((_group getVariable ["MISSION_CORE_ORDER", ""]) == "hunt" || { (_group getVariable ["MISSION_CORE_HUNT_KEY", ""]) != "" }) exitWith {};
+    // A squad staged for a quadrant release is claimed - never revert it to a random patrol.
+    if ([_group] call MISSION_CORE_fnc_isQuadrantStaged) exitWith {};
     // Skip BLUFOR patrols if disabled
     private _side = side _group;
     private _bluforPatrol = ["bluforPatrolMarkers", 0] call MISSION_CORE_fnc_tune;

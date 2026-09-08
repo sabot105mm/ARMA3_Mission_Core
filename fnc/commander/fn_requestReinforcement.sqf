@@ -23,11 +23,21 @@ MISSION_CORE_fnc_requestReinforcement = {
         if (_zIdx >= 0 && { _locPos distance ((MISSION_CORE_CACHED_POSITIONS select _zIdx) select 1) < 4000 }) exitWith {};
     };
 
-    // Find nearest friendly REDFOR location with positive supply
+    // Find nearest friendly REDFOR location with positive supply. PERMANENT RULE: outposts /
+    // powerplants / solar are static tiny garrisons - they never act as reinforcement GIVERS
+    // (no supply dispatched).
     private _providers = MISSION_CORE_CACHED_POSITIONS select {
         (_x select 4) == EAST &&
         { (_x select 0) != _locName } &&
+        { !([_x] call MISSION_CORE_fnc_isLightInfrastructure) } &&
         { (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_x select 0, 0]) > (_x select 7) * 10 }
+    };
+    // AMMO-aware provider: when the requesting marker is low on ammo, prefer a provider that also
+    // has ammo stock (a stocked depot) so the reinforcement can pair an ammo top-up. A provider
+    // with >= 10 ammo ranks first; suppliers with none still field men but are de-prioritized.
+    if ([_locName] call MISSION_CORE_fnc_getAmmoFraction < 0.3) then {
+        private _stocked = _providers select { MISSION_CORE_LOCATION_AMMO getOrDefault [(_x select 0), 0] >= 10 };
+        if (count _stocked > 0) then { _providers = _stocked; } else { diag_log format ["DYNAMIC REINF: %1 low on ammo but no stocked provider found", _locName]; };
     };
     if (count _providers == 0) exitWith {};
     private _provider = _providers select 0;

@@ -13,12 +13,22 @@ MISSION_CORE_fnc_loadTune = {
     MISSION_CORE_SETTINGS = createHashMap;
     private _cfg = missionConfigFile >> "MISSION_CORE_TUNE";
     if (isClass _cfg) then {
-        {
-            private _key = configName _x;
-            MISSION_CORE_SETTINGS set [_key, getNumber _x];
-        } forEach ("true" configClasses _cfg);
+        // Iterate EVERY config entry, not just subclasses: the tune keys are numeric PROPERTIES and
+        // configClasses only walks child classes (which never exist here, so it always returned 0).
+        for "_i" from 0 to (count _cfg - 1) do {
+            private _entry = _cfg select _i;
+            if (isNumber _entry) then {
+                MISSION_CORE_SETTINGS set [configName _entry, getNumber _entry];
+            };
+        };
+        diag_log format ["TUNE: loaded %1 values (quadrantReleasePerTick=%2, quadrantPerTargetMax=%3, quadrantBatchInterval=%4, quadrantGraceTime=%5)", count MISSION_CORE_SETTINGS,
+            MISSION_CORE_SETTINGS getOrDefault ["quadrantReleasePerTick", "MISSING"],
+            MISSION_CORE_SETTINGS getOrDefault ["quadrantPerTargetMax", "MISSING"],
+            MISSION_CORE_SETTINGS getOrDefault ["quadrantBatchInterval", "MISSING"],
+            MISSION_CORE_SETTINGS getOrDefault ["quadrantGraceTime", "MISSING"]];
+    } else {
+        diag_log "TUNE: MISSION_CORE_TUNE class NOT FOUND in missionConfigFile - defaults will be used";
     };
-    diag_log format ["TUNE: loaded %1 values", count MISSION_CORE_SETTINGS];
 };
 
 MISSION_CORE_fnc_tune = {

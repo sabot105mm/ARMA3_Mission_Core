@@ -18,7 +18,7 @@ MISSION_CORE_fnc_aiAssaultLoop = {
             // Methods once used to restore confidence are deliberately removed.
         };
         if (!MISSION_CORE_ASSAULT_ACTIVE && time >= MISSION_CORE_ASSAULT_COOLDOWN) then {
-        private _redLocs = MISSION_CORE_LOCATIONS select { _x select 5 == EAST && { toLower (_x select 2) find "factory" == -1 } };
+        private _redLocs = MISSION_CORE_LOCATIONS select { _x select 5 == EAST && { toLower (_x select 2) find "factory" == -1 && { !([_x] call MISSION_CORE_fnc_isLightInfrastructure) } } };
         private _bluLocs = MISSION_CORE_LOCATIONS select { _x select 5 == WEST };
         {
             private _loc = _x;
@@ -97,11 +97,13 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                     case 1: { 0.03 };  // after 4 repels - almost never attacks
                     default { 1 };     // confidence 0: the single all-out attack
                 };
-                // Supplies make a marker more willing to press an attack. Modest bonus only:
-                // +0.15 at 100+ supply, scaled with current stock. Exhausted markers still
-                // never attack; the all-out assault still needs confidence 0, not supplies.
-                private _supplyBoost = ((MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0]) / 100) min 0.15;
-                _willingChance = _willingChance + _supplyBoost;
+                // AMMO is the primary driver of aggression. Ammo-scare markers hold back:
+                // <70% halves the chance, <30% goes fully defensive (no attack), 0% passive.
+                // The one all-out assault still requires confidence 0 AND enough ammo to fight.
+                private _ammoMult = [_locName] call MISSION_CORE_fnc_ammoAggressionMult;
+                if (_ammoMult > 0) then {
+                    _willingChance = _willingChance * _ammoMult;
+                };
                 _assaultChance = (_willingChance * (if (_conf <= 0) then { 1 } else { _supportFactor })) min 0.95;
                 };
             };
@@ -144,6 +146,8 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                     MISSION_CORE_EXHAUSTED_MARKERS set [_locName, true];
                     diag_log format ["AI ASSAULT: %1 commits ALL-OUT assault on %2 - exhausted forever after", _locName, _targetName];
                 };
+                // AMMO: mounting a full assault wave costs ammo from the attacking marker.
+                [_locName, ["ammoCostAssaultWave", 3] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_consumeAmmo;
 
                 // Armor support: the assault marker requests up to 4 factory-built MBTs and HOLDS
                 // the attack until they arrive. Reset the delivery ledger to 0 (only tanks arriving
@@ -277,15 +281,20 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                             if (count _mbtClasses > 0) then {
                                 private _col = createGroup EAST;
                                 private _colVehs = [];
-                                private _spawnPos = [_sourcePos, 0, 100, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
+                                private _spawnPos = [_sourcePos, [150, 150], 15] call MISSION_CORE_fnc_findVehiclePos;
                                 if (count _spawnPos < 2) then { _spawnPos = _sourcePos; };
                                 if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
+                                // Column the abstract-delivered tanks on the road so the assault force
+                                // appears as a line of armor driving in, not a stack on one spot.
+                                private _colSpots = [_spawnPos, [150, 150], _missing, 20] call MISSION_CORE_fnc_findVehicleColumnPos;
                                 for "_mc" from 1 to _missing do {
-                                    private _tv = createVehicle [selectRandom _mbtClasses, [_spawnPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+                                    private _spot = if (_mc - 1 < count _colSpots) then { _colSpots select (_mc - 1) } else { _spawnPos };
+                                    if (count _spot == 2) then { _spot pushBack 0; };
+                                    private _tv = createVehicle [selectRandom _mbtClasses, [_spot] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
                                     _col addVehicle _tv;
                                     _colVehs pushBack _tv;
-                                    for "_tc" from 1 to 3 do { _col createUnit ["O_crew_F", _spawnPos, [], 0, "NONE"]; };
-                                    _tv setDir (random 360);
+                                    for "_tc" from 1 to 3 do { _col createUnit ["O_crew_F", _spot, [], 0, "NONE"]; };
+                                    [_tv] call MISSION_CORE_fnc_alignVehicleToRoad;
                                 };
                                 private _crew1 = units _col;
                                 private _ci = 0;
@@ -300,6 +309,10 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                                 _col setVariable ["MISSION_CORE_ORIGIN_MARKER", _sourceName];
                                 if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
                                 MISSION_CORE_SPAWNED_GROUPS pushBack _col;
+                                // Track the assault tanks under the ordered-vehicle cleanup: they are
+                                // ordered (sendCounterAttack below) to leave spawn for _targetPos; one
+                                // that never leaves is recycled and its slot freed.
+                                { [_x, _targetPos] call MISSION_CORE_fnc_tagOrderedVehicle; } forEach _colVehs;
                                 _tankGroups pushBack _col;
                                 diag_log format ["AI ASSAULT: %1 spawned %2 abstract-delivered tanks into the assault on %3", _sourceName, _missing, _targetName];
                             };
@@ -393,7 +406,7 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                             _wpRing setWaypointType "MOVE";
                             _wpRing setWaypointSpeed "FULL";
                             _wpRing setWaypointBehaviour "AWARE";
-                            _wpRing setWaypointScript "transport_assaultUnload.sqf";
+                            _wpRing setWaypointScript "fnc\commander\transport_assaultUnload.sqf";
                             if (!isNull _waveDrvGrp) then {
                                 // MOVE first (pre-1.22 rule), then TRANSPORT UNLOAD at the ring.
                                 private _wpDrvMove = _waveDrvGrp addWaypoint [_targetPos, _wUnload];
@@ -417,6 +430,12 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                             _waveGrp setCurrentWaypoint _wpRing;
                         };
                         _assaultWaves pushBack _waveGrp;
+                        // Register the wave in the global spawn registry so the per-side foot-squad
+                        // cap (countFootSquads) counts this wave before the loop spawns the next one,
+                        // and so the wave obeys normal cleanup. Without this the cap check at the top
+                        // of the loop never saw waves 2+, letting one assault overshoot the cap.
+                        if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+                        MISSION_CORE_SPAWNED_GROUPS pushBack _waveGrp;
                     };
 
                     sleep 300;
@@ -442,6 +461,10 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                     } forEach _waveDrvGroups;
                     { if (!isNull _x) then { deleteVehicle _x; }; } forEach _waveTrucks;
                     { if (!isNull _x) then { deleteGroup _x; }; } forEach _waveDrvGroups;
+                    // Wave infantry groups were registered in MISSION_CORE_SPAWNED_GROUPS to count
+                    // toward the foot cap. They are now resolved (killed) - drop them from the global
+                    // registry so the cap isn't cluttered with dead residue.
+                    if (!isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = MISSION_CORE_SPAWNED_GROUPS - _assaultWaves; };
                     private _tgtLbl3 = [_targetName] call MISSION_CORE_fnc_getLocationLabel;
                     diag_log format ["AI ASSAULT ENDED: %1/%2 OPFOR killed (80%% resolution)", _totalKilled, _totalUnits];
                     ["DynOps_AssaultRepelled",

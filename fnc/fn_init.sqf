@@ -202,6 +202,15 @@ if (isServer) then {
     call compile preprocessFileLineNumbers "fnc\fn_manpower.sqf";
     [] call MISSION_CORE_fnc_initManpower;
 
+    // Renown + Force Recon: team currency from captures/convoys, abstract recon dice loops
+    call compile preprocessFileLineNumbers "fnc\fn_recon.sqf";
+    [] call MISSION_CORE_fnc_initRecon;
+
+    // Ammunition system: per-marker ammo resource that drives AI aggression
+    call compile preprocessFileLineNumbers "fnc\fn_ammo.sqf";
+    [] call MISSION_CORE_fnc_initAmmo;
+    [] spawn MISSION_CORE_fnc_ammoLoop;
+
     // 3a. Build the per-marker isFlatEmpty safe vehicle spawn cache (async - isFlatEmpty needs
     // a scheduled scope and is heavy enough that it must not block init). findVehiclePos will
     // start reusing these confirmed flat, clear spots as soon as they are ready.
@@ -292,7 +301,10 @@ if (isServer) then {
     [] spawn MISSION_CORE_fnc_spawnQueueLoop;
     [] spawn MISSION_CORE_fnc_groupMaintenance;
     [] spawn MISSION_CORE_fnc_defenseSpotLoop;
+    [] spawn MISSION_CORE_fnc_truckCleanupLoop;
+    [] spawn MISSION_CORE_fnc_orderedVehicleCleanupLoop;
     [] spawn MISSION_CORE_fnc_convoyLoop;
+    [] spawn MISSION_CORE_fnc_reconLoop;
     [] spawn MISSION_CORE_fnc_tankOrderLoop;
     if (MISSION_CORE_DEBUG_VISUALS) then { [] spawn MISSION_CORE_fnc_debugVisuals; };
 

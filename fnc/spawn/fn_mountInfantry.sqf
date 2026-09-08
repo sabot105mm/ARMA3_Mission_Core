@@ -65,16 +65,31 @@ MISSION_CORE_fnc_mountInfantry = {
     // far enough out mounts a truck and rides to the battle - never forced to advance on foot.
     _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos;
     private _lastTruckPos = MISSION_CORE_TRUCK_LAST_POS getOrDefault [str _side, [0, 0, 0]];
+    // PERMANENT RULE: transports mount ON the road when one is available (a truck rolls out along
+    // the road, facing it); fall back to a spread-out clear spot otherwise.
     private _mount = _pos;
-    for "_i" from 1 to 12 do {
-        private _cand = _pos getPos [30 + random 50, random 360];
-        private _tooCloseLast = (count _lastTruckPos > 2) && { _cand distance _lastTruckPos < 35 };
-        if ([_cand] call MISSION_CORE_fnc_isDryPos && { !([_cand] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) } && { !_tooCloseLast }) exitWith { _mount = _cand; };
+    private _mountOnRoad = false;
+    private _roads = _pos nearRoads 150;
+    if (count _roads > 0) then {
+        private _rMax = ((count _roads) - 1) min 24;
+        for "_r" from 0 to _rMax do {
+            private _cand = getPosATL (_roads select _r);
+            private _tooCloseLast = (count _lastTruckPos > 2) && { _cand distance _lastTruckPos < 35 };
+            if ([_cand] call MISSION_CORE_fnc_isDryPos && { !([_cand] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) } && { !_tooCloseLast }) exitWith { _mount = _cand; _mountOnRoad = true; };
+        };
+    };
+    if (!_mountOnRoad) then {
+        for "_i" from 1 to 12 do {
+            private _cand = _pos getPos [30 + random 50, random 360];
+            private _tooCloseLast = (count _lastTruckPos > 2) && { _cand distance _lastTruckPos < 35 };
+            if ([_cand] call MISSION_CORE_fnc_isDryPos && { !([_cand] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) } && { !_tooCloseLast }) exitWith { _mount = _cand; };
+        };
     };
     _pos = _mount;
     MISSION_CORE_TRUCK_LAST_POS set [str _side, _pos];
     private _truck = createVehicle [_vehClass, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
     _grp addVehicle _truck;
+    [_truck] call MISSION_CORE_fnc_alignVehicleToRoad;
     _truck setVariable ["MISSION_CORE_TRUCK_ORIGIN", _pos];
     private _hasGun = [_truck] call MISSION_CORE_fnc_hasMountedGun;
     if (!_hasGun) then {

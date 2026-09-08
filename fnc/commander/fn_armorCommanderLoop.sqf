@@ -3,11 +3,17 @@ MISSION_CORE_fnc_armorCommanderLoop = {
     diag_log "AI ARMOR COMMANDER: Started";
     while { true } do {
         sleep 10 + random 5;
+        // Snapshot the live engine unit/group lists ONCE per tick and reuse them across the side and
+        // group loops below. Calling allUnits/allGroups repeatedly (per group, per location) refetches
+        // and allocates a fresh list each time - a huge CPU cost on large maps. The snapshot is
+        // behavior-neutral: allUnits/allGroups only change between frames, not mid-script.
+        private _allUnits = allUnits;
+        private _allGroups = allGroups;
         {
             private _side = _x;
             private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
             private _enemySide = if (_side == WEST) then { EAST } else { WEST };
-            private _armorGroups = allGroups select {
+            private _armorGroups = _allGroups select {
                 _x getVariable [_sideVar, false] &&
                 { (_x getVariable ["MISSION_CORE_ARMOR_SLOT", ""]) in ["mbt", "mech"] } &&
                 { count units _x > 0 }
@@ -41,7 +47,7 @@ MISSION_CORE_fnc_armorCommanderLoop = {
                 private _isAttacking = false;
                 if (_side == EAST && !(isNil "MISSION_CORE_ASSAULT_ACTIVE")) then { _isAttacking = MISSION_CORE_ASSAULT_ACTIVE; };
                 if (!_isAttacking) then {
-                    _isAttacking = allGroups findIf {
+                    _isAttacking = _allGroups findIf {
                         _x getVariable [_sideVar, false] &&
                         { (_x getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "counterattack"] }
                     } > -1;
@@ -58,7 +64,7 @@ MISSION_CORE_fnc_armorCommanderLoop = {
                 private _cooldown = _grp getVariable ["MISSION_CORE_ARMOR_COOLDOWN", 0];
 
                 // Priority 1 - DEFEND: enemy units near home position
-                private _defendEnemies = allUnits select {
+                private _defendEnemies = _allUnits select {
                     side _x == _enemySide && { alive _x } && { _x distance _homePos < 1000 }
                 };
                 if (count _defendEnemies > 0) then {
@@ -148,7 +154,7 @@ MISSION_CORE_fnc_armorCommanderLoop = {
                     private _lOwner = _x select 5;
                     private _lPos = (_x select 1) select 0;
                     if (_lOwner == _side) then {
-                        private _enemyNear = allUnits select { side _x == _enemySide && { alive _x } && { _x distance _lPos < 900 } };
+                        private _enemyNear = _allUnits select { side _x == _enemySide && { alive _x } && { _x distance _lPos < 900 } };
                         if (count _enemyNear > 0) then {
                             private _d = _homePos distance _lPos;
                             if (_d < _threatDist) then { _threatDist = _d; _threatLoc = _lPos; _foundThreat = true; };

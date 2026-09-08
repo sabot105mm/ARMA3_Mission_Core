@@ -18,7 +18,12 @@ MISSION_CORE_fnc_replenishMarker = {
     // Spawn inside the marker at a forest/building spot when available (never popping into the
     // players' sight), otherwise just beyond the marker edge. Always on the side of the marker
     // that faces AWAY from the nearest player.
+    // SMALL MARKER REPLENISH: a tiny marker has no tree cover inside its footprint - stretch the
+    // spawn search well outside the marker so replenish squads materialize in real terrain cover
+    // (tree clusters) and then march in, instead of popping inside the small open box.
     private _edgeRadius = ((_markerSize select 0) max (_markerSize select 1)) + 75;
+    private _minEdge = ["replenishMinEdgeRadius", 350] call MISSION_CORE_fnc_tune;
+    if (_edgeRadius < _minEdge) then { _edgeRadius = _minEdge; };
     private _missing = (_capacity - _alive) max 1;
     // Manpower is 1-for-1: a marker only fields the men its funding base actually delivered.
     private _toSpawn = ((_missing min 8) min _mpBudget) max 0;

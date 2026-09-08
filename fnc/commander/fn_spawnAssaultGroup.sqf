@@ -26,6 +26,9 @@ MISSION_CORE_fnc_spawnAssaultGroup = {
                     private _n = if (count _l > 0) then { _l select 0 } else { "" };
                     [_s, _t, _n] call MISSION_CORE_fnc_requestArmorReinforcement;
                 }];
+                // Ordered away (sendCounterAttack below) - track it so a tank that never leaves
+                // spawn is recycled instead of parking on a free slot.
+                [_v, _targetPos] call MISSION_CORE_fnc_tagOrderedVehicle;
             };
         } forEach units _grp;
     };
@@ -43,6 +46,7 @@ MISSION_CORE_fnc_spawnAssaultGroup = {
                     private _n = if (count _l > 0) then { _l select 0 } else { "" };
                     [_s, _t, _n] call MISSION_CORE_fnc_requestArmorReinforcement;
                 }];
+                [_v, _targetPos] call MISSION_CORE_fnc_tagOrderedVehicle;
             };
         } forEach units _grp;
     };

@@ -33,11 +33,12 @@ MISSION_CORE_fnc_guardSpawnKill = {
                 private _vehClass = typeOf _veh;
                 deleteVehicle _veh;
                 // Find a clear spot and rebuild the vehicle
-                private _newPos = [_spawnPos, 0, 100, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
+                private _newPos = [_spawnPos, [100, 100], 10] call MISSION_CORE_fnc_findVehiclePos;
                 if (count _newPos < 2) then { _newPos = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
                 if (count _newPos == 2) then { _newPos pushBack 0; };
                 private _newVeh = _vehClass createVehicle ([_newPos] call MISSION_CORE_fnc_liftSpawn);
                 _grp addVehicle _newVeh;
+                [_newVeh] call MISSION_CORE_fnc_alignVehicleToRoad;
                 // Re-seat surviving crew, then top up with fresh crew
                 private _crewClass = if (_side == WEST) then { "B_crew_F" } else { "O_crew_F" };
                 private _seated = [];

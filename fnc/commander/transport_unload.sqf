@@ -11,6 +11,18 @@ if (isNull _grp || { count units _grp == 0 }) exitWith {};
 private _veh = vehicle _leader;
 if (isNull _veh) exitWith {};
 
+// Bring the truck to a FULL STOP before ejecting anyone: the UNLOAD waypoint completes against a
+// tight radius while the truck is still rolling, and ejecting from a moving vehicle throws men out
+// at speed and kills them on landing. Order the driver to stop and wait until the wheels actually
+// stop, then eject. New waypoints assigned later cancel the doStop so the truck can drive on.
+if (alive _veh) then {
+    _veh setSpeedMode "LIMITED";
+    private _drvStop = driver _veh;
+    if (!isNull _drvStop) then { _drvStop doStop; };
+    private _stopBy = time + 6;
+    waitUntil { sleep 0.2; isNull _veh || { !(alive _veh) } || { speed _veh < 2 } || { time > _stopBy } };
+};
+
 // Unlock the transport first: moveOut (like action "Eject") respects the vehicle's lock state, so
 // a locked vehicle would silently stop the driver from being forced out. We unlock, dismount
 // everyone, then re-lock cargo afterwards to keep the on-foot squad from re-boarding.

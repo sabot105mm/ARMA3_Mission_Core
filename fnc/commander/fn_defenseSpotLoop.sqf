@@ -19,13 +19,19 @@ MISSION_CORE_fnc_defenseSpotLoop = {
         // Nothing spawned at all - nothing to react to. Keep looping (a garrison may spawn later,
         // e.g. a recruit or a marker garrison popping in near a player); just skip the per-group pass.
         if (count MISSION_CORE_SPAWNED_GROUPS == 0) then { continue; };
+        // Snapshot allUnits once per tick and reuse for every garrison group below, instead of
+        // re-fetching (and re-allocating) the full list once per group. Behavior-neutral: allUnits
+        // only changes between frames, not while this tick iterates the groups.
+        private _snapUnits = allUnits;
         {
             private _grp = _x;
             if (isNull _grp || { count units _grp == 0 }) then { continue; };
             if (!(_grp getVariable ["MISSION_CORE_REDFOR", false] || _grp getVariable ["MISSION_CORE_BLUFOR", false])) then { continue; };
             // Only idle/patrol/defend groups - never one-way attackers, AA overwatch, or emplacement crews
-            private _order = _grp getVariable ["MISSION_CORE_ORDER", ""];
-            if (!(_order in ["", "defend", "engage"])) then { continue; };
+private _order = _grp getVariable ["MISSION_CORE_ORDER", ""];
+    if (!(_order in ["", "defend", "engage"])) then { continue; };
+    if ((_grp getVariable ["MISSION_CORE_HUNT_KEY", ""]) != "") then { continue; };
+    if ([_grp] call MISSION_CORE_fnc_isQuadrantStaged) then { continue; };
             if (_grp getVariable ["MISSION_CORE_AA_DEFENSE", false]) then { continue; };
             if (_grp getVariable ["MISSION_CORE_AA_TANK", false]) then { continue; };
             private _ldr = leader _grp;
@@ -33,6 +39,12 @@ MISSION_CORE_fnc_defenseSpotLoop = {
             // A leader manning a static weapon / AT guard can't move - leave it
             if (vehicle _ldr isKindOf "StaticWeapon") then { continue; };
             if (_ldr getVariable ["MISSION_CORE_STATIC_GUARD", false]) then { continue; };
+            // A transport truck (foot transport from fn_mountInfantry, convoy from fn_convoyLoop) is
+            // TRANSIENT - it and its driver are not patrol defenders and must never be yanked into an
+            // "alert patrol". Skip any group whose leader is currently riding a truck flagged with
+            // MISSION_CORE_TRUCK_ORIGIN; once the squad dismounts it reacts as foot again.
+            private _ldrVeh = vehicle _ldr;
+            if ((_ldrVeh getVariable ["MISSION_CORE_TRUCK_ORIGIN", []]) isNotEqualTo []) then { continue; };
 
             private _home = _grp getVariable ["MISSION_CORE_MARKER_CENTER", getPos _ldr];
             // Resolve the origin marker's area (size/dir/shape) so the threat test is shape-aware:
@@ -65,46 +77,40 @@ MISSION_CORE_fnc_defenseSpotLoop = {
             private _threat = false;
             {
                 if (alive _x && { (getPosATL _x) inArea [_home, _ma + _prox, _mb + _prox] } && { side _x getFriend _ldrSide < 0.6 }) exitWith { _threat = true };
-            } forEach allUnits;
+            } forEach _snapUnits;
 
-            // This loop only manages groups it itself put on "defend" (ATTACK_TARGET at home). If the
-            // threat has cleared, release them back to patrol instead of leaving them on SAD forever.
-            private _att = _grp getVariable ["MISSION_CORE_ATTACK_TARGET", [0, 0, 0]];
-            if (_order == "defend" && { (_att distance _home) < 100 }) then {
-                if (!_threat) then {
-                    _grp setVariable ["MISSION_CORE_ORDER", ""];
-                    _grp setVariable ["MISSION_CORE_ATTACK_TARGET", [0, 0, 0]];
-                    [_grp] call MISSION_CORE_fnc_restartPatrol;
-                    diag_log format ["AI DEFENSE: %1 no longer threatened - back to patrol", groupId _grp];
-                };
-                continue;
-            };
+            // PERMANENT RULE: never SAD the marker center. A group the quadrant loop already ordered
+            // to engage a player quadrant, or that was already dispatched to this exact marker
+            // (footArrival / commitToBattle / quadrant tag MISSION_CORE_DISPATCH_MARKER), is owned by
+            // the quadrant/patrol/hunt systems - this loop leaves it alone so it never yanks the
+            // squad back onto the clumped center.
+            if ((_grp getVariable ["MISSION_CORE_DISPATCH_MARKER", ""]) == _oMkr && { _oMkr != "" }) then { continue; };
+            if (_grp getVariable ["MISSION_CORE_ORDER", ""] == "engage" && { !((_grp getVariable ["MISSION_CORE_QUAD_MARKER", ""]) == "") }) then { continue; };
 
-            // Already reacting / in cooldown - don't re-yank every tick.
+            // Already reacting / in cooldown - don't re-yank posture every tick.
             if (time < (MISSION_CORE_SPOT_COOLDOWN getOrDefault [(groupId _grp), -99999])) then { continue; };
             if (!_threat) then { continue; };
 
-            // Stop patrol, defend the friendly marker
-            _grp setVariable ["MISSION_CORE_ORDER", "defend"];
-            _grp setVariable ["MISSION_CORE_IDLE", false];
-            _grp setVariable ["MISSION_CORE_PATROLLING", false];
-            _grp setVariable ["MISSION_CORE_ATTACK_TARGET", _home];
-            _ldr setVariable ["MISSION_CORE_PATROLLING", false];
+            // Alert but keep patrol: raise to AWARE/RED WITHOUT SAD-ing the marker center. The
+            // center-clump is gone - quadrant/patrol/hunt own engagement. Keep whatever patrol
+            // waypoints exist; if the group is frozen on a CYCLE, nudge it back onto its first MOVE so
+            // it actually moves while alert; if it has no waypoints at all, (re)issue an alert patrol.
             _grp setBehaviour "AWARE";
             _grp setCombatMode "RED";
-            [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-            // MOVE first (pre-1.22 rule), then SAD so it seeks and engages enemies around the marker.
-            private _wpM = _grp addWaypoint [_home, 80];
-            _wpM setWaypointType "MOVE";
-            _wpM setWaypointSpeed "FULL";
-            _wpM setWaypointBehaviour "COMBAT";
-            private _wp = _grp addWaypoint [_home, 80];
-            _wp setWaypointType "SAD";
-            _wp setWaypointSpeed "FULL";
-            _wp setWaypointBehaviour "COMBAT";
-            _grp setCurrentWaypoint _wpM;
+            _grp setVariable ["MISSION_CORE_IDLE", false];
+            private _wps = waypoints _grp;
+            if (count _wps > 0) then {
+                private _curIdx = (currentWaypoint _grp) min (count _wps - 1);
+                if (waypointType (_wps select _curIdx) == "CYCLE") then {
+                    private _nx = _wps select 0;
+                    { if (waypointType _x != "CYCLE") exitWith { _nx = _x; }; } forEach _wps;
+                    _grp setCurrentWaypoint _nx;
+                };
+            } else {
+                [_grp, _home, _mag] call MISSION_CORE_fnc_issuePatrolAware;
+            };
             MISSION_CORE_SPOT_COOLDOWN set [(groupId _grp), time + 30];
-            diag_log format ["AI DEFENSE: %1 spotted enemy - defending friendly marker", groupId _grp];
+            diag_log format ["AI DEFENSE: %1 alert (AWARE/RED) keeping patrol near %2", groupId _grp, _oMkr];
         } forEach MISSION_CORE_SPAWNED_GROUPS;
     };
 };

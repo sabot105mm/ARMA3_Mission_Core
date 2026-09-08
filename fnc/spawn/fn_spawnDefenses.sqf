@@ -1,6 +1,12 @@
 
 MISSION_CORE_fnc_spawnDefenses = {
     params ["_targetPos", "_targetSize", "_side", "_factionData", "_importance", ["_axisPos", []]];
+    // PERMANENT RULE: Outposts are static tiny garrisons - they get NO bunkers, MG nests or
+    // AT emplacements. The small garrison holds with plain infantry only.
+    if !(isNil "MISSION_CORE_CACHED_POSITIONS") then {
+        private _locAt = [_targetPos] call MISSION_CORE_fnc_getLocByPos;
+        if (count _locAt > 2 && { [_locAt] call MISSION_CORE_fnc_isLightInfrastructure }) exitWith { grpNull };
+    };
     private _axisDir = if (count _axisPos > 0) then { _axisPos getDir _targetPos } else { [_targetPos, _side] call MISSION_CORE_fnc_findDefenseAxis };
     private _sa = _targetSize select 0;
     private _sb = if (count _targetSize > 1) then { _targetSize select 1 } else { _sa };

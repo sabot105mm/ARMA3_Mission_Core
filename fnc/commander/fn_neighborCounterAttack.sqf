@@ -7,6 +7,13 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     // independently with its own neighbor pool below.
     private _zoneList = [_side] call MISSION_CORE_fnc_getContestedMarkers;
     if (_zoneList findIf { (_x select 0) == _locName } == -1) exitWith {};
+    // PERMANENT RULE: outposts / powerplants / solar are static tiny garrisons - they NEVER
+    // receive neighbor reinforcements, manpower credit or counter-attack tanks. A contested
+    // light-infrastructure zone is fought by its own small garrison only.
+    private _selfEntry = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _locName }) param [0, []];
+    if (count _selfEntry > 0 && { [_selfEntry] call MISSION_CORE_fnc_isLightInfrastructure }) exitWith {
+        diag_log format ["LIGHT-INFRA RULE: %1 is light infrastructure - no neighbor reinforcements or tanks", _locName];
+    };
     if (isNil "MISSION_CORE_REINF_COOLDOWN") then { MISSION_CORE_REINF_COOLDOWN = createHashMap; };
     private _last = MISSION_CORE_REINF_COOLDOWN getOrDefault [_locName, -99999];
     if (time - _last < 300) exitWith {};
@@ -40,10 +47,13 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     // own garrison must stay and defend its own fight - so contested markers are excluded from the
     // neighbor pool entirely (no troops dispatched, no manpower credit).
     private _zoneNames = _zoneList apply { _x select 0 };
+    // PERMANENT RULE: outposts / powerplants / solar are static tiny garrisons - they never
+    // send counter-attacks to a neighbor marker (no troops dispatched, no manpower credit).
     private _neighbors = MISSION_CORE_CACHED_POSITIONS select {
         (_x select 4) == _side &&
         { (_x select 0) != _locName } &&
         { !((_x select 0) in _zoneNames) } &&
+        { !([_x] call MISSION_CORE_fnc_isLightInfrastructure) } &&
         { ((_x select 1) distance _locPos) < (["neighborRange", 4000] call MISSION_CORE_fnc_tune) }
     };
     _neighbors = [_neighbors, [], { (_x select 1) distance _locPos }, "ASCEND"] call BIS_fnc_sortBy;
@@ -79,6 +89,13 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     _pool = round (_pool * _budgetFrac);
     if (isNil "MISSION_CORE_REINF_SENT") then { MISSION_CORE_REINF_SENT = createHashMap; };
     private _sentTotal = MISSION_CORE_REINF_SENT getOrDefault [_locName, 0];
+    // AMMO: a low-ammo zone is directly threatened (it is contested) but fights at only 0.3x
+    // budget - it stays mostly on the defensive. At 0 ammo it is fully passive: no counter-attack
+    // at all (budget 0 makes the pool check below exit).
+    private _ammoFrac = [_locName] call MISSION_CORE_fnc_getAmmoFraction;
+    private _ammoFactor = if (_ammoFrac <= 0) then { 0 } else { if (_ammoFrac < 0.3) then { 0.3 } else { [1.0, 0.5] select (_ammoFrac < 0.7) } };
+    _pool = _pool * _ammoFactor;
+
     if (_sentTotal >= _pool) exitWith {
         if (isNil "MISSION_CORE_REINF_EXHAUSTED") then { MISSION_CORE_REINF_EXHAUSTED = createHashMap; };
         MISSION_CORE_REINF_EXHAUSTED set [_locName, true];
@@ -87,6 +104,9 @@ MISSION_CORE_fnc_neighborCounterAttack = {
         [_locName, _locPos, _side] call MISSION_CORE_fnc_deactivateNeighborMarkers;
     };
     diag_log format ["DYNAMIC REINF BUDGET: %1 pool=%2 budgetFrac=%3 sent=%4", _locName, _pool, _budgetFrac, _sentTotal];
+    // AMMO: mounting this counter-attack costs the contested marker ammo.
+    [_locName, ["ammoCostCounterAttack", 2] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_consumeAmmo;
+
     // PERMANENT RULE: counter-attack tanks come from the factory/depot system only - one
     // order for the tier-scaled budget, routed to the nearest warehouse with stock and
     // shipped as a convoy (deduplicated per side+target so it never stacks). Assault order

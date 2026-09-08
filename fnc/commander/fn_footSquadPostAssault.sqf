@@ -15,6 +15,10 @@ MISSION_CORE_fnc_footSquadPostAssault = {
         if (isNull _ldr || { !alive _ldr }) then {
             _done = true;
         } else {
+            // The commander's quadrant system may have claimed this squad mid-assault: that order
+            // owns it now, so this one-shot monitor must stop - no "5min no contact -> return to
+            // origin" yanking a squad off its quadrant patrol.
+            if ((_grp getVariable ["MISSION_CORE_ORDER", ""]) == "engage" && { (_grp getVariable ["MISSION_CORE_QUAD_MARKER", ""]) != "" }) exitWith {};
             // Enemy the squad is actually aware of (knowsAbout > 1.2)
             private _enemy = objNull;
             {
@@ -44,19 +48,19 @@ MISSION_CORE_fnc_footSquadPostAssault = {
                     if (_onFoot && { _ldr distance2D _origin > 700 }) then {
                         private _truck = [_grp, _side, getPos _ldr] call MISSION_CORE_fnc_mountInfantry;
                         if (!isNull _truck) then {
+                            private _drvGrp = _truck getVariable ["MISSION_CORE_DRIVER_GROUP", grpNull];
                             [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
                             private _wpBack = _grp addWaypoint [_origin, 100];
                             _wpBack setWaypointType "GETOUT";
                             _wpBack setWaypointSpeed "FULL";
                             _wpBack setWaypointBehaviour "CARELESS";
                             _grp setCurrentWaypoint _wpBack;
-                            // Once they reach the origin and dismount, resume patrol.
-                            [_grp, _origin] spawn {
-                                params ["_g", "_o"];
-                                private _t = time + 900;
-                                waitUntil { sleep 3; isNull _g || { { alive _x } count units _g == 0 } || { (leader _g) distance2D _o < 150 } || { time > _t } };
-                                if (!isNull _g) then { [_g] call MISSION_CORE_fnc_restartPatrol; };
-                            };
+                            // Once they reach the origin and dismount, transport_returnOrigin.sqf resumes
+                            // their patrol and sends the return truck's driver group back to the truck's
+                            // spawn (despawning truck + driver there) - no polling loops.
+                            _grp setVariable ["MISSION_CORE_RETURN_TRUCK", _truck];
+                            _grp setVariable ["MISSION_CORE_RETURN_DRV", _drvGrp];
+                            _wpBack setWaypointScript "fnc\commander\transport_returnOrigin.sqf";
                         } else {
                             [_grp] call MISSION_CORE_fnc_restartPatrol;
                         };

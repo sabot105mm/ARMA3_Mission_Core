@@ -15,6 +15,14 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
         private _tlr = _targetPos call MISSION_CORE_fnc_getLocByPos;
         if (count _tlr > 0) then { _targetName = _tlr select 0; };
     };
+    // PERMANENT RULE: outposts / powerplants / solar are static tiny garrisons - they hold with
+    // plain infantry only. No armor, APC or replenish reinforcement is ever dispatched TO a
+    // light-infrastructure marker (no tank pool refill, no spawn-kill replacement, no depot order).
+    private _tlrEntry = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _targetName }) param [0, []];
+    if (count _tlrEntry > 0 && { [_tlrEntry] call MISSION_CORE_fnc_isLightInfrastructure }) exitWith {
+        diag_log format ["LIGHT-INFRA RULE: no armor reinforcement for %1 (light infrastructure)", _targetName];
+        false
+    };
     if (isNil "MISSION_CORE_ARMOR_REINF_COOLDOWN") then { MISSION_CORE_ARMOR_REINF_COOLDOWN = createHashMap; };
     private _sideKey = if (_side == WEST) then { "BLUFOR" } else { "REDFOR" };
     private _lastReinf = MISSION_CORE_ARMOR_REINF_COOLDOWN getOrDefault [_sideKey, -99999];
@@ -29,6 +37,15 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
     private _targetImportance = 1;
     private _tl = MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _targetName };
     if (count _tl > 0) then { _targetImportance = (_tl select 0) select 7; };
+    // AMMO: armor reinforcement is an offensive commitment. A target marker below 30% ammo stays
+    // defensive and requests no armor; at 0 ammo it is passive. Dispatching one consumes ammo.
+    private _ammoCostArmor = ["ammoCostArmorReinf", 3] call MISSION_CORE_fnc_tune;
+    if (_targetName != "" && { ([_targetName] call MISSION_CORE_fnc_getAmmoFraction) < 0.3 }) exitWith {
+        diag_log format ["DYNAMIC ARMOR REINF: %1 low on ammo - no armor reinforcement", _targetName];
+    };
+    if (_targetName != "") then {
+        [_targetName, _ammoCostArmor] call MISSION_CORE_fnc_consumeAmmo;
+    };
     // Tank pool refill: if the target marker owns a tank pool and is BELOW it (a tank died),
     // the replacement MUST be an MBT - the pool drives the slot, not the 3:1 mech/inf bias.
     private _poolRefill = false;
@@ -93,6 +110,10 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
         // Spawn beyond the marker edge, on the side facing away from the nearest player, so the
         // foot squad never appears inside the players' sightlines
         private _edgeRadius = ((_mSize select 0) max (_mSize select 1)) + 75;
+        // SMALL MARKER REPLENISH: a tiny marker has no cover inside its footprint - stretch the
+        // spawn search outside the marker so the squad materializes in terrain cover (trees).
+        private _minEdge = ["replenishMinEdgeRadius", 350] call MISSION_CORE_fnc_tune;
+        if (_edgeRadius < _minEdge) then { _edgeRadius = _minEdge; };
         private _players = allPlayers select { alive _x };
         private _farDir = random 360;
         if (count _players > 0) then {
@@ -177,11 +198,17 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
     };
 
     private _grp = createGroup _side;
-    _spawnPos = [_spawnPos, 0, 100, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
-    if (count _spawnPos < 2) then { _spawnPos = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
+    // Road spawn rule: provider/neighbor branches already handed back a road-aware position from
+    // findVehiclePos - do NOT re-roll it onto a random field. Only the no-marker fallback (armor
+    // spawning 1500m out, no provider at all) needs the safety re-roll.
+    if (_providerName == "") then {
+        _spawnPos = [_spawnPos, 0, 100, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
+        if (count _spawnPos < 2) then { _spawnPos = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
+    };
     if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
     private _veh = createVehicle [_vehClass, [_spawnPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
     _grp addVehicle _veh;
+    [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
     private _crewClass = if (_side == WEST) then { "B_crew_F" } else { "O_crew_F" };
     private _crewList = [];
     for "_c" from 1 to 3 do { _crewList pushBack (_grp createUnit [_crewClass, _spawnPos, [], 0, "NONE"]); };
@@ -220,6 +247,9 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
     if (_providerName != "") then {
         private _cur = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_providerName, 0];
         MISSION_CORE_LOCATION_SUPPLY set [_providerName, _cur - _cost];
+        // Track this reinforcement under the ordered-vehicle cleanup: it was ordered (MOVE waypoint
+        // below) to leave spawn for _targetPos, and if it never does the supply cost is refunded.
+        [_veh, _targetPos, ["supply", _providerName, _cost]] call MISSION_CORE_fnc_tagOrderedVehicle;
     };
     diag_log format ["DYNAMIC ARMOR REINF: %1 %2 from %3 -> %4 (cost %5)", _side, _slot, _providerName, _targetName, _cost];
 };

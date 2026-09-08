@@ -4,6 +4,7 @@ call compile preprocessFileLineNumbers "fnc\spawn\fn_ellipseRadius.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_markUnsafeVehicleSpawn.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_isUnsafeVehicleSpawn.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_findVehiclePos.sqf";
+  call compile preprocessFileLineNumbers "fnc\spawn\fn_findVehicleColumnPos.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_findFlatSpawns.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_buildSafeVehicleSpawns.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_getSafeVehicleSpawns.sqf";

@@ -340,7 +340,9 @@ MISSION_CORE_fnc_spawnLocation = {
         // new groups straight into the fight instead of leaving them patrolling their own marker.
         // PERMANENT RULE: a marker that is itself a contested zone NEVER marches its own garrison
         // to a DIFFERENT zone - it defends its own fight (its fresh groups target its own center).
-        if (count _freshGroups > 0 && _owner in [WEST, EAST]) then {
+        // Outposts / powerplants / solar are static tiny garrisons: they never commit ANY fresh
+        // garrison off-marker (light-infrastructure markers stay home).
+        if (count _freshGroups > 0 && _owner in [WEST, EAST] && { !([_loc] call MISSION_CORE_fnc_isLightInfrastructure) }) then {
             private _contestedList = [_owner] call MISSION_CORE_fnc_getContestedMarkers;
             if (count _contestedList > 0) then {
                 private _playersA = allPlayers select { alive _x };

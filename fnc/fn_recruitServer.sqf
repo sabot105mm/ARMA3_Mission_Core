@@ -287,6 +287,10 @@ MISSION_CORE_fnc_serverGarrisonDeploy = {
     };
     if (!_proceed) exitWith { };
 
+    // BIS_fnc_spawnGroup drops vehicles wherever the config formation lands - pull them back
+    // onto a road column near the marker so recruited motorized/mech squads deploy on the road.
+    [_grp, _markerPos, _markerSize] call MISSION_CORE_fnc_alignGroupVehiclesToRoad;
+
     // Tag + origin for garrison counting.
     _grp setVariable ["MISSION_CORE_BLUFOR", true];
     _grp setVariable ["MISSION_CORE_GARRISON", true];
@@ -439,8 +443,9 @@ MISSION_CORE_fnc_serverAddVehicle = {
     };
     if (!_proceed) exitWith { };
 
-    // Spawn position near the marker center.
-    private _pos = [_markerPos, 20, 120, 15, 0, 0.6, 0] call BIS_fnc_findSafePos;
+    // Spawn position near the marker center - PERMANENT RULE: recruited armor rolls out ON the
+    // nearest road inside the marker, facing along it, instead of sitting in a field.
+    private _pos = [_markerPos, [120, 120], 15] call MISSION_CORE_fnc_findVehiclePos;
     if (count _pos < 2) then { _pos = [_markerPos] call MISSION_CORE_fnc_ensureLandPos; };
     if (count _pos == 2) then { _pos pushBack 0; };
 
@@ -455,6 +460,7 @@ MISSION_CORE_fnc_serverAddVehicle = {
     } else {
         _veh = createVehicle [_vehClass, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
         _veh setDir ((getDir _veh) + 180);
+        [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
         _grp = createVehicleCrew _veh;
     };
     if (isNull _veh) then {
@@ -659,6 +665,8 @@ MISSION_CORE_fnc_garrisonRefillRespawnSquad = {
         { _grp createUnit [_x, _spawnPos, [], 10, "FORM"]; } forEach (_template select 1);
     };
     if (isNull _grp) exitWith { grpNull };
+    // Pull the spawned squad's vehicles onto a road column near the marker.
+    [_grp, _markerPos, _markerSize] call MISSION_CORE_fnc_alignGroupVehiclesToRoad;
     _grp setVariable ["MISSION_CORE_BLUFOR", true];
     _grp setVariable ["MISSION_CORE_GARRISON", true];
     _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _markerName];
@@ -720,7 +728,7 @@ MISSION_CORE_fnc_garrisonRefillRespawnSquad = {
 MISSION_CORE_fnc_garrisonRefillRespawnVehicle = {
     params ["_markerName", "_loc", "_vehClass", "_kind", "_cost"];
     private _markerPos = (_loc select 1) select 0;
-    private _pos = [_markerPos, 20, 120, 15, 0, 0.6, 0] call BIS_fnc_findSafePos;
+    private _pos = [_markerPos, [120, 120], 15] call MISSION_CORE_fnc_findVehiclePos;
     if (count _pos < 2) then { _pos = [_markerPos] call MISSION_CORE_fnc_ensureLandPos; };
     if (count _pos == 2) then { _pos pushBack 0; };
     private _isStatic = _vehClass isKindOf "StaticWeapon";
@@ -733,6 +741,7 @@ MISSION_CORE_fnc_garrisonRefillRespawnVehicle = {
     } else {
         _veh = createVehicle [_vehClass, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
         _veh setDir ((getDir _veh) + 180);
+        [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
         _grp = createVehicleCrew _veh;
     };
     if (isNull _veh || isNull _grp) exitWith { objNull };
@@ -889,12 +898,14 @@ MISSION_CORE_fnc_garrisonWarnLoop = {
         sleep 8;
         if (isNil "MISSION_CORE_LOCATIONS") then { continue; };
         if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+        // Snapshot enemy units once per tick instead of per WEST marker below.
+        private _snapEnemies = allUnits select { side _x == EAST && { alive _x } };
         {
             private _loc = _x;
             if ((_loc select 5) != WEST) then { continue; };
             private _mName = _loc select 0;
             private _mPos = ((_x select 1) select 0);
-            private _enemy = allUnits select { side _x == EAST && { alive _x } && { _x distance _mPos < 800 } };
+            private _enemy = _snapEnemies select { _x distance _mPos < 800 };
             if (count _enemy == 0) then { continue; };
             private _aliveDef = 0;
             {

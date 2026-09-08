@@ -98,6 +98,9 @@ MISSION_CORE_fnc_ellipseOverlapsMarkers = {
 
 MISSION_CORE_fnc_getLocationImportance = {
     params ["_pos", "_typeName"];
+    // PERMANENT RULE: an Outpost is a very small garrison - always importance 1, never boosted
+    // by the terrain tier around it (an outpost inside a city zone sweeps up imp 5 otherwise).
+    if (toLower _typeName == "outpost") exitWith { 1 };
     private _tiers = [
         [5, ["NameCityCapital", "NameCity", "NameVillage", "NameLocal", "NameMarine", "Mount", "CityCenter"]],
         [4, ["Airport", "Area", "BorderCrossing"]],
@@ -115,6 +118,8 @@ MISSION_CORE_fnc_getLocationImportance = {
     if (count _runways > 0) exitWith { 4 };
 
     // Marker type itself boosts importance: Airfield/Base/HQ = 4, Factory/Compound/Town = 3
+    // A Powerplant is captured for the tank economy - Factory-tier importance (light garrison,
+    // contested objective). A Solar gets a lighter tier (smaller contribution to production).
     private _typeBoost = switch (toLower _typeName) do {
         case "airfield": { 4 };
         case "base": { 4 };
@@ -123,9 +128,21 @@ MISSION_CORE_fnc_getLocationImportance = {
         case "port": { 3 };
         case "compound": { 3 };
         case "town": { 3 };
+        case "powerplant": { 3 };
+        case "solar": { 2 };
         default { 1 };
     };
     _typeBoost
+};
+
+// Light-infrastructure markers (Outpost, Powerplant, Solar): a very small garrison that fields
+// NO hunt orders, NO quadrant engagement and NO static defenses (MG bunkers/emplacements).
+// Everything else about the marker (capture, value, light infantry garrison) still functions.
+MISSION_CORE_fnc_isLightInfrastructure = {
+    params ["_loc"];
+    if (isNil "_loc" || count _loc < 3) exitWith { false };
+    private _t = toLower (_loc select 2);
+    (_t == "outpost" || _t == "powerplant" || _t == "solar")
 };
 
 MISSION_CORE_fnc_scanMarkers = {
@@ -152,6 +169,13 @@ MISSION_CORE_fnc_scanMarkers = {
         private _priority = getNumber (_type >> "priority");
 
         private _markers = _allMarkers select { toLower _x find _prefix == 0 };
+        // A bare editor marker whose name equals the type's base prefix (e.g. "outpost" from
+        // prefix "outpost_") is still that location type - the prefix scan only matches the
+        // suffixed "_N" markers against the trailing-underscore prefix.
+        private _base = _prefix select [0, ((count _prefix) - 1)];
+        if ((_typeName in ["Outpost", "Powerplant", "Solar"]) && { _base != "" }) then {
+            _markers = _allMarkers select { toLower _x find _prefix == 0 || { toLower _x == _base } };
+        };
 
         {
             private _mkr = _x;

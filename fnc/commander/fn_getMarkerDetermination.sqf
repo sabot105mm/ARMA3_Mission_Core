@@ -13,9 +13,9 @@ MISSION_CORE_fnc_getMarkerDetermination = {
     private _tier = 3;
     if (_t find "hq" > -1) then { _tier = 0; }
     else {
-        if (_t find "factory" > -1 || _t find "port" > -1 || _t find "base" > -1 || _t find "airfield" > -1 || _t find "airport" > -1 || _t find "marine" > -1) then { _tier = 1; }
+        if (_t find "factory" > -1 || _t find "port" > -1 || _t find "base" > -1 || _t find "airfield" > -1 || _t find "airport" > -1 || _t find "marine" > -1 || _t find "power" > -1) then { _tier = 1; }
         else {
-            if (_t find "city" > -1 || _t find "village" > -1 || _t find "capital" > -1 || _t find "center" > -1 || _t find "town" > -1 || _t find "compound" > -1) then { _tier = 2; }
+            if (_t find "city" > -1 || _t find "village" > -1 || _t find "capital" > -1 || _t find "center" > -1 || _t find "town" > -1 || _t find "compound" > -1 || _t find "solar" > -1) then { _tier = 2; }
             else { _tier = 3; };
         };
     };
@@ -25,7 +25,7 @@ MISSION_CORE_fnc_getMarkerDetermination = {
     {
         if ((_x select 0) != _name) then {
             private _nt = toLower (_x select 2);
-            private _isHigh = (_nt find "hq" > -1) || (_nt find "factory" > -1) || (_nt find "port" > -1) || (_nt find "base" > -1) || (_nt find "airfield" > -1) || (_nt find "airport" > -1) || (_nt find "marine" > -1);
+            private _isHigh = (_nt find "hq" > -1) || (_nt find "factory" > -1) || (_nt find "port" > -1) || (_nt find "base" > -1) || (_nt find "airfield" > -1) || (_nt find "airport" > -1) || (_nt find "marine" > -1) || (_nt find "power" > -1);
             if (_isHigh && { (_x select 1) distance _pos < 800 }) exitWith { _tier = (_tier - 1) max 0; };
         };
     } forEach MISSION_CORE_CACHED_POSITIONS;

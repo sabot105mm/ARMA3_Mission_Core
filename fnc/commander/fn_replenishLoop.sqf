@@ -78,16 +78,31 @@ MISSION_CORE_fnc_replenishLoop = {
                     (_rx*_rx)/(_ma*_ma) + (_ry*_ry)/(_mb*_mb) <= 1
                 }
             } != -1;
-            // A marker only replenishes / re-fields its own garrison while it is CONTESTED - an
-            // ENEMY player must actually be engaging it. Proximity alone (a player within 2500m)
-            // never refills a garrison; far markers exist purely as neighbor reinforcement sources.
+            // A marker NEVER replenishes while it (or a same-side neighbor) is CONTESTED - the
+            // fight grinds the garrison down without an endless manpower tap. Supplies only flow
+            // once the contested marker stops fighting and a quiet period (replenishQuietPeriod)
+            // has fully elapsed. Proximity alone (a player within 2500m) never refills a garrison
+            // during a fight; far markers exist purely as neighbor reinforcement sources.
             //
             // PERMANENT RULE: one contested zone PER PLAYER. Each player fighting their own marker
             // makes that marker THE zone for their fight - every such marker is a zone and gets
             // its own replenish cycle (fn_getContestedMarkers returns one zone per alive player).
             private _zoneList = [_owner] call MISSION_CORE_fnc_getContestedMarkers;
             private _contested = (_zoneList findIf { (_x select 0) == _locName } != -1);
-            diag_log format ["DYNAMIC REPLENISH GATE: %1 zone=%2 contested=%3", _locName, _locName, _contested];
+            // A zone freezes its whole neighborhood: same-side markers within reinforce range of a
+            // contested marker also hold their manpower until that fight ends + quiet period.
+            private _zoneBlock = (_zoneList findIf { (_x select 0) != _locName && { ((_x select 1) distance _locPos) < (["neighborRange", 4000] call MISSION_CORE_fnc_tune) } }) != -1;
+            diag_log format ["DYNAMIC REPLENISH GATE: %1 zone=%2 contested=%3 zoneBlock=%4", _locName, _locName, _contested, _zoneBlock];
+            // Replenishment grace clock: a marker that is contested (or neighbor to a contested
+            // zone) records the moment it last fought, so supplies resume only after the full quiet
+            // period has elapsed since the fight ended.
+            if (isNil "MISSION_CORE_REPLENISH_GRACE") then { MISSION_CORE_REPLENISH_GRACE = createHashMap; };
+            private _quiet = ["replenishQuietPeriod", 120] call MISSION_CORE_fnc_tune;
+            if (_contested || _zoneBlock) then {
+                MISSION_CORE_REPLENISH_GRACE set [_locName, time];
+            };
+            private _grace = MISSION_CORE_REPLENISH_GRACE getOrDefault [_locName, -1e10];
+            private _supplyOpen = !(_contested || _zoneBlock) && { _grace != -1e10 } && { (time - _grace) >= _quiet };
             // DETERMINATION-BASED RETREAT + FLIP.
             // - The garrison retreats once it has lost (1 - holdFrac) of its capacity (holdFrac from
             //   the marker's strategic value). It runs to the closest ally and despawns.
@@ -127,10 +142,11 @@ MISSION_CORE_fnc_replenishLoop = {
                 [_locName, _locPos, _owner, _importance] call MISSION_CORE_fnc_captureMarkerForPlayers;
                 continue;
             };
-            // Replenish the garrison (manpower keeps flowing) while below baseline, until it
-            // retreats. Only a CONTESTED marker's garrison refills.
-            if (_alive > 0 && { _alive < _baseline } && { !_retreated } && { _contested }) then {
-                // The contested marker counts as one of the 4 active spawners while it replenishes
+            // Replenish the garrison (manpower flows to the marker) while below baseline, until it
+            // retreats. Supplies only run while the marker AND its neighborhood are NOT contested
+            // and the quiet period since the last fight has elapsed.
+            if (_supplyOpen && { _alive > 0 } && { _alive < _baseline } && { !_retreated }) then {
+                // The replenishing marker counts as one of the 4 active spawners while it refills
                 [_locName] call MISSION_CORE_fnc_spawnerSlotFree;
                 // Manpower is 1-for-1: draw from the nearest same-side base first. No base manpower
                 // -> no replenish (markers only field the men their base actually delivered).
@@ -142,9 +158,10 @@ MISSION_CORE_fnc_replenishLoop = {
                 // replenishes, so the AI never spawns several towns' garrisons back-to-back.
                 if (_replenished > 0) then { sleep 5; };
             };
-            // Respawn the garrison when wiped, until it retreats. Only a CONTESTED marker's
-            // wiped garrison respawns - never a far, un-attacked marker.
-            if (_alive == 0 && { !_retreated } && { _contested }) then {
+            // Respawn the garrison when wiped, until it retreats. Only after the fight is over
+            // (marker + neighborhood not contested, quiet period elapsed) does a wiped garrison
+            // re-field - never during the fight itself.
+            if (_supplyOpen && { _alive == 0 } && { !_retreated }) then {
                 diag_log format ["DYNAMIC CAPTURE DEBUG: %1 alive=0 enemyInside=%2", _locName, _enemyInside];
                 [_locName] call MISSION_CORE_fnc_spawnerSlotFree;
                 private _want = ((_baseline - 0) min 8) max 1;

@@ -4,19 +4,26 @@ MISSION_CORE_fnc_aiCommanderLoop = {
     while { true } do {
         sleep 8 + random 5;
         private _players = allPlayers select { alive _x };
-        if (count _players == 0) then {};
+        // Snapshot the live engine lists ONCE per tick and reuse them across every marker below.
+        // Calling allUnits/allGroups per marker refetches + allocates a full list each time - a
+        // major CPU cost on large maps. The snapshot is behavior-neutral: the lists only change
+        // between frames, not while this loop-body runs.
+        private _snapUnits = allUnits;
+        private _snapGroups = allGroups;
 
         {
             private _loc = _x;
             private _markerName = _loc select 0;
             private _locPos = _loc select 1 select 0;
             private _locOwner = _loc select 5;
-            private _importance = [_markerName] call MISSION_CORE_fnc_getCachedImportance;
+            // Importance is at index 7 in the location array - read it directly instead of doing
+            // a per-tick linear findIf on CACHED_POSITIONS (both arrays carry importance at index 7).
+            private _importance = _loc select 7;
             // BLU DEFEND order: blue units engaged very near their spawn point stop attacking and defend
             if (_locOwner == WEST) then {
                 private _detectRadiusW = 600 + (_importance * 200);
-                private _bluDefenders = [_locPos, _detectRadiusW] call MISSION_CORE_fnc_getBluDefendersAt;
-                private _bluEnemies = allUnits select { side _x == EAST && { _x distance _locPos < _detectRadiusW } };
+                private _bluDefenders = [_locPos, _detectRadiusW, _snapGroups] call MISSION_CORE_fnc_getBluDefendersAt;
+                private _bluEnemies = _snapUnits select { side _x == EAST && { _x distance _locPos < _detectRadiusW } };
                 private _bluDetected = false;
                 private _bluPlayer = objNull;
                 private _maxKnows = 0;
@@ -62,7 +69,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
             private _engageRadius = 200 + (_importance * 100);
             private _reinforceRadius = 1200 + (_importance * 600);
 
-            private _defenders = [_locPos, _detectRadius] call MISSION_CORE_fnc_getDefendersAt;
+            private _defenders = [_locPos, _detectRadius, _snapGroups] call MISSION_CORE_fnc_getDefendersAt;
             if (count _defenders == 0) then {};
 
             private _nearestEnemy = objNull;
@@ -70,7 +77,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
             // their own WEST side - so player knowsAbout of these is the real "player is attacking"
             // signal. (Previously this selected WEST units, which a WEST player knows about at ~0,
             // so the proximity fallback below was doing all the work and firing battles constantly.)
-            private _enemies = allUnits select { side _x == EAST && { _x distance _locPos < _detectRadius } };
+            private _enemies = _snapUnits select { side _x == EAST && { _x distance _locPos < _detectRadius } };
             if (count _enemies > 0) then { _nearestEnemy = _enemies select 0; };
 
             private _detected = false;
@@ -94,34 +101,26 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                 // patrols get committed on later ticks while the battle stays active.
                 if (isNil "MISSION_CORE_ACTIVE_BATTLES") then { MISSION_CORE_ACTIVE_BATTLES = createHashMap; };
                 if (side _nearestPlayer != _locOwner) then { MISSION_CORE_ACTIVE_BATTLES set [_markerName, time]; };
+                // Battle grace memory: stamp how long this real detection keeps the quadrant
+                // response alive. Once sight is lost the loop below still streams the staged foot
+                // groups in for quadrantGraceTime instead of purging them the moment contact decays.
+                if (isNil "MISSION_CORE_QUAD_GRACE") then { MISSION_CORE_QUAD_GRACE = createHashMap; };
+                MISSION_CORE_QUAD_GRACE set [_markerName, time + floor (["quadrantGraceTime", 600] call MISSION_CORE_fnc_tune)];
+                // Downstream counter-attack / assault armor still targets the nearest engaged player.
                 private _targetPos = getPos _nearestPlayer;
 
+                // QUADRANT ENGAGEMENT: collect EVERY player with real contact on this garrison (not
+                // just the nearest) so multiple players spread around the marker split the defensive
+                // foot force by quadrant instead of everyone chasing one point.
+                private _engagedPlayers = [];
                 {
-                    if (_x getVariable ["MISSION_CORE_ORDER", ""] == "") then {
-                        _x setVariable ["MISSION_CORE_ORDER", "engage"];
-                        _x setVariable ["MISSION_CORE_IDLE", false];
-                        _x setVariable ["MISSION_CORE_PATROLLING", false];
-                        _x setFormation "WEDGE";
-                        [_x] call MISSION_CORE_fnc_clearGroupWaypoints;
-                        private _d = (leader _x) distance _nearestPlayer;
-                        if (_d > 200 + ((_x getVariable ["MISSION_CORE_IMPORTANCE", 1]) - 1) * 50) then {
-                            if ([(vehicle (leader _x))] call MISSION_CORE_fnc_isSoftTransport && { !([(vehicle (leader _x))] call MISSION_CORE_fnc_hasMountedGun) }) then {
-                                private _wpU = _x addWaypoint [_targetPos, 100];
-                                _wpU setWaypointType "GETOUT";
-                                _wpU setWaypointSpeed "FULL";
-                                _wpU setWaypointBehaviour "AWARE";
-                            };
-                            private _wp = _x addWaypoint [_targetPos, 50];
-                            _wp setWaypointType "SAD";
-                            _wp setWaypointSpeed "FULL";
-                            _x setCurrentWaypoint _wp;
-                            _x setCombatMode "RED";
-                        } else {
-                            _x setCombatMode "RED";
-                            _x setBehaviour "COMBAT";
-                        };
-                    };
-                } forEach _defenders;
+                    private _p = _x;
+                    private _k = 0;
+                    { private _kk = _p knowsAbout _x; if (_kk > _k) then { _k = _kk; }; } forEach _enemies;
+                    if (_k > 1.2) then { _engagedPlayers pushBack _p; };
+                } forEach _players;
+
+                [_loc, _engagedPlayers, _defenders, _markerName, _locPos, _engageRadius] call MISSION_CORE_fnc_quadrantEngage;
 
                 // REINFORCEMENT - existing spawned groups are committed the moment battle starts,
                 // never held back as if queued. Each fast-moves to the marker edge and
@@ -169,17 +168,21 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                 // COUNTER-ATTACK (importance >= 3) - each contested zone mounts a full
                 // counter-attack; non-zone markers just defend/patrol
                 if (_importance >= 3 && _isZone) then {
+                    // AMMO: a full counter-attack needs ammo. Zone markers without enough ammo
+                    // stay on the defensive and do not mount the assault ("assembleAssault").
+                    private _canCounter = [_markerName] call MISSION_CORE_fnc_ammoCanAttack;
                     // Full assault: free the cap, then spawn up to 2 tank markers + 1 inf marker
-                    if (_locOwner == EAST) then {
+                    if (_locOwner == EAST && _canCounter) then {
                         if (isNil "MISSION_CORE_COUNTERATTACK_COOLDOWN") then { MISSION_CORE_COUNTERATTACK_COOLDOWN = createHashMap; };
                         if (time > (MISSION_CORE_COUNTERATTACK_COOLDOWN getOrDefault [_markerName, 0])) then {
                             MISSION_CORE_COUNTERATTACK_COOLDOWN set [_markerName, time + 600];
+                            [_markerName, ["ammoCostCounterAttack", 2] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_consumeAmmo;
                             [EAST, _locPos, _targetPos, _importance, _markerName] call MISSION_CORE_fnc_assembleAssault;
                         };
                     };
 
                     private _counterRadius = _reinforceRadiusScaled * 1.5;
-                    private _counterGroups = allGroups select {
+                    private _counterGroups = _snapGroups select {
                         _x getVariable ["MISSION_CORE_REDFOR", false] &&
                         _x getVariable ["MISSION_CORE_ORDER", ""] == "" &&
                         { (leader _x) distance _locPos < _counterRadius } &&
@@ -187,14 +190,14 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                     };
                     {
                         private _cgImp = _x getVariable ["MISSION_CORE_IMPORTANCE", 1];
-                        if (random 1 < (_cgImp * 0.15)) then {
+                        if (_canCounter && { random 1 < (_cgImp * 0.15) }) then {
                             diag_log format ["AI COMMANDER: counter-attack %1", groupId _x];
                             [_x, _targetPos] call MISSION_CORE_fnc_sendCounterAttack;
                         };
                     } forEach _counterGroups;
 
                     // Send vehicle groups (Mech/Armor) directly as assault force
-                    private _vehGroups = allGroups select {
+                    private _vehGroups = _snapGroups select {
                         _x getVariable ["MISSION_CORE_REDFOR", false] &&
                         _x getVariable ["MISSION_CORE_IDLE", true] &&
                         _x getVariable ["MISSION_CORE_ORDER", ""] == "" &&
@@ -202,7 +205,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                         { count units _x > 0 && { vehicle (leader _x) != leader _x } }
                     };
                     {
-                        if (random 1 < 0.6) then {
+                        if (_canCounter && { random 1 < 0.6 }) then {
                             diag_log format ["AI COMMANDER: vehicle assault %1", groupId _x];
                             [_x, _targetPos] call MISSION_CORE_fnc_sendCounterAttack;
                         };
@@ -212,7 +215,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                 // FAR REINFORCE (importance >= 4)
                 if (_importance >= 4) then {
                     private _farRadius = _reinforceRadiusScaled * 2;
-                    private _farReinforce = allGroups select {
+                    private _farReinforce = _snapGroups select {
                         _x getVariable ["MISSION_CORE_REDFOR", false] &&
                         _x getVariable ["MISSION_CORE_IDLE", true] &&
                         _x getVariable ["MISSION_CORE_ORDER", ""] == "" &&
@@ -238,17 +241,39 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                     };
                 };
             } else {
-                // No detection: groups return to patrol. Keep the battle flag for a 120s grace
-                // so a just-wiped garrison still reads as CONTESTED and the capture can fire.
-                if !(isNil "MISSION_CORE_ACTIVE_BATTLES") then {
-                    private _b = MISSION_CORE_ACTIVE_BATTLES getOrDefault [_markerName, -1e10];
-                    if (time - _b > 120) then { MISSION_CORE_ACTIVE_BATTLES deleteAt _markerName; };
-                };
-                {
-                    if !(leader _x getVariable ["MISSION_CORE_PATROLLING", false]) then {
-                        [_x] call MISSION_CORE_fnc_restartPatrol;
+                // No live detection this tick. A marker that was GENUINELY detected keeps its
+                // quadrant response streaming for quadrantGraceTime after the last contact: the
+                // staged foot groups still release (players still near the marker act as soft
+                // targets until sight returns) instead of the force melting back to patrol the
+                // instant the AI's knowsAbout decays below the contact threshold.
+                if (isNil "MISSION_CORE_QUAD_GRACE") then { MISSION_CORE_QUAD_GRACE = createHashMap; };
+                private _grEnd = MISSION_CORE_QUAD_GRACE getOrDefault [_markerName, -1e10];
+                if (time < _grEnd) then {
+                    private _gracePlayers = [];
+                    {
+                        if (_x distance _locPos < _engageRadius) then { _gracePlayers pushBack _x; };
+                    } forEach _players;
+                    if (count _gracePlayers > 0) then {
+                        [_loc, _gracePlayers, _defenders, _markerName, _locPos, _engageRadius] call MISSION_CORE_fnc_quadrantEngage;
                     };
-                } forEach _defenders;
+                } else {
+                    MISSION_CORE_QUAD_GRACE deleteAt _markerName;
+                    // Grace fully lapsed: groups return to patrol. Keep the battle flag for a 120s
+                    // grace so a just-wiped garrison still reads as CONTESTED and the capture can
+                    // fire. Also purge this marker's staged quadrant tasks so no stale SAD lingers.
+                    if !(isNil "MISSION_CORE_QUAD_BACKLOG") then {
+                        MISSION_CORE_QUAD_BACKLOG = MISSION_CORE_QUAD_BACKLOG select { (_x select 0) != _markerName };
+                    };
+                    if !(isNil "MISSION_CORE_ACTIVE_BATTLES") then {
+                        private _b = MISSION_CORE_ACTIVE_BATTLES getOrDefault [_markerName, -1e10];
+                        if (time - _b > 120) then { MISSION_CORE_ACTIVE_BATTLES deleteAt _markerName; };
+                    };
+                    {
+                        if !(leader _x getVariable ["MISSION_CORE_PATROLLING", false]) then {
+                            [_x] call MISSION_CORE_fnc_restartPatrol;
+                        };
+                    } forEach _defenders;
+                };
             };
         } forEach MISSION_CORE_LOCATIONS;
     };

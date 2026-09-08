@@ -25,6 +25,7 @@ MISSION_CORE_fnc_initManpower = {
     // Port income: every tick, each BLUFOR port adds manpower to the shared pool.
     [] spawn {
         waitUntil { !isNil "MISSION_CORE_PORTS" };
+        private _lastSent = -1;
         while { true } do {
             sleep 10;
             {
@@ -35,7 +36,12 @@ MISSION_CORE_fnc_initManpower = {
                     MISSION_CORE_BLUFOR_MANPOWER = MISSION_CORE_BLUFOR_MANPOWER + _income;
                 };
             } forEach (keys MISSION_CORE_PORTS);
-            publicVariable "MISSION_CORE_BLUFOR_MANPOWER";
+            // Only broadcast when the pool actually changed - avoids serializing the value over the
+            // network every tick when no income/withdrawal happened (dramatically cuts bandwidth).
+            if (MISSION_CORE_BLUFOR_MANPOWER != _lastSent) then {
+                _lastSent = MISSION_CORE_BLUFOR_MANPOWER;
+                publicVariable "MISSION_CORE_BLUFOR_MANPOWER";
+            };
         };
     };
     diag_log "DYNAMIC MANPOWER: player manpower system initialized";

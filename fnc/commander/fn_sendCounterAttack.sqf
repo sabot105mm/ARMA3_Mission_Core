@@ -1,6 +1,11 @@
 
 MISSION_CORE_fnc_sendCounterAttack = {
     params ["_group", "_targetPos", ["_targetSize", [50, 50]], ["_combatMode", "RED"], ["_order", "counterattack"]];
+    // NEVER re-task a group already patrolling a quadrant: the quadrant approach/sweep/SAD is the
+    // current owner of its waypoints. Every re-dispatch path (commitToBattle, assault loop, spawn
+    // re-task, stuck watchdog...) funnels through here, so one choke-point guard keeps them from
+    // collapsing the quadrant sweep back onto a single marker-center SAD after release.
+    if ((_group getVariable ["MISSION_CORE_ORDER", ""]) == "engage" && { (_group getVariable ["MISSION_CORE_QUAD_MARKER", ""]) != "" }) exitWith { false };
     private _blocked = false;
     // PERMANENT RULE (BLUFOR GARRISONS): a player-recruited garrison (from the recruit menu) is a
     // fortification, not a maneuver unit. It defends and patrols ONLY its assigned marker and is
@@ -21,6 +26,30 @@ MISSION_CORE_fnc_sendCounterAttack = {
             _group setVariable ["MISSION_CORE_IDLE", false];
             _group setVariable ["MISSION_CORE_PATROLLING", false];
             diag_log format ["GARRISON RULE: %1 stays defending its assigned marker (blocked off-marker re-task)", groupId _group];
+            _blocked = true;
+        };
+    };
+    // PERMANENT RULE (LIGHT-INFRASTRUCTURE GARRISONS): a group that spawned from an Outpost,
+    // Powerplant or Solar marker is a static tiny garrison - it defends ONLY its own marker and is
+    // NEVER re-tasked to a different / contested marker (no hunt, no quadrant patrol, no
+    // counter-attack). Same spirit as the BLUFOR garrisonStaysHome rule, applied to light-infra
+    // origin groups.
+    private _outpostOrigin = false;
+    private _oName = _group getVariable ["MISSION_CORE_ORIGIN_MARKER", ""];
+    if (_oName != "" && { !(isNil "MISSION_CORE_CACHED_POSITIONS") }) then {
+        private _oIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _oName };
+        if (_oIdx >= 0 && { [(MISSION_CORE_CACHED_POSITIONS select _oIdx)] call MISSION_CORE_fnc_isLightInfrastructure }) then {
+            _outpostOrigin = true;
+        };
+    };
+    if (_outpostOrigin) then {
+        private _home = _group getVariable ["MISSION_CORE_MARKER_CENTER", getPos (leader _group)];
+        private _allow = (_targetPos distance2D _home) < 400;
+        if (!_allow) then {
+            _group setVariable ["MISSION_CORE_ORDER", "defend"];
+            _group setVariable ["MISSION_CORE_IDLE", false];
+            _group setVariable ["MISSION_CORE_PATROLLING", false];
+            diag_log format ["LIGHT-INFRA RULE: %1 stays defending its light-infrastructure marker (no off-marker re-task)", groupId _group];
             _blocked = true;
         };
     };
@@ -129,11 +158,6 @@ MISSION_CORE_fnc_sendCounterAttack = {
             if (vehicle _x == _truck) then { _x disableAI "AUTOCOMBAT"; };
         } forEach units _group;
         [_group, _targetPos, "GETOUT", _advSpeed, "GREEN", _unloadDist] call _addAssaultWps;
-        // The passenger group's own GETOUT (added first by _addAssaultWps) unloads them on arrival
-        // via a waypoint script (matching the recruit menu) instead of a bare engine GETOUT.
-        {
-            if (waypointType _x == "GETOUT") then { _x setWaypointScript "transport_assaultUnload.sqf"; };
-        } forEach (waypoints _group);
         if (!isNull _drvGrp) then {
             [_drvGrp] call MISSION_CORE_fnc_clearGroupWaypoints;
             // CARELESS + GREEN so the truck drives straight to the drop ring instead of stopping
@@ -141,14 +165,19 @@ MISSION_CORE_fnc_sendCounterAttack = {
             _drvGrp setCombatMode "GREEN";
             _drvGrp setBehaviour "CARELESS";
             // MOVE first (pre-1.22 rule), then TRANSPORT UNLOAD at the same ring to drop cargo.
+            // The waypoint script lives on the DRIVER's TR UNLOAD (not the passenger GETOUT) so the
+            // truck's own unload event is script-driven and stays in sync with the dismount - a bare
+            // native TR UNLOAD on the driver can desync from the passenger group's scripted dismount.
             private _wpDrvMove = _drvGrp addWaypoint [_targetPos, _unloadDist];
             _wpDrvMove setWaypointType "MOVE";
             _wpDrvMove setWaypointSpeed _advSpeed;
             _wpDrvMove setWaypointBehaviour "CARELESS";
+            _wpDrvMove setWaypointScript "fnc\commander\transport_assaultUnload.sqf";
             private _wpUnload = _drvGrp addWaypoint [_targetPos, _unloadDist];
             _wpUnload setWaypointType "TR UNLOAD";
             _wpUnload setWaypointSpeed _advSpeed;
             _wpUnload setWaypointBehaviour "CARELESS";
+            _wpUnload setWaypointScript "fnc\commander\transport_assaultUnload.sqf";
             _drvGrp setCurrentWaypoint _wpDrvMove;
         };
         [_group, _truck, _side, _targetPos, 1, _unloadDist] spawn MISSION_CORE_fnc_splitAfterDismount;
@@ -185,15 +214,17 @@ MISSION_CORE_fnc_sendCounterAttack = {
                     [_truck] call _sendTruckSquad;
                 };
             } else {
-                // No transport available - advance on foot, then SAD
+                // No transport available - advance on foot, then (never SAD the center) patrol /
+                // catch the quadrant engagement on arrival.
                 diag_log format ["AI COMMAND: %1 foot patrol (%2 men) from %3 no transport - advancing on foot to %4", groupId _group, count units _group, _originName, _targetPos];
-                [_group, _dismountPos, "MOVE", _advSpeed] call _addAssaultWps;
+                [_group, _targetPos, _side] call MISSION_CORE_fnc_footArrival;
                 [_group, _targetPos, _side] spawn MISSION_CORE_fnc_footSquadPostAssault;
             };
         } else {
-            // Inside 700m of the contested area - advance on foot, then SAD
+            // Inside 700m of the contested area - advance on foot, then (never SAD the center)
+            // patrol / catch the quadrant engagement on arrival.
             diag_log format ["AI COMMAND: %1 foot patrol (%2 men) from %3 within 700m - advancing on foot to %4", groupId _group, count units _group, _originName, _targetPos];
-            [_group, _dismountPos, "MOVE", _advSpeed] call _addAssaultWps;
+            [_group, _targetPos, _side] call MISSION_CORE_fnc_footArrival;
             [_group, _targetPos, _side] spawn MISSION_CORE_fnc_footSquadPostAssault;
         };
     };

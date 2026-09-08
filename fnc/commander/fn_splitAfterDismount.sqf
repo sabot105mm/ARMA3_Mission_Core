@@ -75,27 +75,56 @@ MISSION_CORE_fnc_splitAfterDismount = {
         _newGrp setSpeedMode "FULL";
         _newGrp setCombatMode "YELLOW";
         _newGrp setFormation "WEDGE";
-        [_newGrp] call MISSION_CORE_fnc_clearGroupWaypoints;
-        private _wp = _newGrp addWaypoint [_targetPos, 50];
-        _wp setWaypointType "SAD";
-        _wp setWaypointSpeed "FULL";
-        _wp setWaypointBehaviour "COMBAT";
-        _newGrp setCurrentWaypoint _wp;
         if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
         MISSION_CORE_SPAWNED_GROUPS pushBack _newGrp;
+        // Post-unload: never SAD the marker center. If the commander's quadrant battle is already
+        // active here, stay eligible for the quadrant loop; otherwise patrol the marker aware/normal.
+        [_newGrp, _targetPos, _side] call MISSION_CORE_fnc_footArrival;
+        // A truck-delivered counter-attack foot squad now stands ON FOOT at the marker it was
+        // driving to. If a player is ACTIVELY ENGAGING that marker (a live quadrant battle), claim
+        // the squad straight into the quadrant queue - it is on foot and already heading to the
+        // contested marker, so the release step hands it a quadrant sweep instead of a generic SAD.
+        // MISSION_CORE_QUAD_ARRIVED lets the quadrant purge keep it even before its leader is inside
+        // the staging radius (it is still marching in), so it is never dropped before release.
+        private _qLocI = if (isNil "MISSION_CORE_CACHED_POSITIONS") then { -1 } else { MISSION_CORE_CACHED_POSITIONS findIf { (_x select 1) distance2D _targetPos < 60 } };
+        if (_qLocI >= 0) then {
+            private _qLoc = MISSION_CORE_CACHED_POSITIONS select _qLocI;
+            private _qM = _qLoc select 0;
+            private _qLightInfra = [_qLoc] call MISSION_CORE_fnc_isLightInfrastructure;
+            private _qC = _qLoc select 1;                 // marker center POSITION (cached entry index 1)
+            private _qSz = getMarkerSize _qM;              // [w, h] straight from the marker
+            private _qDir = markerDir _qM;
+            private _qSh = markerShape _qM;
+            private _qImp = _qLoc select 7;
+            // Engaged players = alive players with real knowsAbout (>1.2) of any enemy near the
+            // target marker (mirrors the commander loop's quadrant trigger).
+            private _qEnemies = allUnits select { side _x getFriend _side < 0.6 && { alive _x } && { _x distance _qC < (600 + _qImp * 200) } };
+            private _qEngaged = [];
+            {
+                private _p = _x;
+                private _k = 0;
+                { private _kk = _p knowsAbout _x; if (_kk > _k) then { _k = _kk; }; } forEach _qEnemies;
+                if (_k > 1.2) then { _qEngaged pushBack _p; };
+            } forEach (allPlayers select { alive _x });
+            if (count _qEngaged > 0 && { !_qLightInfra }) then {
+                // The nearest engaged player drives this squad's quadrant entry.
+                private _pNear = _qEngaged select 0;
+                private _pdN = _pNear distance _qC;
+                {
+                    private _dd = _x distance _qC;
+                    if (_dd < _pdN) then { _pdN = _dd; _pNear = _x; };
+                } forEach _qEngaged;
+                private _qi2 = [_qC, _qSz, _qDir, getPos _pNear, _qSh] call MISSION_CORE_fnc_quadrantOf;
+                private _qt2 = [_qC, _qSz, _qDir, getPos _pNear, (_qi2 select 1), _qSh] call MISSION_CORE_fnc_quadrantTarget;
+                if (isNil "MISSION_CORE_QUAD_BACKLOG") then { MISSION_CORE_QUAD_BACKLOG = []; };
+                _newGrp setVariable ["MISSION_CORE_QUAD_ARRIVED", true];
+                MISSION_CORE_QUAD_BACKLOG pushBack [_qM, _newGrp, getPosATL _pNear, _qi2 select 0, _qt2 select 1];
+                diag_log format ["AI COMMANDER: QUAD queued dismounted counter-attack %1 for %2 (q=%3, target %4)", groupId _newGrp, _qM, (["NE", "SE", "SW", "NW"] select (_qi2 select 0)), getPosATL _pNear];
+            };
+        };
         // One-shot post-assault re-eval: sweep the last known enemy once the marker is no longer
         // contested, then return to origin and patrol (no separate system - same transport flow).
         [_newGrp, _targetPos, _side] spawn MISSION_CORE_fnc_footSquadPostAssault;
-        // Foot troops ride to the drop point on GREEN, go YELLOW once dismounted (set above), then
-        // switch to RED (engage at will) once the squad is inside the contested marker.
-        [_newGrp, _targetPos] spawn {
-            params ["_grp", "_tgt"];
-            private _t = time + 600;
-            while { time < _t && { !isNull _grp } && { { alive _x } count units _grp > 0 } } do {
-                if ((leader _grp) distance2D _tgt < 100) exitWith { _grp setCombatMode "RED"; };
-                sleep 2;
-            };
-        };
     };
     private _newId = if (!isNull _newGrp) then { groupId _newGrp } else { _oldId };
     // Drive the empty transport back to the truck's SPAWN point and despawn it there, clearing
@@ -111,26 +140,17 @@ MISSION_CORE_fnc_splitAfterDismount = {
         };
         _drvGrp addVehicle _truck;
         // Truck clearly drove past the ring - send it back to its spawn at full speed, CARELESS,
-        // despawn on arrival. doMove leaves immediately instead of idling where foot could re-board.
+        // despawn on arrival (no polling loop: transport_truckArrive.sqf fires on the home MOVE).
         _drvGrp setBehaviour "CARELESS";
         _drvGrp setSpeedMode "FULL";
-        _drv doMove _spawnHome;
+        [_drvGrp] call MISSION_CORE_fnc_clearGroupWaypoints;
+        private _wpHome = _drvGrp addWaypoint [_spawnHome, 25];
+        _wpHome setWaypointType "MOVE";
+        _wpHome setWaypointSpeed "FULL";
+        _wpHome setWaypointBehaviour "CARELESS";
+        _wpHome setWaypointScript "fnc\commander\transport_truckArrive.sqf";
+        _drvGrp setCurrentWaypoint _wpHome;
         diag_log format ["AI COMMANDER: truck %1 sent back to spawn %2 (despawn on arrival)", typeOf _truck, _spawnHome];
-        // Wait for arrival at the spawn point (or timeout / wreck), then remove crew + truck + group.
-        [_drvGrp, _truck, _spawnHome] spawn {
-            params ["_drvGrp", "_truck", "_spawnHome"];
-            private _t = time + 300;
-            waitUntil { sleep 3;
-                isNull _truck || { !(alive _truck) } ||
-                { (getPos _truck) distance2D _spawnHome < 25 } ||
-                { time > _t }
-            };
-            if (!isNull _truck && { alive _truck }) then {
-                { if (!isNull _x) then { deleteVehicle _x; }; } forEach units _drvGrp;
-                deleteVehicle _truck;
-            };
-            deleteGroup _drvGrp;
-        };
     } else {
         diag_log format ["AI COMMANDER: truck %1 no driver, despawning", typeOf _truck];
         deleteVehicle _truck;

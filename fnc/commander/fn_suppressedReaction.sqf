@@ -30,26 +30,35 @@ MISSION_CORE_fnc_onSuppressed = {
         diag_log format ["AI DEFENSE: %1 suppressed in truck - unloading early under fire", groupId _grp];
         false
     } else {
-        // --- Defense patrol: stop patrol and SAD the friendly marker center (once ever) ---
+        // --- Defense patrol hit: NEVER SAD the marker center and NEVER override the quadrant /
+        // --- patrol ownership. A suppressed patrol just snaps alert (AWARE/RED) and keeps its
+        // --- existing patrol sweeping the area - the commander's quadrant engine and the foot
+        // --- patrol/defense loop own engagement, not this per-hit handler.
         if (!(_order in ["", "defend", "engage"])) exitWith { false };
+    if ((_grp getVariable ["MISSION_CORE_HUNT_KEY", ""]) != "") exitWith { false };
+    if ([_grp] call MISSION_CORE_fnc_isQuadrantStaged) exitWith { false };
         if (_grp getVariable ["MISSION_CORE_AA_DEFENSE", false]) exitWith { false };
         if (_grp getVariable ["MISSION_CORE_AA_TANK", false]) exitWith { false };
         if (_grp getVariable ["MISSION_CORE_SUPPRESSED_REACTED", false]) exitWith { false };
+        // Leave quadrants/committed groups alone - they already have a plan.
+        if (_grp getVariable ["MISSION_CORE_ORDER", ""] == "engage" && { !((_grp getVariable ["MISSION_CORE_QUAD_MARKER", ""]) == "") }) exitWith { false };
         _grp setVariable ["MISSION_CORE_SUPPRESSED_REACTED", true];
-        private _home = _grp getVariable ["MISSION_CORE_MARKER_CENTER", getPos (leader _grp)];
-        _grp setVariable ["MISSION_CORE_ORDER", "defend"];
         _grp setVariable ["MISSION_CORE_IDLE", false];
-        _grp setVariable ["MISSION_CORE_PATROLLING", false];
-        (leader _grp) setVariable ["MISSION_CORE_PATROLLING", false];
         _grp setBehaviour "AWARE";
         _grp setCombatMode "RED";
-        [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-        private _wp = _grp addWaypoint [_home, 80];
-        _wp setWaypointType "SAD";
-        _wp setWaypointSpeed "FULL";
-        _wp setWaypointBehaviour "COMBAT";
-        _grp setCurrentWaypoint _wp;
-        diag_log format ["AI DEFENSE: %1 suppressed - defending friendly marker", groupId _grp];
+        // Keep whatever patrol waypoints exist; only nudge off a frozen CYCLE so it keeps moving.
+        private _wps = waypoints _grp;
+        if (count _wps > 0) then {
+            private _curIdx = (currentWaypoint _grp) min (count _wps - 1);
+            if (waypointType (_wps select _curIdx) == "CYCLE") then {
+                private _nx = _wps select 0;
+                { if (waypointType _x != "CYCLE") exitWith { _nx = _x; }; } forEach _wps;
+                _grp setCurrentWaypoint _nx;
+            };
+        } else {
+            [_grp, _grp getVariable ["MISSION_CORE_MARKER_CENTER", getPos (leader _grp)], _grp getVariable ["MISSION_CORE_MARKER_SIZE", [200, 200]]] call MISSION_CORE_fnc_issuePatrolAware;
+        };
+        diag_log format ["AI DEFENSE: %1 suppressed - alert (AWARE/RED) keeping patrol", groupId _grp];
         false
     };
 };
