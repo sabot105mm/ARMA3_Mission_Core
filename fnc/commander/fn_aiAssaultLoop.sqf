@@ -364,6 +364,13 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                         _waveGrp setBehaviour "AWARE";
                         _waveGrp setCombatMode "RED";
                         _waveGrp setSpeedMode "FULL";
+                        // spawnGroup seeded this REDFOR group with a patrol MOVE+CYCLE route. The wave
+                        // must NEVER ride to the assault carrying that cycle: combat waypoints added
+                        // after a CYCLE get looped back to the waypoint following it once the SAD
+                        // completes, so dismounted squads run back out to the unload ring (~400m) and
+                        // then back in, and the old patrol waypoints stay visible on the group. Clear
+                        // the whole patrol route so the wave runs exactly [ring MOVE -> SAD].
+                        [_waveGrp] call MISSION_CORE_fnc_clearGroupWaypoints;
                         // Foot waves ride a wheeled truck to the target, then pause at the stand-off
                         // ring just OUTSIDE the marker's edge and EJECT to assault on foot. Gun
                         // mounts fight from the vehicle and never eject (crew stays in). The truck's
