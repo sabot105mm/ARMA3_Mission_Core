@@ -22,7 +22,9 @@ MISSION_CORE_fnc_advHintOnce = {
     } forEach _classes;
     diag_log format ["ADV HINTS: showing %1", _displayStr];
     // [classes, shortDur, shortCond, fullDur, fullCond, showIfDisabled, onlyFull, onlyOnce, sound]
-    [_classes, 12, "", _fullTime, "", false, _onlyFull, true, true] call BIS_fnc_advHint;
+    // showIfDisabled=true: render even if the player disabled Advanced Hints in Options > Game
+    // (otherwise the engine silently drops the hint and the contextual education never appears).
+    [_classes, 12, "", _fullTime, "", true, _onlyFull, true, true] call BIS_fnc_advHint;
 };
 
 // Background driver: sleeps until the player exists, then fires the Welcome hint and starts a
