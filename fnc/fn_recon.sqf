@@ -219,7 +219,7 @@ MISSION_CORE_fnc_reconDrawRoute = {
     _mkr setMarkerPolyline _roadPath;
     _mkr setMarkerColor "ColorBlue";
     _mkr setMarkerSize [2, 2];
-    MISSION_CORE_RECON_ROUTES set [(_roadPath str), _mkr];
+    MISSION_CORE_RECON_ROUTES set [(str _roadPath), _mkr];
     diag_log format ["RENOWN/RECON: routine supply route drawn (%1 waypoints)", count _roadPath];
 };
 

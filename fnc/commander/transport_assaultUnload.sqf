@@ -38,7 +38,7 @@ _veh lock false;
 if (alive _veh) then {
     _veh setSpeedMode "LIMITED";
     private _drvStop = driver _veh;
-    if (!isNull _drvStop) then { _drvStop doStop; };
+    if (!isNull _drvStop) then { doStop _drvStop; };
     private _stopBy = time + 6;
     waitUntil { sleep 0.2; isNull _veh || { !(alive _veh) } || { speed _veh < 2 } || { time > _stopBy } };
 };

@@ -52,7 +52,11 @@ MISSION_CORE_fnc_unlockMenuLoad = {
                 private _gi = MISSION_CORE_RECON_GEAR findIf { (_x select 0) == _forEachValue };
                 if (_gi >= 0) then { _gearNames pushBack ((MISSION_CORE_RECON_GEAR select _gi) select 1); };
             } forEach _st;
-            format ["Recon Unit %1  (%2)", _slot + 1, if (count _gearNames > 0) then { _gearNames joinWith ", " } else { "no gear" }]
+            private _gearStr = "";
+            {
+                _gearStr = _gearStr + (if (_forEachIndex > 0) then { ", " } else { "" }) + _x;
+            } forEach _gearNames;
+            format ["Recon Unit %1  (%2)", _slot + 1, if (_gearStr == "") then { "no gear" } else { _gearStr }]
         } else {
             private _cost = if (!isNil "MISSION_CORE_RECON_UNIT_COSTS") then {
                 MISSION_CORE_RECON_UNIT_COSTS param [_slot, 100 + _slot * 75]

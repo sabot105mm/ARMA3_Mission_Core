@@ -355,7 +355,7 @@ MISSION_CORE_fnc_huntSweep = {
         if (alive _v) then {
             _v setSpeedMode "LIMITED";
             private _drvStop = driver _v;
-            if (!isNull _drvStop) then { _drvStop doStop; };
+            if (!isNull _drvStop) then { doStop _drvStop; };
             private _stopBy = time + 6;
             waitUntil { sleep 0.2; isNull _v || { !(alive _v) } || { speed _v < 2 } || { time > _stopBy } };
         };

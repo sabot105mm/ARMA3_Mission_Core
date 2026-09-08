@@ -8,10 +8,19 @@
 MISSION_CORE_fnc_advHintOnce = {
     params ["_classes", ["_fullTime", 30], ["_onlyFull", false]];
     if (isNil "MISSION_CORE_ADVHINTS_SHOWN") then { MISSION_CORE_ADVHINTS_SHOWN = createHashMap; };
-    private _key = _classes joinString "_";
+    private _key = "";
+    {
+        _key = _key + _x;
+        if (_forEachIndex < (count _classes) - 1) then { _key = _key + "_"; };
+    } forEach _classes;
     if (MISSION_CORE_ADVHINTS_SHOWN getOrDefault [_key, false]) exitWith {};
     MISSION_CORE_ADVHINTS_SHOWN set [_key, true];
-    diag_log format ["ADV HINTS: showing %1", _classes joinString " > "];
+    private _displayStr = "";
+    {
+        _displayStr = _displayStr + _x;
+        if (_forEachIndex < (count _classes) - 1) then { _displayStr = _displayStr + " > "; };
+    } forEach _classes;
+    diag_log format ["ADV HINTS: showing %1", _displayStr];
     // [classes, shortDur, shortCond, fullDur, fullCond, showIfDisabled, onlyFull, onlyOnce, sound]
     [_classes, 12, "", _fullTime, "", false, _onlyFull, true, true] call BIS_fnc_advHint;
 };
