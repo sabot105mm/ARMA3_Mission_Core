@@ -11,6 +11,9 @@ MISSION_CORE_fnc_queuedReplenish = {
     private _factionData = if (_side == WEST) then { MISSION_CORE_BLUFOR_DATA } else { MISSION_CORE_REDFOR_DATA };
     private _pool = [(_factionData select 17)] call MISSION_CORE_fnc_getInfTemplates;
     if (count _pool == 0) exitWith { false };
+    private _squadMax = [_loc] call MISSION_CORE_fnc_markerSizeWeightMaxMen;
+    private _poolCapped = _pool select { (_x select 2) <= _squadMax };
+    if (count _poolCapped > 0) then { _pool = _poolCapped; };
     private _template = selectRandom _pool;
     private _markerSize = if (count _loc > 8) then { _loc select 8 } else { [200, 200] };
     private _spawnPositions = [_locPos, _markerSize, _farDir, _edgeRadius, _side] call MISSION_CORE_fnc_findCoveredSpawns;

@@ -52,10 +52,10 @@ MISSION_CORE_fnc_advHintDriver = {
             };
 
             // 2) First time a light-infrastructure marker enters the broadcast contested set
-            //    (power_ / solar_ / outpost_ markers) -> they fight alone, no neighbours join.
+            //    (power_ / solar_ markers) -> they fight alone, no neighbours join.
             if (!_lightInfraSeen && !(isNil "MISSION_CORE_CONTESTED_MARKERS")) then {
                 private _found = MISSION_CORE_CONTESTED_MARKERS findIf {
-                    (_x find "power_" == 0) || { (_x find "solar_" == 0) } || { (_x find "outpost_" == 0) }
+                    (_x find "power_" == 0) || { (_x find "solar_" == 0) }
                 };
                 if (_found != -1) then {
                     _lightInfraSeen = true;

@@ -23,8 +23,8 @@ MISSION_CORE_fnc_requestReinforcement = {
         if (_zIdx >= 0 && { _locPos distance ((MISSION_CORE_CACHED_POSITIONS select _zIdx) select 1) < 4000 }) exitWith {};
     };
 
-    // Find nearest friendly REDFOR location with positive supply. PERMANENT RULE: outposts /
-    // powerplants / solar are static tiny garrisons - they never act as reinforcement GIVERS
+    // Find nearest friendly REDFOR location with positive supply. PERMANENT RULE: powerplants /
+    // solar are static tiny garrisons - they never act as reinforcement GIVERS
     // (no supply dispatched).
     private _providers = MISSION_CORE_CACHED_POSITIONS select {
         (_x select 4) == EAST &&

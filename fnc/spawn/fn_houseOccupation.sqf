@@ -88,7 +88,7 @@ MISSION_CORE_fnc_houseOccupationInit = {
                 // deck at cargoTowerSpawnRadius m, more men at the 2nd/3rd-floor windows and the
                 // ground as the player closes, up to cargoTowerMaxCount, EVERYONE facing the player.
                 // Handled here inside the house-occupation director loop only - no extra polls.
-                // PERMANENT RULE: Outposts / powerplants / solar are tiny static garrisons - no
+                // PERMANENT RULE: Powerplants / solar are tiny static garrisons - no
                 // tower garrison, no MGs (light-infrastructure markers).
                 if (_house isKindOf "Land_Cargo_Tower_base_F" && { !([_loc] call MISSION_CORE_fnc_isLightInfrastructure) }) then {
                     [_rec, _nearest, _players] call MISSION_CORE_fnc_cargoTowerTick;

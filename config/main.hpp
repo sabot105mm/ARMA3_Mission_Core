@@ -58,6 +58,15 @@ class MISSION_CORE_TUNE {
     footSquadRefMen = 6;            // 1 squad-equivalent = this many men (10 squads = 60)
     footSquadCapSquads = 10;        // weighted foot cap per side (in squad-equivalents)
 
+    // ----- Marker size-weight (garrison scaling by footprint x importance) -----
+    sizeWeightMinArea = 20000;      // marker footprint (a*b) at/below this = weight 0 (smallest garrison)
+    sizeWeightMaxArea = 250000;     // marker footprint (a*b) at/above this = weight 1 (full garrison)
+    sizeWeightImpFloor = 0.2;       // importance-1 markers ramp size bonus at this floor rate
+    sizeWeightImpCeil = 1.0;        // importance-5 markers ramp at this ceiling rate
+    sizeWeightMinMen = 6;           // smallest squad size for tiny/unimportant markers
+    sizeWeightMaxMen = 12;          // largest squad size for big/important markers
+    vehicleMinImportance = 2;       // markers BELOW this importance spawn foot-only (no vehicles)
+
     // ----- Proximity spawner -----
     proxSpawnRadius = 700;          // markers within X m of a player spawn a garrison
     proxDespawnDist = 2500;         // markers despawn when nearest player beyond this
@@ -92,11 +101,13 @@ class MISSION_CORE_TUNE {
     quadrantSpanFalloffSize = 500;  // marker avg half-axis where the sector span halves (90 -> 45 deg); smaller markers stay wider
     quadrantReEvalInterval = 300;   // seconds between quadrant re-evals (repoint squads whose player moved to another sector)
     quadrantGraceTime = 600;        // keep streaming the quadrant response this long after the last live contact (sight lost)
+    quadrantEngageKnows = 1.2;      // knowsAbout threshold for a player to count as engaging a marker (quadrant response)
 
     // ----- Hunt director -----
     huntDetectRange = 1200;         // player "near a marker" proximity for hunt tracking
-    huntFaintKnows = 0.1;           // knowsAbout threshold for a *faint* sighting (dispatch)
+    huntFaintKnows = 0.1;           // knowsAbout threshold for a *faint* sighting (usable only after a recent 0.7 contact)
     huntContactKnows = 0.7;         // knowsAbout threshold for a real contact (LOS required)
+    huntFaintPosError = 250;        // max random LKP offset for a faint/stale sighting (weakest knowledge = most imprecise)
     huntIntelDecay = 60;            // seconds a shared sighting stays steerable
     huntSweepSeconds = 600;         // 10 min sweep clock from arrival at the LKP
     huntReSpotRadius = 30;          // non-LOS "stepped on him" bump radius
@@ -144,6 +155,19 @@ class MISSION_CORE_TUNE {
     assaultTankBase = 2;             // tanks = base + floor(importance * tankPerImp), capped
     assaultTankPerImp = 0.5;
     assaultTankMax = 4;
+
+    // ----- Aggression -----
+    aggressionStart = 5;            // enemy aggression when the mission starts (low = holds off)
+    aggressionMax = 100;            // cap
+    aggressionThreshold = 40;       // below this NO assault launches (enemy holds off)
+    aggressionDriftEvery = 600;     // seconds between passive drift ticks
+    aggressionDriftAmt = 2;         // passive aggression gained per drift tick
+    aggressionCaptureImp = 6;       // aggression per importance level of a player-secured marker
+    aggressionCaptureSize = 8;      // aggression from a fully-sized marker footprint (0..1 weight)
+    aggressionConvoyPerSupply = 0.25; // aggression per supply unit a destroyed convoy was carrying
+    aggressionDrainBase = 4;        // aggression spent by committing ANY assault
+    aggressionDrainPerImp = 2;      // extra spent per importance level of the assault source
+    aggressionDrainPerTank = 3;     // extra spent per tank requested for the assault
 
     // ----- Replenish -----
     replenishCapPerMarker = 5;       // max alive replenish squads assigned per marker

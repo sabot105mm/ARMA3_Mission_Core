@@ -112,13 +112,11 @@ MISSION_CORE_fnc_spawnGroup = {
         // PATROL BOX well past the small footprint so the garrison spreads out over the terrain
         // around the marker instead of clumping inside a ~100m circle. Only the patrol geometry
         // changes - the stored MISSION_CORE_MARKER_SIZE keeps the small footprint for threat tests.
-        if !(isNil "MISSION_CORE_CACHED_POSITIONS") then {
-            private _locAt = [_markerCenter] call MISSION_CORE_fnc_getLocByPos;
-            if (count _locAt > 2 && { [_locAt] call MISSION_CORE_fnc_isLightInfrastructure }) then {
-                private _spreadR = ["lightInfraPatrolRadius", 300] call MISSION_CORE_fnc_tune;
-                if (_ma < _spreadR) then { _ma = _spreadR; };
-                if (_mb < _spreadR) then { _mb = _spreadR; };
-            };
+        // Size-based (not light-infra based): outposts are full markers now but still small.
+        private _spreadR = ["lightInfraPatrolRadius", 300] call MISSION_CORE_fnc_tune;
+        if (_ma < _spreadR || { _mb < _spreadR }) then {
+            if (_ma < _spreadR) then { _ma = _spreadR; };
+            if (_mb < _spreadR) then { _mb = _spreadR; };
         };
         for "_i" from 1 to _patrolCount do {
             private _ang = random 360;

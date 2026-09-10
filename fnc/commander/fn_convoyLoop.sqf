@@ -154,6 +154,10 @@ MISSION_CORE_fnc_convoyLoop = {
                 if (isNull _truck || { !(alive _truck) }) then {
                     // Player-killed or Force Recon-struck convoy: renown for the team + a loot box.
                     private _renownGain = [["renownPerConvoy", 15] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_awardRenown;
+                    // Each lost convoy angers the enemy proportionally to the supply it carried.
+                    private _aggGain = _amount * (["aggressionConvoyPerSupply", 0.25] call MISSION_CORE_fnc_tune);
+                    [_aggGain] call MISSION_CORE_fnc_aggressionAdd;
+                    diag_log format ["AGGRESSION: convoy %1 -> %2 lost +%3 (supply %4)", _prov, _recv, round _aggGain, _amount];
                     ["DynOps_ConvoyDestroyed",
                         ["CONVOY DESTROYED", format ["Supply convoy %1 -> %2 lost! Renown +%3", _prov, _recv, _renownGain]]
                     ] remoteExec ["BIS_fnc_showNotification", 0];

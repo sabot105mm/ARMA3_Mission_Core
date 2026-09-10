@@ -728,7 +728,7 @@ class DYNOPS_RecruitMenu
         {
             idc = 1661;
             x = 0.18; y = 0.31; w = 0.26; h = 0.03;
-            text = "TARGET (ENEMY)";
+            text = "TARGET (ANY MARKER)";
             colorText[] = {1,0.5,0.5,1};
             colorBackground[] = {0,0,0,0};
             sizeEx = 0.025;
@@ -792,16 +792,40 @@ class DYNOPS_RecruitMenu
         class AttackRERecruitList: RscListBox
         {
             idc = 1638;
-            x = 0.18; y = 0.645; w = 0.54; h = 0.13;
+            x = 0.18; y = 0.645; w = 0.26; h = 0.13;
         };
         class AttackRERecruitBtn: RscButton
         {
             idc = 1639;
-            x = 0.46; y = 0.785; w = 0.17; h = 0.03;
+            x = 0.18; y = 0.785; w = 0.26; h = 0.03;
             text = "RE-RECRUIT";
             sizeEx = 0.022;
             colorBackground[] = {0.4,0.3,0.15,0.95};
             action = "[] call MISSION_CORE_fnc_recruitAttackRERecruit;";
+        };
+
+        class AttackIdleLabel: RscText
+        {
+            idc = 1644;
+            x = 0.46; y = 0.615; w = 0.26; h = 0.03;
+            text = "IDLE HOLDING (CAPTURED)";
+            colorText[] = {0.6,1,0.7,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.02;
+        };
+        class AttackIdleList: RscListBox
+        {
+            idc = 1643;
+            x = 0.46; y = 0.645; w = 0.26; h = 0.13;
+        };
+        class AttackIdleNote: RscText
+        {
+            idc = 1649;
+            x = 0.46; y = 0.785; w = 0.26; h = 0.03;
+            text = "Select idle group + target, then DEPLOY. Group must be full strength.";
+            colorText[] = {0.65,0.65,0.65,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.017;
         };
 
         class AttackCost: RscText
@@ -878,6 +902,15 @@ class DETECTION {
 class MISSION_CORE_TUNE {
     footSquadRefMen = 6;
     footSquadCapSquads = 10;
+
+    // ----- Marker size-weight (garrison scaling by footprint x importance) -----
+    sizeWeightMinArea = 20000;
+    sizeWeightMaxArea = 250000;
+    sizeWeightImpFloor = 0.2;
+    sizeWeightImpCeil = 1.0;
+    sizeWeightMinMen = 6;
+    sizeWeightMaxMen = 12;
+    vehicleMinImportance = 2;
 
     proxSpawnRadius = 700;
     proxDespawnDist = 2500;
@@ -960,6 +993,18 @@ class MISSION_CORE_TUNE {
     assaultTankBase = 2;
     assaultTankPerImp = 0.5;
     assaultTankMax = 4;
+
+    aggressionStart = 5;
+    aggressionMax = 100;
+    aggressionThreshold = 40;
+    aggressionDriftEvery = 600;
+    aggressionDriftAmt = 2;
+    aggressionCaptureImp = 6;
+    aggressionCaptureSize = 8;
+    aggressionConvoyPerSupply = 0.25;
+    aggressionDrainBase = 4;
+    aggressionDrainPerImp = 2;
+    aggressionDrainPerTank = 3;
 
     replenishCapPerMarker = 5;
     replenishRange = 2500;
@@ -1186,6 +1231,14 @@ class CfgHints
             displayNameShort = "Enemy AI";
             description = "The enemy commander reacts to a <t color='#ffd24a'>contested marker</t>:<br/>- Neighbouring markers dispatch counter-attack squads and tanks toward it.<br/>- Enemy markers launch full scripted assaults on your bases.<br/>- If they <t color='#ff9a9a'>actually see you</t>, nearby squads hunt your last known position.<br/>- A heavily mauled garrison retreats to a friendly marker and despawns.<br/><br/>Fighting them off-marker, near good cover, breaks their reaction chain.";
             tip = "Contested markers call in neighbours - expect reinforcements while you fight.";
+        };
+        class Aggression
+        {
+            dlc = -1;
+            displayName = "Enemy Aggression";
+            displayNameShort = "Enemy Aggression";
+            description = "The enemy holds a single global <t color='#ffd24a'>aggression</t> meter (0-100).<br/><br/>It starts <t color='#7ee07e'>low</t> - the enemy holds off assaulting your markers until you provoke them.<br/><br/>You raise it by:<br/>- <t color='#ffd24a'>Capturing markers</t> - the bigger and more important the marker, the angrier they get.<br/>- <t color='#ffd24a'>Destroying supply convoys</t> - proportional to the supplies lost.<br/><br/>Enemy aggression also creeps up slowly over time. When it crosses the assault threshold the enemy launches full assaults - and <t color='#ff9a9a'>each assault spends aggression</t>, so after a big push they calm down and hold off again.";
+            tip = "Provoke them and they strike - but each assault calms them back down.";
         };
         class Houses
         {

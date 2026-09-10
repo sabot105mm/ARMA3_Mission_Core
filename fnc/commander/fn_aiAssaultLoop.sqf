@@ -9,6 +9,16 @@ MISSION_CORE_fnc_aiAssaultLoop = {
     publicVariable "MISSION_CORE_ASSAULT_TARGET";
     while { true } do {
         sleep 25 + random 15;
+        // Slow passive drift: even a passive player slowly escalates the war. When drifting
+        // past the assault threshold the enemy starts pushing, and each push burns the
+        // aggression back down below it (see the drain at commit below).
+        if (isNil "MISSION_CORE_AGGRESSION_DRIFT_TIME") then { MISSION_CORE_AGGRESSION_DRIFT_TIME = time + (["aggressionDriftEvery", 600] call MISSION_CORE_fnc_tune); };
+        if (time >= MISSION_CORE_AGGRESSION_DRIFT_TIME) then {
+            MISSION_CORE_AGGRESSION_DRIFT_TIME = time + (["aggressionDriftEvery", 600] call MISSION_CORE_fnc_tune);
+            [["aggressionDriftAmt", 2] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_aggressionAdd;
+        };
+        // 0 below the assault threshold (enemy holds off), ramping to 1 at max aggression.
+        private _aggFactor = call MISSION_CORE_fnc_aggressionFactor;
         // Slowly decay defense scores so hardened markers eventually return to the target pool
         if (time >= MISSION_CORE_DEFENSE_DECAY_TIME) then {
             MISSION_CORE_DEFENSE_DECAY_TIME = time + 1200;
@@ -105,6 +115,11 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                     _willingChance = _willingChance * _ammoMult;
                 };
                 _assaultChance = (_willingChance * (if (_conf <= 0) then { 1 } else { _supportFactor })) min 0.95;
+                // Global aggression gates the launch entirely: BELOW the assault threshold no
+                // marker attacks at all (enemy holds off); above it, willingness ramps up toward
+                // the confidence/support/ammo ceiling. Confidence stays the intensity layer.
+                if (_aggFactor <= 0) then { _assaultChance = 0; }
+                else { _assaultChance = _assaultChance * (0.25 + 0.75 * _aggFactor); };
                 };
             };
 
@@ -156,6 +171,14 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                 // delivered columns to the push. If no stock exists the waves roll in anyway after
                 // the timeout.
                 private _assaultTanks = ((["assaultTankBase", 2] call MISSION_CORE_fnc_tune) + floor (_importance * (["assaultTankPerImp", 0.5] call MISSION_CORE_fnc_tune))) min (["assaultTankMax", 4] call MISSION_CORE_fnc_tune);
+                // Committing an assault BURNS aggression proportional to its size (tanks + source
+                // importance). Repelled or not, the resolve that fuelled the push is spent: after
+                // a big assault the enemy drops below the threshold and holds off again.
+                private _drain = (["aggressionDrainBase", 4] call MISSION_CORE_fnc_tune)
+                              + (_importance * (["aggressionDrainPerImp", 2] call MISSION_CORE_fnc_tune))
+                              + (_assaultTanks * (["aggressionDrainPerTank", 3] call MISSION_CORE_fnc_tune));
+                [0 - _drain] call MISSION_CORE_fnc_aggressionAdd;
+                diag_log format ["AGGRESSION: %1 committed assault on %2 - spent %3 aggression (imp=%4 tanks=%5)", _locName, _targetName, round _drain, _importance, _assaultTanks];
                 if (isNil "MISSION_CORE_TANK_DELIVERED") then { MISSION_CORE_TANK_DELIVERED = createHashMap; };
                 if (isNil "MISSION_CORE_TANK_DELIVERED_GROUPS") then { MISSION_CORE_TANK_DELIVERED_GROUPS = createHashMap; };
                 if (isNil "MISSION_CORE_TANK_REQUESTED") then { MISSION_CORE_TANK_REQUESTED = createHashMap; };

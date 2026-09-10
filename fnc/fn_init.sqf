@@ -234,6 +234,10 @@ if (isServer) then {
     // only defend for the rest of the mission. The instant the all-out is committed the marker
     // is flagged here so it never initiates an attack again.
     MISSION_CORE_EXHAUSTED_MARKERS = createHashMap;
+    // Global enemy aggression (see fn_aggression.sqf). Starts low so the enemy holds off;
+    // player captures/convoys + slow drift push it up; each assault spent burns it down.
+    MISSION_CORE_AGGRESSION = ["aggressionStart", 5] call MISSION_CORE_fnc_tune;
+    publicVariable "MISSION_CORE_AGGRESSION";
     // PERMANENT RULE: exactly ONE REDFOR "zone" - the single marker the whole reinforcement /
     // counter-attack effort concentrates on. It anchors onto the marker a player is fighting (or
     // a just-captured marker being retaken) and stays there until the player leaves it and closes

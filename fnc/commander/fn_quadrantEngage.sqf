@@ -268,9 +268,11 @@ MISSION_CORE_fnc_issueQuadrantSAD = {
 MISSION_CORE_fnc_quadrantEngage = {
     params ["_loc", "_engagedPlayers", "_defenders", "_markerName", "_locPos", "_engageRadius"];
     if (count _engagedPlayers == 0) exitWith { false };
-    // PERMANENT RULE: Outposts are static tiny garrisons - they never get the quadrant sweep/SAD
-    // order. The garrison simply holds its own marker.
-    if ([_loc] call MISSION_CORE_fnc_isLightInfrastructure) exitWith { false };
+    // PERMANENT RULE: Outposts and light infrastructure (Powerplants / Solar) are tiny markers -
+    // a quadrant sweep collapses the whole defense onto the player's exact feet. They never get the
+    // quadrilateral sweep/SAD order; the garrison simply holds its own marker.
+    private _qType = toLower (_loc select 2);
+    if (_qType == "outpost" || { [_loc] call MISSION_CORE_fnc_isLightInfrastructure }) exitWith { false };
     private _mkrArea = _loc select 1;
     private _size = if (count _mkrArea > 1) then { _mkrArea select 1 } else { [200, 200] };
     private _dir = if (count _mkrArea > 2) then { _mkrArea select 2 } else { 0 };
@@ -492,15 +494,13 @@ MISSION_CORE_fnc_issuePatrolAware = {
     private _ma = _size select 0; if (_ma <= 0) then { _ma = 250; };
     private _mb = if (count _size > 1) then { _size select 1 } else { _ma }; if (_mb <= 0) then { _mb = _ma; };
     private _mDir = if (count _size > 2) then { _size select 2 } else { 0 };
-    // SMALL MARKER SPREAD: light-infra markers (outpost/powerplant/solar) are tiny - an alert
+    // SMALL MARKER SPREAD: outpost/powerplant/solar markers are tiny - an alert
     // patrol must spread out over the terrain around the marker, not clump in the small box.
-    if !(isNil "MISSION_CORE_CACHED_POSITIONS") then {
-        private _locAt = [_center] call MISSION_CORE_fnc_getLocByPos;
-        if (count _locAt > 2 && { [_locAt] call MISSION_CORE_fnc_isLightInfrastructure }) then {
-            private _spreadR = ["lightInfraPatrolRadius", 300] call MISSION_CORE_fnc_tune;
-            if (_ma < _spreadR) then { _ma = _spreadR; };
-            if (_mb < _spreadR) then { _mb = _spreadR; };
-        };
+    // Size-based (not light-infra based): outposts are full markers now but still small.
+    private _spreadR = ["lightInfraPatrolRadius", 300] call MISSION_CORE_fnc_tune;
+    if (_ma < _spreadR || { _mb < _spreadR }) then {
+        if (_ma < _spreadR) then { _ma = _spreadR; };
+        if (_mb < _spreadR) then { _mb = _spreadR; };
     };
     _grp setVariable ["MISSION_CORE_ORDER", ""];
     _grp setVariable ["MISSION_CORE_IDLE", false];

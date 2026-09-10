@@ -82,7 +82,7 @@ MISSION_CORE_fnc_defenseCoordinator = {
                 private _locEntry = _x;
                 private _mName = _locEntry select 0;
                 if ((_locEntry select 4) == _side && { !(_mName in _have) }) then {
-                    // PERMANENT RULE: outposts / powerplants / solar are static tiny garrisons -
+                    // PERMANENT RULE: powerplants / solar are static tiny garrisons -
                     // they get NO static defenses (bunkers / MG nests / AT) under any path.
                     if ([_locEntry] call MISSION_CORE_fnc_isLightInfrastructure) then { continue; };
                     // Do not re-spawn defenses for a marker the player already cleared while still

@@ -86,27 +86,30 @@ MISSION_CORE_fnc_splitAfterDismount = {
         // contested marker, so the release step hands it a quadrant sweep instead of a generic SAD.
         // MISSION_CORE_QUAD_ARRIVED lets the quadrant purge keep it even before its leader is inside
         // the staging radius (it is still marching in), so it is never dropped before release.
-        private _qLocI = if (isNil "MISSION_CORE_CACHED_POSITIONS") then { -1 } else { MISSION_CORE_CACHED_POSITIONS findIf { (_x select 1) distance2D _targetPos < 60 } };
-        if (_qLocI >= 0) then {
-            private _qLoc = MISSION_CORE_CACHED_POSITIONS select _qLocI;
-            private _qM = _qLoc select 0;
-            private _qLightInfra = [_qLoc] call MISSION_CORE_fnc_isLightInfrastructure;
-            private _qC = _qLoc select 1;                 // marker center POSITION (cached entry index 1)
-            private _qSz = getMarkerSize _qM;              // [w, h] straight from the marker
-            private _qDir = markerDir _qM;
-            private _qSh = markerShape _qM;
-            private _qImp = _qLoc select 7;
-            // Engaged players = alive players with real knowsAbout (>1.2) of any enemy near the
-            // target marker (mirrors the commander loop's quadrant trigger).
+private _qLocI = if (isNil "MISSION_CORE_CACHED_POSITIONS") then { -1 } else { MISSION_CORE_CACHED_POSITIONS findIf { (_x select 1) distance2D _targetPos < 60 } };
+            if (_qLocI >= 0) then {
+                private _qLoc = MISSION_CORE_CACHED_POSITIONS select _qLocI;
+                private _qM = _qLoc select 0;
+                // PERMANENT RULE: outposts / light infrastructure never get quadrant engagement -
+                // a tiny marker's quad sweep collapses onto the player's feet.
+                private _qOutpost = toLower (_qLoc select 2) == "outpost";
+                private _qLightInfra = [_qLoc] call MISSION_CORE_fnc_isLightInfrastructure;
+                private _qC = _qLoc select 1;                 // marker center POSITION (cached entry index 1)
+                private _qSz = getMarkerSize _qM;              // [w, h] straight from the marker
+                private _qDir = markerDir _qM;
+                private _qSh = markerShape _qM;
+                private _qImp = _qLoc select 7;
+            // Engaged players = alive players with real knowsAbout (above the tune threshold) of any
+            // enemy near the target marker (mirrors the commander loop's quadrant trigger).
             private _qEnemies = allUnits select { side _x getFriend _side < 0.6 && { alive _x } && { _x distance _qC < (600 + _qImp * 200) } };
             private _qEngaged = [];
             {
                 private _p = _x;
                 private _k = 0;
                 { private _kk = _p knowsAbout _x; if (_kk > _k) then { _k = _kk; }; } forEach _qEnemies;
-                if (_k > 1.2) then { _qEngaged pushBack _p; };
+                if (_k > (["quadrantEngageKnows", 1.2] call MISSION_CORE_fnc_tune)) then { _qEngaged pushBack _p; };
             } forEach (allPlayers select { alive _x });
-            if (count _qEngaged > 0 && { !_qLightInfra }) then {
+            if (count _qEngaged > 0 && { !_qLightInfra && { !_qOutpost } }) then {
                 // The nearest engaged player drives this squad's quadrant entry.
                 private _pNear = _qEngaged select 0;
                 private _pdN = _pNear distance _qC;

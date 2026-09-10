@@ -1,7 +1,7 @@
 
 MISSION_CORE_fnc_spawnDefenses = {
     params ["_targetPos", "_targetSize", "_side", "_factionData", "_importance", ["_axisPos", []]];
-    // PERMANENT RULE: Outposts are static tiny garrisons - they get NO bunkers, MG nests or
+    // PERMANENT RULE: Powerplants / Solar are static tiny garrisons - they get NO bunkers, MG nests or
     // AT emplacements. The small garrison holds with plain infantry only.
     if !(isNil "MISSION_CORE_CACHED_POSITIONS") then {
         private _locAt = [_targetPos] call MISSION_CORE_fnc_getLocByPos;

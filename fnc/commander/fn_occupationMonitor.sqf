@@ -88,6 +88,11 @@ MISSION_CORE_fnc_occupationMonitor = {
                     MISSION_CORE_SPAWNED_LOCATIONS set [_locName, false];
                     diag_log format ["DYNAMIC CAPTURE: %1 secured by %2 (10min hold complete)", _locName, _occupier];
                     private _renownGain = 0;
+                    // Marker importance - computed once at loop scope so the manpower/renown reward
+                    // AND the aggression gain below both read the same (non-NaN) value.
+                    private _locImp = 3;
+                    private _impIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _locName };
+                    if (_impIdx >= 0) then { _locImp = (MISSION_CORE_CACHED_POSITIONS select _impIdx) select 7; };
                     if (_occupier == WEST) then {
                         if (isNil "MISSION_CORE_DEFENSE_POINTS") then { MISSION_CORE_DEFENSE_POINTS = createHashMap; };
                         private _reward = getNumber (missionConfigFile >> "DEFENSE_BUILD_POINTS_CAPTURE_REWARD");
@@ -101,13 +106,20 @@ MISSION_CORE_fnc_occupationMonitor = {
                         } forEach allPlayers;
                         publicVariable "MISSION_CORE_DEFENSE_POINTS";
                         // Manpower bonus: importance * captureMult
-                        private _locImp = 3;
-                        private _impIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _locName };
-                        if (_impIdx >= 0) then { _locImp = (MISSION_CORE_CACHED_POSITIONS select _impIdx) select 7; };
                         [_locImp] call MISSION_CORE_fnc_awardCaptureManpower;
                         // Renown bonus: importance * captureMult (scales with marker size/type)
                         _renownGain = _locImp * (["renownCaptureMult", 3] call MISSION_CORE_fnc_tune);
                         [_renownGain] call MISSION_CORE_fnc_awardRenown;
+                    };
+                    // A player-secured marker infuriates the enemy: aggression rises with the
+                    // marker's importance AND its footprint (bigger bases hurt more).
+                    if (_occupier == WEST) then {
+                        private _sizeWeight = 0;
+                        if (!isNil "MISSION_CORE_fnc_markerSizeWeight") then { _sizeWeight = [_locEntry] call MISSION_CORE_fnc_markerSizeWeight; };
+                        private _aggGain = (_locImp * (["aggressionCaptureImp", 6] call MISSION_CORE_fnc_tune))
+                                        + (_sizeWeight * (["aggressionCaptureSize", 8] call MISSION_CORE_fnc_tune));
+                        [_aggGain] call MISSION_CORE_fnc_aggressionAdd;
+                        diag_log format ["AGGRESSION: marker %1 secured by players +%2 (imp=%3 sizeW=%4)", _locName, round _aggGain, _locImp, _sizeWeight];
                     };
                     ["DynOps_MarkerCaptured",
                         ["MARKER CAPTURED", format ["%1 has been secured!%2", _locName, if (_renownGain > 0) then { format [" (+%1 renown)", _renownGain] } else { "" }]]

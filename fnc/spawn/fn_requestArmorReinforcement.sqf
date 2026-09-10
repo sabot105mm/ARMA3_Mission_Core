@@ -15,14 +15,9 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
         private _tlr = _targetPos call MISSION_CORE_fnc_getLocByPos;
         if (count _tlr > 0) then { _targetName = _tlr select 0; };
     };
-    // PERMANENT RULE: outposts / powerplants / solar are static tiny garrisons - they hold with
-    // plain infantry only. No armor, APC or replenish reinforcement is ever dispatched TO a
-    // light-infrastructure marker (no tank pool refill, no spawn-kill replacement, no depot order).
-    private _tlrEntry = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _targetName }) param [0, []];
-    if (count _tlrEntry > 0 && { [_tlrEntry] call MISSION_CORE_fnc_isLightInfrastructure }) exitWith {
-        diag_log format ["LIGHT-INFRA RULE: no armor reinforcement for %1 (light infrastructure)", _targetName];
-        false
-    };
+    // Light-infrastructure markers (powerplant / solar) can RECEIVE armor counter-attacks from
+    // separate markers, but their own garrison is foot-only: no armor is ever fielded at them.
+    // (Armor may still be dispatched TO them by a separate marker under requestArmorReinforcement.)
     if (isNil "MISSION_CORE_ARMOR_REINF_COOLDOWN") then { MISSION_CORE_ARMOR_REINF_COOLDOWN = createHashMap; };
     private _sideKey = if (_side == WEST) then { "BLUFOR" } else { "REDFOR" };
     private _lastReinf = MISSION_CORE_ARMOR_REINF_COOLDOWN getOrDefault [_sideKey, -99999];

@@ -9,6 +9,8 @@ MISSION_CORE_fnc_spawnLocation = {
     private _tankPool = if (_owner in [WEST, EAST]) then { [_loc] call MISSION_CORE_fnc_markerTankPool } else { 0 };
     private _markerCenter = _loc select 1;
     private _markerSize = if (count _loc > 8) then { _loc select 8 } else { [200, 200] };
+    private _sizeWeight = [_loc] call MISSION_CORE_fnc_markerSizeWeight;
+    private _squadMax = [_loc] call MISSION_CORE_fnc_markerSizeWeightMaxMen;
     private _allGroups = _factionData select 17;
     private _locName = _loc select 0;
     private _locMkr = _locName;
@@ -119,8 +121,8 @@ MISSION_CORE_fnc_spawnLocation = {
         private _presetGroups = [];
         private _chosenNames = [];
         private _freshGroups = [];
-        private _defenderCount = 1 + _importance;
-        if (_importance >= 5) then { _defenderCount = _defenderCount + 1; };
+        private _defenderCount = 1 + round (_importance * (0.3 + 0.7 * _sizeWeight));
+        if (_importance >= 5 && { _sizeWeight >= 0.5 }) then { _defenderCount = _defenderCount + 1; };
         private _defenderPools = [_aaPool, _atPool, _infPool, _weaponsPool];
         private _defenderWeights = [1, 4, 4, 1];
         // Foot/mech composition caps (global per side): at most 1 AA team, 4 AT teams, 2 weapons
@@ -141,6 +143,11 @@ MISSION_CORE_fnc_spawnLocation = {
             };
             if (count _pool == 0) then { continue; };
             private _avail = _pool select { !((_x select 0) in _chosenNames) };
+            // MARKER SIZE WEIGHT: small markers keep their squads SHORT - only pick templates
+            // at/below the marker's squad cap. Fall back to the full pool when nothing fits
+            // (a marker still fields its count instead of going quiet on tiny pools).
+            private _availCapped = _avail select { (_x select 2) <= _squadMax };
+            if (count _availCapped > 0) then { _avail = _availCapped; };
             // Few addon factions expose many unique group templates - fall back to reusing a
             // template so the marker still fields its full defenderCount instead of going quiet.
             if (count _avail == 0) then { _avail = _pool; };
@@ -181,6 +188,16 @@ MISSION_CORE_fnc_spawnLocation = {
         };
 
         diag_log format ["DYNAMIC SPAWN: %1 imp=%2 allGroups=%3 pools aa=%4 at=%5 inf=%6 wps=%7", _locName, _importance, count _allGroups, count _aaPool, count _atPool, count _infPool, count _weaponsPool];
+        // VERY LOW IMPORTANCE: foot-only garrison. Markers below vehicleMinImportance never
+        // field ANY vehicle-bearing group (AA/AT/armor/mech) - they are light outposts with
+        // foot guards only.
+        if (_importance < (["vehicleMinImportance", 2] call MISSION_CORE_fnc_tune)) then {
+            private _foot = _presetGroups select { ({ !(_x isKindOf "Man") } count (_x select 1)) == 0 };
+            if (count _foot < count _presetGroups) then {
+                diag_log format ["DYNAMIC SPAWN: %1 imp=%2 foot-only - dropped %3 vehicle group(s)", _locName, _importance, count _presetGroups - count _foot];
+            };
+            _presetGroups = _foot;
+        };
         diag_log format ["DYNAMIC SPAWN: %1 defenderCount=%2 presetGroups=%3", _locName, _defenderCount, count _presetGroups];
         {
             diag_log format ["DYNAMIC SPAWN:   candidate: %1 cat=%2 sub=%3 cnt=%4", _x select 0, _x select 4, _x select 3, _x select 2];
@@ -340,7 +357,7 @@ MISSION_CORE_fnc_spawnLocation = {
         // new groups straight into the fight instead of leaving them patrolling their own marker.
         // PERMANENT RULE: a marker that is itself a contested zone NEVER marches its own garrison
         // to a DIFFERENT zone - it defends its own fight (its fresh groups target its own center).
-        // Outposts / powerplants / solar are static tiny garrisons: they never commit ANY fresh
+        // Powerplants / solar are static tiny garrisons: they never commit ANY fresh
         // garrison off-marker (light-infrastructure markers stay home).
         if (count _freshGroups > 0 && _owner in [WEST, EAST] && { !([_loc] call MISSION_CORE_fnc_isLightInfrastructure) }) then {
             private _contestedList = [_owner] call MISSION_CORE_fnc_getContestedMarkers;

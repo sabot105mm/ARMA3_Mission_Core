@@ -959,7 +959,7 @@ MISSION_CORE_fnc_playerArtyLoop = {
                 private _target = if (_preferLaser) then { _laserTarget } else { [_veh, _enemy] call MISSION_CORE_fnc_artilleryTarget; };
                 if (!_preferLaser && { count _target == 0 }) then {
                     // Fall back to shelling an enemy-held marker.
-                    _target = [_veh, _enemy] call MISSION_CORE_fnc_artilleryMarkerTarget;
+                    _target = [side _veh, getPosATL _veh, if (_veh isKindOf "StaticMortar") then { 1700 } else { 10000 }] call MISSION_CORE_fnc_artilleryMarkerTarget;
                 };
                 if (count _target > 0) then {
                     private _mag = [_veh, _preferLaser] call MISSION_CORE_fnc_pickArtilleryMag;

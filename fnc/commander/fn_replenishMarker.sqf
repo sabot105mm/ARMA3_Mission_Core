@@ -6,6 +6,8 @@ MISSION_CORE_fnc_replenishMarker = {
     private _locName = _loc select 0;
     private _locPos = _loc select 1;
     private _markerSize = if (count _loc > 8) then { _loc select 8 } else { [200, 200] };
+    private _sizeWeight = [_loc] call MISSION_CORE_fnc_markerSizeWeight;
+    private _squadMax = [_loc] call MISSION_CORE_fnc_markerSizeWeightMaxMen;
     private _factionData = if (_side == WEST) then { MISSION_CORE_BLUFOR_DATA } else { MISSION_CORE_REDFOR_DATA };
     private _allGroups = _factionData select 17;
     private _nearestP = objNull;
@@ -26,7 +28,10 @@ MISSION_CORE_fnc_replenishMarker = {
     if (_edgeRadius < _minEdge) then { _edgeRadius = _minEdge; };
     private _missing = (_capacity - _alive) max 1;
     // Manpower is 1-for-1: a marker only fields the men its funding base actually delivered.
-    private _toSpawn = ((_missing min 8) min _mpBudget) max 0;
+    // MARKER SIZE WEIGHT: small / low-importance markers refill in smaller batches - scale the
+    // per-call spawn cap down with the size weight (min 2 so tiny markers still top up).
+    private _batchCap = ((round (8 * (0.3 + 0.7 * _sizeWeight))) max 2) min 8;
+    private _toSpawn = ((_missing min _batchCap) min _mpBudget) max 0;
     if (_toSpawn <= 0) exitWith { 0 };
     private _replCount = [_locName] call MISSION_CORE_fnc_countReplenishGroups;
     if (_replCount >= 5) exitWith {
@@ -35,6 +40,10 @@ MISSION_CORE_fnc_replenishMarker = {
     };
     private _pool = [_allGroups] call MISSION_CORE_fnc_getInfTemplates;
     if (count _pool == 0) exitWith { 0 };
+    // MARKER SIZE WEIGHT: small markers refill with SHORT squads - prefer templates at/below
+    // the squad cap, falling back to the full pool when nothing fits.
+    private _poolCapped = _pool select { (_x select 2) <= _squadMax };
+    if (count _poolCapped > 0) then { _pool = _poolCapped; };
     private _spawned = 0;
     // Global foot budget cap or town cap full: queue the replenish to spawn when men free up.
     if (!([_side, "inf", _locPos] call MISSION_CORE_fnc_townCategoryCanUse) || { ([_side] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) }) then {

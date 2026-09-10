@@ -41,6 +41,12 @@ player addAction [
 
 // Renown + Force Recon: unlocked units + gear bought at the HQ flag
 call compile preprocessFileLineNumbers "fnc\fn_reconClient.sqf";
+// Pre-fetch the recon state (join-in-progress clients miss the init broadcast).
+[] spawn {
+    waitUntil { !isNil "MISSION_CORE_INITIALIZED" && { MISSION_CORE_INITIALIZED } };
+    sleep 1;
+    [] call MISSION_CORE_fnc_reconPullState;
+};
 player addAction [
     "Marine Force Recon HQ",
     { [] call MISSION_CORE_fnc_openUnlockMenu; },
@@ -53,6 +59,13 @@ call compile preprocessFileLineNumbers "fnc\fn_helpMenu.sqf";
 // Advanced hints (BIS_fnc_advHint contextual education + ESC Field Manual via CfgHints)
 call compile preprocessFileLineNumbers "fnc\fn_advHints.sqf";
 [] spawn MISSION_CORE_fnc_advHintDriver;
+
+// Map diary (Notes tab, M key) built from the same topics as the H-key field manual
+call compile preprocessFileLineNumbers "fnc\fn_diary.sqf";
+[] spawn {
+    waitUntil { !isNull player };
+    [] call MISSION_CORE_fnc_setupDiary;
+};
 
 // Key handler for recruit menu (X key) + field manual (H key)
 (findDisplay 46) displayAddEventHandler ["KeyDown", {

@@ -22,7 +22,7 @@ MISSION_CORE_fnc_longRangeReactionTick = {
             if ((_loc select 4) != _side) then { continue; };
             private _locName = _loc select 0;
             private _locPos = _loc select 1;
-            // PERMANENT RULE: outposts / powerplants / solar are static tiny garrisons - they
+            // PERMANENT RULE: powerplants / solar are static tiny garrisons - they
             // never dispatch a long-range counter to a shooter (sniper response, tank strike).
             if ([_loc] call MISSION_CORE_fnc_isLightInfrastructure) then { continue; };
             if (!(MISSION_CORE_SPAWNED_LOCATIONS getOrDefault [_locName, false])) then { continue; };

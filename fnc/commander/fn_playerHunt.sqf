@@ -2,9 +2,10 @@
 // REDFOR PLAYER-HUNT DIRECTOR (one thread)
 //
 // Watches BLUFOR players near REDFOR markers. A hunt only starts when REDFOR has ACTUALLY seen the
-// player - a faint sighting (any garrison unit knowsAbout > 0.1 near a spawned marker) or a real
-// LOS sighting still fresh (<60s). Proximity alone never triggers one. The closest REDFOR markers
-// then dispatch a HUNT contingent to the player's last known position:
+// player - a real LOS sighting (knowsAbout >= 0.7) that is still fresh (<60s), or a faint 0.1
+// awareness that is only usable while that real contact is still recent. Proximity alone never
+// triggers one. The closest REDFOR markers then dispatch a HUNT contingent to the player's last
+// known position:
 //
 //   - Player in a tank       -> an MBT contingent (tank vs tank); if no armor capacity, a bigger
 //                               infantry + AT contingent instead.
@@ -113,15 +114,20 @@ MISSION_CORE_fnc_playerHunt = {
             if (!_near && { !_liveSight }) then { continue; };
 
             // ---- HUNT REQUIRES AN ACTUAL SIGHTING ----
-            // Proximity alone never starts a hunt. The REDFOR must have at least a FAINT awareness
-            // of the player (any garrison unit knowsAbout > 0.1) or a real LOS sighting that is
-            // still fresh (<60s). No observation = no hunt.
+            // Proximity alone never starts a hunt, and a FAINT awareness is never enough on its
+            // own: a 0.1 knowsAbout only counts while a real LOS contact (knowsAbout >= 0.7) is
+            // still fresh (<60s). No real contact = no hunt.
             private _intel = MISSION_CORE_HUNT_INTEL getOrDefault [_pKey, []];
             private _intelFresh = count _intel >= 3 && { (time - (_intel select 2)) <= (["huntIntelDecay", 60] call MISSION_CORE_fnc_tune) };
-            private _faintContact = _snapUnits findIf {
-                alive _x && { _x distance2D _pPos < (_detectRange + 300) && { _x knowsAbout _p > (["huntFaintKnows", 0.1] call MISSION_CORE_fnc_tune) } }
-            } != -1;
-            if (!_faintContact && { !_intelFresh }) then { continue; };
+            // Strongest current awareness of the player - drives how precise the reported position
+            // is. Full contact = exact spot, faint 0.1 = a wide drift, never a god-view pin.
+            private _maxKnows = 0;
+            {
+                if (alive _x && { _x distance2D _pPos < (_detectRange + 300) }) then {
+                    _maxKnows = _maxKnows max (_x knowsAbout _p);
+                };
+            } forEach _snapUnits;
+            if (!_intelFresh && { !_liveSight }) then { continue; };
 
             // Already hunting this player - living contingents are on the way / sweeping.
             private _active = MISSION_CORE_HUNT_ACTIVE getOrDefault [_pKey, []];
@@ -131,11 +137,18 @@ MISSION_CORE_fnc_playerHunt = {
             // Aim the hunt at a position the REDFOR genuinely knows. When a unit has a CURRENT live
             // LOS sighting this tick, that legitimately-sighted spot is the player's own position
             // (no god-view - a real enemy just laid eyes on him). Otherwise fall back to the last
-            // real sighting (_intel) or the previously-recorded LKP so a faint-only contact still
-            // hunts where they WERE, not where they are right now.
+            // real sighting (_intel) or the previously-recorded LKP. The lower the current
+            // awareness the more imprecise that reported spot is - a 0.1 faint never gives an
+            // exact player position, only a wide drift around the last known area.
             private _aimPos = _lpos;
             private _aimHead = _heading;
             if (_liveSight || _intelFresh) then { _aimPos = _intel select 0; _aimHead = _intel select 1; };
+            private _contactKnows = ["huntContactKnows", 0.7] call MISSION_CORE_fnc_tune;
+            private _faintKnows = ["huntFaintKnows", 0.1] call MISSION_CORE_fnc_tune;
+            private _weakFrac = 1 - ((_maxKnows - _faintKnows) / (_contactKnows - _faintKnows));
+            _weakFrac = (_weakFrac max 0) min 1;
+            private _errR = _weakFrac * (["huntFaintPosError", 250] call MISSION_CORE_fnc_tune);
+            _aimPos = [(_aimPos select 0) + (_errR * (random 2 - 1)), (_aimPos select 1) + (_errR * (random 2 - 1)), 0];
             [_p, _pKey, _aimPos, _aimHead, _side, _sideVar, _factionData] call MISSION_CORE_fnc_huntDispatch;
         } forEach _players;
     };
@@ -151,7 +164,7 @@ MISSION_CORE_fnc_huntDispatch = {
 
     private _cands = MISSION_CORE_CACHED_POSITIONS select { (_x select 4) == _side };
     if (count _cands == 0) exitWith {};
-    // PERMANENT RULE: Outposts are static tiny garrisons - they never dispatch hunt contingents.
+    // PERMANENT RULE: Powerplant / Solar are static tiny garrisons - they never dispatch hunt contingents.
     _cands = _cands select { !([_x] call MISSION_CORE_fnc_isLightInfrastructure) };
     // AMMO: a source marker with <30% ammo is defensive and never spares men to hunt. At 0 ammo
     // it is fully passive. Only markers with enough ammo may field a hunt contingent.

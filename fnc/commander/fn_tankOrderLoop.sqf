@@ -303,7 +303,9 @@ MISSION_CORE_fnc_tankOrderLoop = {
                 [_depot] call MISSION_CORE_fnc_tankParkReconcile;
                 MISSION_CORE_TANK_INFLIGHT set [_orderSide, (MISSION_CORE_TANK_INFLIGHT getOrDefault [_orderSide, 0]) + _take];
                 private _travelTime = (_path select 2) / (["tankTravelSpeed", 18] call MISSION_CORE_fnc_tune);
-                MISSION_CORE_TANK_SHIPMENTS pushBack [_orderSide, _dName, _tName, _tPos, _take, (_path select 0), (_path select 1), _travelTime, time, 0, [], grpNull];
+                if (isNil "MISSION_CORE_CONVOY_ID") then { MISSION_CORE_CONVOY_ID = 0; };
+                MISSION_CORE_CONVOY_ID = MISSION_CORE_CONVOY_ID + 1;
+                MISSION_CORE_TANK_SHIPMENTS pushBack [_orderSide, _dName, _tName, _tPos, _take, (_path select 0), (_path select 1), _travelTime, time, 0, [], grpNull, MISSION_CORE_CONVOY_ID, ""];
                 MISSION_CORE_TANK_DESTROYED set [count MISSION_CORE_TANK_SHIPMENTS - 1, false];
                 diag_log format ["DYNAMIC TANK: dispatched %1 tanks %2 -> %3 (%4m, ETA %5s)", _take, _dName, _tName, round (_path select 2), round _travelTime];
                 _remaining = _remaining - _take;

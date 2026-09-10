@@ -135,14 +135,16 @@ MISSION_CORE_fnc_getLocationImportance = {
     _typeBoost
 };
 
-// Light-infrastructure markers (Outpost, Powerplant, Solar): a very small garrison that fields
-// NO hunt orders, NO quadrant engagement and NO static defenses (MG bunkers/emplacements).
-// Everything else about the marker (capture, value, light infantry garrison) still functions.
+// Light-infrastructure markers (Powerplant, Solar): a very small garrison that fields NO hunt
+// orders, NO quadrant engagement and NO static defenses (MG bunkers/emplacements). They cannot
+// dispatch counter-attacks, hunts or reinforcements, but they CAN receive them from separate
+// (non-infrastructure) markers. Everything else about the marker (capture, value, light infantry
+// garrison) still functions. NOTE: Outposts are NOT infrastructure - they are full markers.
 MISSION_CORE_fnc_isLightInfrastructure = {
     params ["_loc"];
     if (isNil "_loc" || count _loc < 3) exitWith { false };
     private _t = toLower (_loc select 2);
-    (_t == "outpost" || _t == "powerplant" || _t == "solar")
+    (_t == "powerplant" || _t == "solar")
 };
 
 MISSION_CORE_fnc_scanMarkers = {

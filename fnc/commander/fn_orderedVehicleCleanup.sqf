@@ -84,6 +84,9 @@ MISSION_CORE_fnc_refundOrderedVehContents = {
     };
     if (_veh isKindOf "Tank") then {
         if (isNil "MISSION_CORE_TANK_STOCK") then { MISSION_CORE_TANK_STOCK = createHashMap; };
+        if (isNil { MISSION_CORE_fnc_tankDepotIsDepot }) then {
+            diag_log format ["TANKDEPOT MISSING: fn_tankDepot.sqf did not compile - skipping tank refund for %1 at %2", typeOf _veh, _origin];
+        } else {
         private _s = side _veh;
         private _depots = MISSION_CORE_CACHED_POSITIONS select {
             (_x select 4) == _s && { [(_x select 0)] call MISSION_CORE_fnc_tankDepotIsDepot }
@@ -102,6 +105,7 @@ MISSION_CORE_fnc_refundOrderedVehContents = {
         if (_dn != "") then {
             MISSION_CORE_TANK_STOCK set [_dn, ([_dn] call MISSION_CORE_fnc_tankDepotStock) + 1];
             diag_log format ["VEHICLE CLEANUP: refunded a tank to %1 (stock now %2)", _dn, ([_dn] call MISSION_CORE_fnc_tankDepotStock)];
+        };
         };
     };
 };

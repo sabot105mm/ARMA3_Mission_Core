@@ -84,7 +84,8 @@ MISSION_CORE_fnc_aiCommanderLoop = {
             private _nearestPlayer = objNull;
             private _maxKnows = 0;
             // PERMANENT RULE: a battle only starts when a player has ACTUALLY engaged the garrison
-            // (knowsAbout > 1.2 of any enemy unit near the marker). Proximity alone must never
+            // (knowsAbout above the tune contact threshold of any enemy unit near the marker).
+            // Proximity alone must never
             // count: a player standing near a spawned marker without attacking must not make the
             // AI counter-attack, truck reinforcements across the map, or build defenses there.
             {
@@ -92,7 +93,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                 private _knows = 0;
                 { private _k = _p knowsAbout _x; if (_k > _knows) then { _knows = _k; }; } forEach _enemies;
                 if (_knows > _maxKnows) then { _maxKnows = _knows; _nearestPlayer = _p; };
-                if (_knows > 1.2) then { _detected = true; };
+                if (_knows > (["quadrantEngageKnows", 1.2] call MISSION_CORE_fnc_tune)) then { _detected = true; };
             } forEach _players;
 
             if (_detected && !isNull _nearestPlayer) then {
@@ -117,7 +118,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                     private _p = _x;
                     private _k = 0;
                     { private _kk = _p knowsAbout _x; if (_kk > _k) then { _k = _kk; }; } forEach _enemies;
-                    if (_k > 1.2) then { _engagedPlayers pushBack _p; };
+                    if (_k > (["quadrantEngageKnows", 1.2] call MISSION_CORE_fnc_tune)) then { _engagedPlayers pushBack _p; };
                 } forEach _players;
 
                 [_loc, _engagedPlayers, _defenders, _markerName, _locPos, _engageRadius] call MISSION_CORE_fnc_quadrantEngage;

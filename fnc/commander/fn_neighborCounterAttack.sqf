@@ -7,13 +7,6 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     // independently with its own neighbor pool below.
     private _zoneList = [_side] call MISSION_CORE_fnc_getContestedMarkers;
     if (_zoneList findIf { (_x select 0) == _locName } == -1) exitWith {};
-    // PERMANENT RULE: outposts / powerplants / solar are static tiny garrisons - they NEVER
-    // receive neighbor reinforcements, manpower credit or counter-attack tanks. A contested
-    // light-infrastructure zone is fought by its own small garrison only.
-    private _selfEntry = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _locName }) param [0, []];
-    if (count _selfEntry > 0 && { [_selfEntry] call MISSION_CORE_fnc_isLightInfrastructure }) exitWith {
-        diag_log format ["LIGHT-INFRA RULE: %1 is light infrastructure - no neighbor reinforcements or tanks", _locName];
-    };
     if (isNil "MISSION_CORE_REINF_COOLDOWN") then { MISSION_CORE_REINF_COOLDOWN = createHashMap; };
     private _last = MISSION_CORE_REINF_COOLDOWN getOrDefault [_locName, -99999];
     if (time - _last < 300) exitWith {};
@@ -47,7 +40,7 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     // own garrison must stay and defend its own fight - so contested markers are excluded from the
     // neighbor pool entirely (no troops dispatched, no manpower credit).
     private _zoneNames = _zoneList apply { _x select 0 };
-    // PERMANENT RULE: outposts / powerplants / solar are static tiny garrisons - they never
+    // PERMANENT RULE: powerplants / solar are static tiny garrisons - they never
     // send counter-attacks to a neighbor marker (no troops dispatched, no manpower credit).
     private _neighbors = MISSION_CORE_CACHED_POSITIONS select {
         (_x select 4) == _side &&

@@ -1,4 +1,5 @@
 // Loader: compiles every function from the split fnc\commander\ folder in source order.
+call compile preprocessFileLineNumbers "fnc\commander\fn_aggression.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_getMarkerValue.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_getTargetPriority.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_getAIZoneFocus.sqf";

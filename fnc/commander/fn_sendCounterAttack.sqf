@@ -29,8 +29,8 @@ MISSION_CORE_fnc_sendCounterAttack = {
             _blocked = true;
         };
     };
-    // PERMANENT RULE (LIGHT-INFRASTRUCTURE GARRISONS): a group that spawned from an Outpost,
-    // Powerplant or Solar marker is a static tiny garrison - it defends ONLY its own marker and is
+    // PERMANENT RULE (LIGHT-INFRASTRUCTURE GARRISONS): a group that spawned from a Powerplant or
+    // Solar marker is a static tiny garrison - it defends ONLY its own marker and is
     // NEVER re-tasked to a different / contested marker (no hunt, no quadrant patrol, no
     // counter-attack). Same spirit as the BLUFOR garrisonStaysHome rule, applied to light-infra
     // origin groups.

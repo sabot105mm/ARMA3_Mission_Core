@@ -285,7 +285,9 @@ private _bName = _needBase select 0;
     private _bPos = _needBase select 1;
     private _dist = _pPos distance2D _bPos;
     private _eta = _dist / _speed;
-    MISSION_CORE_MANPOWER_CONVOYS pushBack [_portName, _bName, _ship, time + _eta];
+    if (isNil "MISSION_CORE_CONVOY_ID") then { MISSION_CORE_CONVOY_ID = 0; };
+    MISSION_CORE_CONVOY_ID = MISSION_CORE_CONVOY_ID + 1;
+    MISSION_CORE_MANPOWER_CONVOYS pushBack [_portName, _bName, _ship, time + _eta, MISSION_CORE_CONVOY_ID, ""];
     diag_log format ["DYNAMIC MANPOWER: %1 shipping %2 manpower to base %3 (ETA %4s)", _portName, round (_ship * 10) / 10, _bName, round _eta];
     } forEach (keys MISSION_CORE_PORTS);
 

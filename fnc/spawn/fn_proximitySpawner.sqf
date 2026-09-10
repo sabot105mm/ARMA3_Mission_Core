@@ -134,9 +134,23 @@ MISSION_CORE_fnc_proximitySpawner = {
                     // A marker under active attack is never despawned - its defenders keep fighting.
                     // Otherwise (nothing attacking it) even a player-owned marker despawns on
                     // distance and simply re-spawns when the player returns.
+                    // PERMANENT RULE: "the battle is over" is measured from the marker EDGE, not
+                    // its center. A marker only despawns once no enemy is within "despawnEnemyPastEdge"
+                    // (500m) PAST its edge - an enemy standing just outside the boundary (or inside)
+                    // still counts as an active threat, so the garrison stays up instead of
+                    // evaporating mid-contact. A flat center-radius check is wrong for big markers:
+                    // 1500m out from the center of a huge depot is still well INSIDE it.
                     private _owner = _loc select 4;
                     private _enemySide = if (_owner == WEST) then { EAST } else { WEST };
-                    private _underAttack = { alive _x && { side _x == _enemySide } && { _x distance _locPos < 1500 } } count _snapUnits > 0;
+                    private _edgeGuard = ["despawnEnemyPastEdge", 500] call MISSION_CORE_fnc_tune;
+                    private _underAttack = false;
+                    {
+                        if (!(alive _x) || { side _x != _enemySide }) then { continue; };
+                        private _uPos = getPos _x;
+                        private _bearing = _locPos getDir _uPos;
+                        private _edge = [_loc, _bearing] call MISSION_CORE_fnc_markerRadiusAt;
+                        if ((_uPos distance2D _locPos) - _edge < _edgeGuard) exitWith { _underAttack = true; };
+                    } forEach _snapUnits;
                     if (!_underAttack) then {
                         [_locName, _locPos] call MISSION_CORE_fnc_despawnLocation;
                     };

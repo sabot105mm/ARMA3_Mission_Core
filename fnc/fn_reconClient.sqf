@@ -14,6 +14,33 @@ MISSION_CORE_fnc_tuneIfAvailable = {
     (MISSION_CORE_SETTINGS getOrDefault [_key, _default])
 };
 
+// Paint the unlock screen locally if the broadcast state has not arrived yet. The client should
+// NEVER show a blank list - defaults mirror the server's init (reconMaxUnits=4, same costs/gear),
+// and the authoritative server state overwrites them the moment the pull broadcast lands.
+MISSION_CORE_fnc_ensureLocalReconDefaults = {
+    if (isNil "MISSION_CORE_RECON_GEAR" || { count MISSION_CORE_RECON_GEAR < 5 }) then {
+        MISSION_CORE_RECON_GEAR = [
+            ["optics", "Long-Range Optics", 25, [8, 0, 0]],
+            ["designator", "Target Designator", 30, [6, 10, 0]],
+            ["spg", "SPG Fire Support", 40, [0, 20, 12]],
+            ["mlrs", "MLRS Fire Support", 55, [0, 25, 22]],
+            ["paveway", "Paveway LGB", 60, [0, 20, 30]]
+        ];
+    };
+    if (isNil "MISSION_CORE_RECON_UNITS" || { count MISSION_CORE_RECON_UNITS == 0 }) then {
+        MISSION_CORE_RECON_UNITS = [];
+        private _maxR = ["reconMaxUnits", 4] call MISSION_CORE_fnc_tuneIfAvailable;
+        for "_i" from 0 to (_maxR - 1) do { MISSION_CORE_RECON_UNITS pushBack false; };
+    };
+    if (isNil "MISSION_CORE_RECON_UNIT_COSTS" || { count MISSION_CORE_RECON_UNIT_COSTS == 0 }) then {
+        MISSION_CORE_RECON_UNIT_COSTS = [];
+        private _base = ["reconUnitCostBase", 100] call MISSION_CORE_fnc_tuneIfAvailable;
+        private _step = ["reconUnitCostStep", 75] call MISSION_CORE_fnc_tuneIfAvailable;
+        for "_i" from 0 to (count MISSION_CORE_RECON_UNITS - 1) do { MISSION_CORE_RECON_UNIT_COSTS pushBack (_base + _i * _step); };
+    };
+    if (isNil "MISSION_CORE_RENOWN") then { MISSION_CORE_RENOWN = 0; };
+};
+
 // True when the player stands at the HQ flag area.
 MISSION_CORE_fnc_nearHQ = {
     if (isNil "MISSION_CORE_LOCATIONS") exitWith { false };
@@ -24,18 +51,62 @@ MISSION_CORE_fnc_nearHQ = {
     (player distance _pos) <= _range
 };
 
+// Pull the authoritative recon state from the server (idempotent re-broadcast). Covers clients
+// that joined mid-mission and missed the init publicVariable, and any state-loss hitches.
+MISSION_CORE_fnc_reconPullState = {
+    if (isServer) then {
+        if (!(isNil "MISSION_CORE_fnc_reconPushState")) then { call MISSION_CORE_fnc_reconPushState; };
+    } else {
+        [] remoteExec ["MISSION_CORE_fnc_reconPushState", 2];
+    };
+};
+
 MISSION_CORE_fnc_openUnlockMenu = {
+    call MISSION_CORE_fnc_ensureLocalReconDefaults;
     if !([] call MISSION_CORE_fnc_nearHQ) exitWith { hint "Move to your HQ flag to access Force Recon command."; };
-    if (isNil "MISSION_CORE_RECON_UNITS") exitWith { hint "Force Recon system not ready yet."; };
-    if (isNil "MISSION_CORE_RECON_GEAR") exitWith { hint "Force Recon gear list not ready."; };
+    // Require real content - an empty/missing list is never a valid unlock screen. Pull again
+    // and retry once after the broadcast lands instead of opening an empty menu.
+    if (isNil "MISSION_CORE_RECON_UNITS" || { count MISSION_CORE_RECON_UNITS == 0 } || { isNil "MISSION_CORE_RECON_GEAR" }) exitWith {
+        [] call MISSION_CORE_fnc_reconPullState;
+        hint "Requesting Force Recon state... open again in a second.";
+        [] spawn MISSION_CORE_fnc_reconWaitAndOpen;
+    };
     closeDialog 2;
     createDialog "DYNOPS_UnlockMenu";
+    [] spawn MISSION_CORE_fnc_unlockMenuRefresh;
+};
+
+// Retry-open once the pulled state lands (spawned only when the open was deferred above).
+MISSION_CORE_fnc_reconWaitAndOpen = {
+    private _t = time + 10;
+    waitUntil { sleep 0.5; _t < time || { !(isNil "MISSION_CORE_RECON_UNITS") && { count MISSION_CORE_RECON_UNITS > 0 } && { !(isNil "MISSION_CORE_RECON_GEAR") } } };
+    private _ok = !(isNil "MISSION_CORE_RECON_UNITS") && { count MISSION_CORE_RECON_UNITS > 0 } && { !(isNil "MISSION_CORE_RECON_GEAR") } && { [] call MISSION_CORE_fnc_nearHQ };
+    if (_ok) then {
+        closeDialog 2;
+        createDialog "DYNOPS_UnlockMenu";
+        [] spawn MISSION_CORE_fnc_unlockMenuRefresh;
+    };
+    if (!(_ok) && { _t < time }) then {
+        hint "Force Recon data still unavailable.";
+    };
+};
+
+// One-shot refresh right after the menu opens: pull the authoritative server state and repopulate
+// both lists once the broadcast lands, so the screen always shows current renown/ownership.
+MISSION_CORE_fnc_unlockMenuRefresh = {
+    sleep 1.0;
+    if (isNull (findDisplay 1580)) exitWith {};
+    [] call MISSION_CORE_fnc_reconPullState;
+    sleep 1.0;
+    if (isNull (findDisplay 1580)) exitWith {};
+    [] call MISSION_CORE_fnc_unlockMenuLoad;
 };
 
 // Populate both lists + the info panel from the broadcast state.
 MISSION_CORE_fnc_unlockMenuLoad = {
     private _d = findDisplay 1580;
     if (isNull _d) exitWith {};
+    call MISSION_CORE_fnc_ensureLocalReconDefaults;
     if (isNil "MISSION_CORE_RECON_UNITS" || isNil "MISSION_CORE_RECON_GEAR") exitWith {};
     private _renown = if (isNil "MISSION_CORE_RENOWN") then { 0 } else { MISSION_CORE_RENOWN };
     (_d displayCtrl 1582) ctrlSetText format ["RENOWN: %1", _renown];
@@ -49,7 +120,8 @@ MISSION_CORE_fnc_unlockMenuLoad = {
         private _idx = _ul lbAdd (if (typeName _st == "ARRAY") then {
             private _gearNames = [];
             {
-                private _gi = MISSION_CORE_RECON_GEAR findIf { (_x select 0) == _forEachValue };
+                private _gid = _x;
+                private _gi = MISSION_CORE_RECON_GEAR findIf { (_x select 0) == _gid };
                 if (_gi >= 0) then { _gearNames pushBack ((MISSION_CORE_RECON_GEAR select _gi) select 1); };
             } forEach _st;
             private _gearStr = "";
@@ -72,7 +144,28 @@ MISSION_CORE_fnc_unlockMenuLoad = {
     MISSION_CORE_RECON_SEL = ((MISSION_CORE_RECON_SEL) max 0) min (count MISSION_CORE_RECON_UNITS - 1);
     _ul lbSetCurSel MISSION_CORE_RECON_SEL;
 
+    // Empty-list guard: if the unit list is still blank, the broadcast may not have landed yet.
+    // Pull the server state and repopulate once - never twice, so a valid selection never churns.
+    if (lbSize _ul == 0) then {
+        diag_log "RENOWN/RECON: unit list empty at load - pulling state";
+        [] call MISSION_CORE_fnc_reconPullState;
+        [] spawn MISSION_CORE_fnc_unlockMenuLoadRetry;
+    };
+    diag_log format ["RENOWN/RECON: unlock menu loaded - units=%1 gear=%2", count MISSION_CORE_RECON_UNITS, count MISSION_CORE_RECON_GEAR];
+
     [] call MISSION_CORE_fnc_unlockMenuSelect;
+};
+
+// One-shot repopulate after the pulled state lands (spawned only when the load saw an empty list).
+MISSION_CORE_fnc_unlockMenuLoadRetry = {
+    sleep 1.5;
+    private _d2 = findDisplay 1580;
+    if (isNull _d2) exitWith {};
+    private _ul2 = _d2 displayCtrl 1583;
+    if (lbSize _ul2 == 0 && { !(isNil "MISSION_CORE_RECON_UNITS") } && { count MISSION_CORE_RECON_UNITS > 0 }) then {
+        diag_log "RENOWN/RECON: repopulating unit list after pull";
+        [] call MISSION_CORE_fnc_unlockMenuLoad;
+    };
 };
 
 // Selection changed (either list) - repaint gear ownership for the selected unit + info panel.
@@ -113,7 +206,7 @@ MISSION_CORE_fnc_unlockMenuSelect = {
     {
         if (typeName _x == "ARRAY") then {
             _n = _n + 1;
-            { private _gi = MISSION_CORE_RECON_GEAR findIf { (_x select 0) == _forEachValue }; if (_gi >= 0) then { private _e = (MISSION_CORE_RECON_GEAR select _gi) select 3; _det = _det + (_e select 0); _hit = _hit + (_e select 1); _dest = _dest + (_e select 2); }; } forEach _x;
+            { private _gid = _x; private _gi = MISSION_CORE_RECON_GEAR findIf { (_x select 0) == _gid }; if (_gi >= 0) then { private _e = (MISSION_CORE_RECON_GEAR select _gi) select 3; _det = _det + (_e select 0); _hit = _hit + (_e select 1); _dest = _dest + (_e select 2); }; } forEach _x;
         };
     } forEach MISSION_CORE_RECON_UNITS;
     private _dChance = ((20 + _n * 12 + _det) min 85) max 0;
@@ -159,4 +252,67 @@ MISSION_CORE_fnc_buyEquip = {
 MISSION_CORE_fnc_reconHint = {
     params ["_msg"];
     hint _msg;
+};
+
+// Server-triggered: repaint the shared interdiction log diary entry from the broadcast
+// MISSION_CORE_RECON_KILLS ledger [ammoConvoys, men, tanks]. Rebuild the whole subject so a
+// player never accumulates duplicate log pages regardless of event ordering quirks.
+MISSION_CORE_fnc_reconLogDiary = {
+    if (!hasInterface || { isNull player }) exitWith {};
+    try {
+        private _kills = missionNamespace getVariable ["MISSION_CORE_RECON_KILLS", [0, 0, 0]];
+        if (!(_kills isEqualType []) || { count _kills < 3 }) then {
+            diag_log format ["RENOWN/RECON: CLIENT RECON_KILLS was %1 (%2) - resetting", _kills, typeName _kills];
+            _kills = [0, 0, 0];
+        };
+        _kills = [(_kills select 0), (_kills select 1), (_kills select 2)];
+        if (!((_kills select 0) isEqualType 0) || { !((_kills select 0) >= 0) } || { (_kills select 0) >= 1e9 }) then { _kills set [0, 0] };
+        if (!((_kills select 1) isEqualType 0) || { !((_kills select 1) >= 0) } || { (_kills select 1) >= 1e9 }) then { _kills set [1, 0] };
+        if (!((_kills select 2) isEqualType 0) || { !((_kills select 2) >= 0) } || { (_kills select 2) >= 1e9 }) then { _kills set [2, 0] };
+        if (!(isNil "MISSION_CORE_RECON_DIARY_LAST") && { _kills isEqualTo MISSION_CORE_RECON_DIARY_LAST }) exitWith {}; // already painted
+        MISSION_CORE_RECON_DIARY_LAST = _kills;
+        private _ammo = _kills select 0;
+        private _men = _kills select 1;
+        private _tanks = _kills select 2;
+    if (player diarySubjectExists "DynOpsReconLog") then {
+        player removeDiarySubject "DynOpsReconLog";
+    };
+    player createDiarySubject ["DynOpsReconLog", "Force Recon Interdiction"];
+    private _ammoIcon = "a3\ui_f\data\map\vehicleicons\iconTruck_ca.paa";
+    private _menIcon = "a3\ui_f\data\map\markers\nato\o_inf.paa";
+    private _tankIcon = "a3\ui_f\data\map\markers\nato\o_armor.paa";
+    private _body = format [
+        "<t align='center' size='1.1' color='#ffd24a' font='PuristaBold' shadow='2'>FORCE RECON INTERDICTION</t><br/>" +
+        "<t align='center' size='0.9' color='#999999' font='PuristaLight'>Combat interdiction tally - supply convoys struck, hostile manpower lost, armor columns destroyed.</t><br/><br/>" +
+        "<t align='center' size='0.9' color='#7ee07e' font='EtelkaMonospacePro'>Accumulated strikes executed by Marine Force Recon fire support.</t><br/><br/>" +
+        "<img image='%3' width='32' height='32'/> <t size='1.05' color='#ffd24a' font='OrbitronLight'>ENEMY SUPPLY CUT</t><br/><t align='center' size='1.6' color='#ffffff' font='PuristaBold'>%1</t><br/><br/>" +
+        "<img image='%4' width='32' height='32'/> <t size='1.05' color='#ff9a9a' font='OrbitronLight'>ENEMY MANPOWER KILLED</t><br/><t align='center' size='1.6' color='#ffffff' font='PuristaBold'>%2 men</t><br/><br/>" +
+        "<img image='%5' width='32' height='32'/> <t size='1.05' color='#ff9a9a' font='OrbitronLight'>ARMOR COLUMNS DESTROYED</t><br/><t align='center' size='1.6' color='#ffffff' font='PuristaBold'>%6</t><br/><br/>" +
+        "<hr size='1' color='#555555'/><br/>" +
+        "<t align='right' size='0.8' color='#707070' font='PuristaLight'>figures are a trend, not a live combat report</t>",
+        _ammo, _men, _ammoIcon, _menIcon, _tankIcon, _tanks
+    ];
+    player createDiaryRecord ["DynOpsReconLog", ["Interdiction Log", _body]];
+    } catch {
+        diag_log format ["RENOWN/RECON: reconLogDiary exception: %1", _exception];
+    };
+};
+
+// Clients repaint the Interdiction Log diary whenever the server broadcasts a strikes-ledger
+// update (a kill) or re-broadcasts on pull. The initial render below guarantees the diary page
+// exists even before the first kill; the poll keeps a locally-hosted game's own process in sync
+// because addPublicVariableEventHandler does not fire for the machine that set the variable.
+if (hasInterface) then {
+    "MISSION_CORE_RECON_KILLS" addPublicVariableEventHandler {
+        call MISSION_CORE_fnc_reconLogDiary;
+    };
+    [] spawn {
+        waitUntil { !isNull player };
+        sleep 3;
+        call MISSION_CORE_fnc_reconLogDiary;
+        while { true } do {
+            sleep 10;
+            call MISSION_CORE_fnc_reconLogDiary;
+        };
+    };
 };
