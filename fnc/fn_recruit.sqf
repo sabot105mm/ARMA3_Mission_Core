@@ -608,29 +608,25 @@ MISSION_CORE_fnc_recruitPlayerSelect = {
     (_disp displayCtrl 1614) ctrlSetText format ["COST: %1 MP", _costPer];
 };
 
-// Recruit the selected unit into the player's group.
+// Recruit the selected unit into the player's group. SERVER-AUTHORITATIVE: the client only
+// forwards the request - the server validates, draws the manpower and spawns the unit, so no
+// client ever spawns a unit. The server joins it to the player's group, which hands locality
+// to the player's machine so they can still command it normally.
 MISSION_CORE_fnc_recruitPlayerUnit = {
     if !(alive player) exitWith {};
     if !(player getVariable ["MISSION_CAN_RECRUIT", false]) exitWith { hint "Too far from base."; };
     disableSerialization;
-    private _disp = uiNamespace getVariable "DYNOPS_RecruitMenu";
+    private _disp = uiNamespace getVariable ["DYNOPS_RecruitMenu", objNull];
+    if (isNull _disp) exitWith {};
     private _list = _disp displayCtrl 1612;
     private _idx = lbCurSel _list;
     if (_idx < 0) exitWith { hint "Select a unit first."; };
     private _class = _list lbData _idx;
     if (_class == "") exitWith {};
 
-    private _costPer = if (isNil "MISSION_CORE_MANPOWER_PER_UNIT") then { 10 } else { MISSION_CORE_MANPOWER_PER_UNIT };
-    if (isNil "MISSION_CORE_BLUFOR_MANPOWER") then { MISSION_CORE_BLUFOR_MANPOWER = 0; };
-    if (MISSION_CORE_BLUFOR_MANPOWER < _costPer) exitWith { hint "Not enough manpower!"; };
-
-    MISSION_CORE_BLUFOR_MANPOWER = MISSION_CORE_BLUFOR_MANPOWER - _costPer;
-    publicVariable "MISSION_CORE_BLUFOR_MANPOWER";
-
-    private _grp = group player;
-    private _unit = _grp createUnit [_class, getPos player, [], 0, "FORM"];
-    hint format ["Recruited %1 (-%2 MP)", _class, _costPer];
-    call MISSION_CORE_fnc_recruitMenuUpdateMP;
+    [player, _class] remoteExecCall ["MISSION_CORE_fnc_serverRecruitPlayerUnit", 2];
+    // The server's manpower broadcast lands a tick later; refresh the label once it has.
+    [] spawn { sleep 0.5; call MISSION_CORE_fnc_recruitMenuUpdateMP; };
 };
 
 // -------------------------------------------------------------------
@@ -1697,13 +1693,12 @@ MISSION_CORE_fnc_recruitAttackDeploy = {
     // Free (units already exist) - the server refills it first, then redeploys it.
     private _idleList = _disp displayCtrl 1643;
     private _idleIdx = lbCurSel _idleList;
-    if (_idleIdx >= 0) then {
+    if (_idleIdx >= 0) exitWith {
         private _idleArr = uiNamespace getVariable ["MISSION_CORE_RECRUIT_IDLE_GROUPS", []];
         if (_idleIdx < count _idleArr) then {
             private _grpId = (_idleArr select _idleIdx) select 0;
             [player, _grpId, _targetName, _wps] remoteExecCall ["MISSION_CORE_fnc_assaultServerRequestIdle", 2];
         };
-        exitWith {};
     };
 
     // New squad-template deploy.

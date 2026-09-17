@@ -43,6 +43,23 @@ MISSION_CORE_fnc_garrisonMarkerInfo = {
     [_imp, _type]
 };
 
+// SERVER-SIDE recruit gate. The client broadcasts MISSION_CAN_RECRUIT only to grey its own menu;
+// the server recomputes the same test here so a client cannot authorize a spawn/spend by flipping
+// its own variable. True when the unit is inside a BLUFOR marker area (marker real shape/rotation).
+// [_unit] call MISSION_CORE_fnc_serverCallerCanRecruit;
+MISSION_CORE_fnc_serverCallerCanRecruit = {
+    params ["_unit"];
+    if (isNull _unit) exitWith { false };
+    if (isNil "MISSION_CORE_LOCATIONS") exitWith { false };
+    private _near = false;
+    {
+        if ((_x select 5) == WEST) then {
+            if (_unit inArea (_x select 0)) exitWith { _near = true; };
+        };
+    } forEach MISSION_CORE_LOCATIONS;
+    _near
+};
+
 // Current living count of a marker's garrison (men), groups, and vehicles.
 MISSION_CORE_fnc_garrisonCounts = {
     params ["_markerName"];
@@ -237,6 +254,10 @@ MISSION_CORE_fnc_serverGarrisonDeploy = {
     params ["_caller", "_markerName", "_template", "_faction", "_catName", "_grpName", "_unitCost"];
     if (isNil "_caller" || { isNull _caller }) exitWith { };
     if (isNil "_unitCost") then { _unitCost = 0; };
+    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith {
+        MISSION_CORE_RECRUIT_RESULT = "Too far from base.";
+        publicVariable "MISSION_CORE_RECRUIT_RESULT";
+    };
 
     // Locate the marker in MISSION_CORE_LOCATIONS for its position + size.
     if (isNil "MISSION_CORE_LOCATIONS") exitWith { };
@@ -356,6 +377,44 @@ MISSION_CORE_fnc_serverGarrisonDeploy = {
     publicVariable "MISSION_CORE_RECRUIT_RESULT";
 };
 
+// ---- player squad recruit ----------------------------------------------
+
+// Spawn ONE recruited soldier into the CALLER's own group, server-side. The recruit PLAYER
+// tab used to createUnit on the clicking client and deduct manpower with a client-side
+// publicVariable; both are server-owned now, so nothing is spawned by a client any more.
+// The unit is born in a throwaway group on the server and joined to the player group - the
+// join moves it into a player-owned group, which transfers its locality to the player's
+// client so they can command it normally. [player, className]
+MISSION_CORE_fnc_serverRecruitPlayerUnit = {
+    params ["_caller", "_class"];
+    if (isNil "_caller" || { isNull _caller } || { !isPlayer _caller } || { !(alive _caller) }) exitWith {};
+    if (_class == "") exitWith {};
+    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith {
+        [_caller, "Too far from base."] call MISSION_CORE_fnc_assaultServerHint;
+    };
+
+    private _costPer = if (isNil "MISSION_CORE_MANPOWER_PER_UNIT") then { 10 } else { MISSION_CORE_MANPOWER_PER_UNIT };
+    if (!([_costPer] call MISSION_CORE_fnc_drawManpower)) exitWith {
+        [_caller, "Not enough manpower!"] call MISSION_CORE_fnc_assaultServerHint;
+    };
+
+    private _spawnPos = getPosATL _caller;
+    if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
+    private _tmpGrp = createGroup (side _caller);
+    private _unit = _tmpGrp createUnit [_class, _spawnPos, [], 0, "FORM"];
+
+    private _pGrp = group _caller;
+    if (isNull _unit || { isNull _pGrp }) exitWith {
+        [_costPer] call MISSION_CORE_fnc_refundManpower;
+        if (!isNull _tmpGrp) then { deleteGroup _tmpGrp; };
+        [_caller, "Failed to spawn unit."] call MISSION_CORE_fnc_assaultServerHint;
+    };
+
+    [_unit] joinSilent _pGrp;
+    if (count units _tmpGrp == 0) then { deleteGroup _tmpGrp; };
+    [_caller, format ["Recruited %1 (-%2 MP)", _class, _costPer]] call MISSION_CORE_fnc_assaultServerHint;
+};
+
 // ---- vehicle add -------------------------------------------------------
 
 // [_caller, _markerName, _vehClass, _kind, _cost]
@@ -365,6 +424,10 @@ MISSION_CORE_fnc_serverAddVehicle = {
     if (isNil "_caller" || { isNull _caller }) exitWith { };
     if (isNil "_cost") then { _cost = 0; };
     if (_vehClass == "") exitWith { };
+    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith {
+        MISSION_CORE_RECRUIT_RESULT = "Too far from base.";
+        publicVariable "MISSION_CORE_RECRUIT_RESULT";
+    };
 
     private _locIdx = MISSION_CORE_LOCATIONS findIf { (_x select 0) == _markerName };
     if (_locIdx < 0) exitWith { };
@@ -531,6 +594,10 @@ MISSION_CORE_fnc_serverAddVehicle = {
 MISSION_CORE_fnc_serverRemoveGroup = {
     params ["_caller", "_grpNetId"];
     if (_grpNetId == "") exitWith { };
+    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith {
+        MISSION_CORE_RECRUIT_RESULT = "Too far from base.";
+        publicVariable "MISSION_CORE_RECRUIT_RESULT";
+    };
     private _grp = objectFromNetId _grpNetId;
     if (isNull _grp) exitWith {
         MISSION_CORE_RECRUIT_RESULT = "Group already gone.";
@@ -554,6 +621,10 @@ MISSION_CORE_fnc_serverRemoveGroup = {
 MISSION_CORE_fnc_serverRemoveVehicle = {
     params ["_caller", "_vehNetId"];
     if (_vehNetId == "") exitWith { };
+    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith {
+        MISSION_CORE_RECRUIT_RESULT = "Too far from base.";
+        publicVariable "MISSION_CORE_RECRUIT_RESULT";
+    };
     private _veh = objectFromNetId _vehNetId;
     if (isNull _veh) exitWith {
         MISSION_CORE_RECRUIT_RESULT = "Vehicle already gone.";

@@ -371,6 +371,7 @@ MISSION_CORE_fnc_assaultServerRequestNew = {
     params ["_caller", "_template", "_targetName", "_wps"];
     if (isNull _caller) exitWith {};
     if !(alive _caller) exitWith {};
+    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith { [_caller, "Too far from base."] call MISSION_CORE_fnc_assaultServerHint; };
     _template params ["_grpName", "_grpUnits", "_unitCount", ["_subCat", ""], ["_catName", ""]];
     if (_unitCount <= 0) exitWith {};
 
@@ -517,6 +518,7 @@ MISSION_CORE_fnc_assaultServerRequestIdle = {
     params ["_caller", "_grpId", "_targetName", "_freshWps"];
     if (isNull _caller) exitWith {};
     if !(alive _caller) exitWith {};
+    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith { [_caller, "Too far from base."] call MISSION_CORE_fnc_assaultServerHint; };
     if (isNil "MISSION_CORE_ATTACK_GROUPS") exitWith { [_caller, "That group no longer exists."] call MISSION_CORE_fnc_assaultServerHint; };
     private _data = MISSION_CORE_ATTACK_GROUPS getOrDefault [_grpId, []];
     if (count _data == 0) exitWith { [_caller, "That group no longer exists."] call MISSION_CORE_fnc_assaultServerHint; };
@@ -593,6 +595,7 @@ MISSION_CORE_fnc_assaultServerRERecruit = {
     params ["_caller", "_wipedId"];
     if (isNull _caller) exitWith {};
     if !(alive _caller) exitWith {};
+    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith { [_caller, "Too far from base."] call MISSION_CORE_fnc_assaultServerHint; };
     if (isNil "MISSION_CORE_ATTACK_GROUPS") exitWith { [_caller, "No wiped groups to re-recruit."] call MISSION_CORE_fnc_assaultServerHint; };
     private _data = MISSION_CORE_ATTACK_GROUPS getOrDefault [_wipedId, []];
     if (count _data == 0) exitWith { [_caller, "That group no longer exists."] call MISSION_CORE_fnc_assaultServerHint; };
@@ -683,6 +686,7 @@ MISSION_CORE_fnc_assaultServerRERecruit = {
 // by the staging monitor (no per-player hint, just the lobby announcement).
 MISSION_CORE_fnc_assaultServerReleaseStaged = {
     params ["_caller", ["_onlyTargets", []]];
+    if (!(isNull _caller) && { !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) }) exitWith { [_caller, "Too far from base."] call MISSION_CORE_fnc_assaultServerHint; };
     if (isNil "MISSION_CORE_BLUFOR_STAGED") then { MISSION_CORE_BLUFOR_STAGED = []; };
     if (count MISSION_CORE_BLUFOR_STAGED == 0) exitWith { if !(isNull _caller) then { [_caller, "No BLUFOR squads are staged."] call MISSION_CORE_fnc_assaultServerHint; }; };
     private _released = 0;
