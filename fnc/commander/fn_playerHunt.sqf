@@ -77,6 +77,17 @@ MISSION_CORE_fnc_playerHunt = {
                 if (alive _ldr && { side _ldr == _enemySide }) then { _players pushBack _ldr; };
             } forEach MISSION_CORE_ATTACK_GROUPS;
         };
+        // MULTIPLAYER RELAY: client-spawned assault leaders are hunted too (fn_assaultRelay.sqf).
+        if ((["assaultLeaderHunts", 1] call MISSION_CORE_fnc_tune) > 0 && { !isNil "MISSION_CORE_ATTACK_GROUPS_RELAY" }) then {
+            {
+                private _data = _y;
+                if ((_data select 5) != "active") then { continue; };
+                private _ag = _data select 0;
+                if (isNull _ag) then { continue; };
+                private _ldr = leader _ag;
+                if (alive _ldr && { side _ldr == _enemySide }) then { _players pushBack _ldr; };
+            } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
+        };
         if (count _players == 0) then { continue; };
         // Snapshot this side's units once per tick and reuse for all players. Avoids an allUnits
         // refetch per player (the list only changes between frames, not mid-loop-body).

@@ -100,6 +100,26 @@ MISSION_CORE_fnc_replenishLoop = {
                     if (_enemyInside) exitWith {};
                 } forEach MISSION_CORE_ATTACK_GROUPS;
             };
+            // MULTIPLAYER RELAY: client-spawned assault groups also capture (same ellipse test).
+            if (!_enemyInside && { ["assaultSquadCapture", 1] call MISSION_CORE_fnc_tune > 0 } && { !isNil "MISSION_CORE_ATTACK_GROUPS_RELAY" }) then {
+                {
+                    private _data = _y;
+                    if ((_data select 5) != "active") then { continue; };
+                    private _ag = _data select 0;
+                    if (isNull _ag) then { continue; };
+                    {
+                        if (alive _x) then {
+                            private _p = getPos _x;
+                            private _dx = (_p select 0) - (_locPos select 0);
+                            private _dy = (_p select 1) - (_locPos select 1);
+                            private _rx = _dx * cos _md - _dy * sin _md;
+                            private _ry = _dx * sin _md + _dy * cos _md;
+                            if ((_rx*_rx)/(_ma*_ma) + (_ry*_ry)/(_mb*_mb) <= 1) exitWith { _enemyInside = true; };
+                        };
+                    } forEach units _ag;
+                    if (_enemyInside) exitWith {};
+                } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
+            };
             // A marker NEVER replenishes while it (or a same-side neighbor) is CONTESTED - the
             // fight grinds the garrison down without an endless manpower tap. Supplies only flow
             // once the contested marker stops fighting and a quiet period (replenishQuietPeriod)

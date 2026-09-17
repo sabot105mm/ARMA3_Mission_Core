@@ -126,6 +126,32 @@ MISSION_CORE_fnc_refreshAssaultContest = {
             [_ag, _mName, _side, _map, _isMechMotor] call MISSION_CORE_fnc_assaultGroupEval;
         } forEach MISSION_CORE_ATTACK_GROUPS;
     };
+    // MULTIPLAYER RELAY: client-spawned assault groups reported to the server (fn_assaultRelay.sqf)
+    // are evaluated for contest exactly like the local ones above. Entries share the same shape.
+    if (!isNil "MISSION_CORE_ATTACK_GROUPS_RELAY") then {
+        {
+            private _adata = _y;
+            if (count _adata < 7) then { continue; };
+            if ((_adata select 5) != "active") then { continue; };
+            private _ag = _adata select 0;
+            if (isNull _ag) then { continue; };
+            private _mName = _adata select 1;
+            if (_mName == "") then { continue; };
+            private _side = _adata select 4;
+            private _isMechMotor = _ag getVariable ["MISSION_CORE_MECH_MOTOR", nil];
+            if (isNil "_isMechMotor") then {
+                private _tmpl = _adata select 3;
+                _isMechMotor = false;
+                if (count _tmpl > 4) then {
+                    private _subCat = _tmpl select 3;
+                    private _catName = _tmpl select 4;
+                    _isMechMotor = (_catName find "Motorized" > -1 || _subCat find "motor" > -1)
+                        || (_catName find "Mechanized" > -1 || _subCat find "mech" > -1);
+                };
+            };
+            [_ag, _mName, _side, _map, _isMechMotor] call MISSION_CORE_fnc_assaultGroupEval;
+        } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
+    };
     // REDFOR committed assault force has NO contest registration - the operator's request is only
     // that BLUFOR recruited attack groups contest their assigned REDFOR target marker, and they
     // are handled above via MISSION_CORE_ATTACK_GROUPS. The REDFOR AI assault system is a separate
@@ -148,7 +174,7 @@ MISSION_CORE_fnc_isMarkerContested = {
     // contested here - they only get spawned (see proximitySpawner) so there is something to fight
     // on the way. The per-group presence (and mech/motor riding-vehicle logic) is computed once per
     // second in MISSION_CORE_fnc_refreshAssaultContest - see the helper at the top of this file.
-    if (_markerName != "" && { !isNil "MISSION_CORE_ATTACK_GROUPS" } && { count MISSION_CORE_ATTACK_GROUPS > 0 }) then {
+    if (_markerName != "" && { ((!isNil "MISSION_CORE_ATTACK_GROUPS") && { count MISSION_CORE_ATTACK_GROUPS > 0 }) || { (!isNil "MISSION_CORE_ATTACK_GROUPS_RELAY") && { count MISSION_CORE_ATTACK_GROUPS_RELAY > 0 } } }) then {
         call MISSION_CORE_fnc_refreshAssaultContest;
         private _sides = MISSION_CORE_ASSAULT_CONTEST getOrDefault [_markerName, []];
         private _asTarget = _sides findIf { _owner getFriend _x < 0.6 } != -1;

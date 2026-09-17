@@ -110,6 +110,26 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                 } forEach MISSION_CORE_ATTACK_GROUPS;
             };
 
+            // MULTIPLAYER RELAY: client-spawned assault groups are detected/engaged by their
+            // committed presence - an active squad pressing ITS assigned target marker within the
+            // engage radius triggers the battle gate. A remotely-owned leader's knowsAbout is not
+            // readable server-side, so presence replaces the contact threshold (the client-side
+            // contest already proved the marker is genuinely engaged).
+            if ((["assaultLeaderQuads", 1] call MISSION_CORE_fnc_tune) > 0 && { !isNil "MISSION_CORE_ATTACK_GROUPS_RELAY" }) then {
+                {
+                    private _data = _y;
+                    if ((_data select 5) != "active") then { continue; };
+                    if ((_data select 1) != _markerName) then { continue; };
+                    private _ag = _data select 0;
+                    if (isNull _ag) then { continue; };
+                    private _ldr = leader _ag;
+                    if (isNull _ldr || { !alive _ldr } || { _ldr distance _locPos > _engageRadius }) then { continue; };
+                    _detected = true;
+                    _nearestPlayer = _ldr;
+                    _maxKnows = _maxKnows max 1.5;
+                } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
+            };
+
             if (_detected && !isNull _nearestPlayer) then {
                 // Track this marker as an active battle so contested targeting (replenish, commit)
                 // keeps pointing at it even before the player "spots" the garrison. Newly spawned
@@ -146,6 +166,20 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                         if (!alive _ldr || { _ldr distance _locPos > _engageRadius }) then { continue; };
                         if (_engagedPlayers findIf { _x == _ldr } == -1) then { _engagedPlayers pushBack _ldr; };
                     } forEach MISSION_CORE_ATTACK_GROUPS;
+                };
+                // MULTIPLAYER RELAY: spread the engaged-quadrant foot force across remote assault
+                // leaders too (same assigned-target + engage-radius rule as the detection block).
+                if ((["assaultLeaderQuads", 1] call MISSION_CORE_fnc_tune) > 0 && { !isNil "MISSION_CORE_ATTACK_GROUPS_RELAY" }) then {
+                    {
+                        private _data = _y;
+                        if ((_data select 5) != "active") then { continue; };
+                        if ((_data select 1) != _markerName) then { continue; };
+                        private _ag = _data select 0;
+                        if (isNull _ag) then { continue; };
+                        private _ldr = leader _ag;
+                        if (!alive _ldr || { _ldr distance _locPos > _engageRadius }) then { continue; };
+                        if (_engagedPlayers findIf { _x == _ldr } == -1) then { _engagedPlayers pushBack _ldr; };
+                    } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
                 };
 
                 [_loc, _engagedPlayers, _defenders, _markerName, _locPos, _engageRadius] call MISSION_CORE_fnc_quadrantEngage;
@@ -291,6 +325,18 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                             private _ldr = leader _ag;
                             if (alive _ldr && { _ldr distance _locPos < _engageRadius } && { _gracePlayers findIf { _x == _ldr } == -1 }) then { _gracePlayers pushBack _ldr; };
                         } forEach MISSION_CORE_ATTACK_GROUPS;
+                    };
+                    // MULTIPLAYER RELAY (fn_assaultRelay.sqf): same grace participation for
+                    // client-spawned assault leaders within the engage radius.
+                    if ((["assaultLeaderQuads", 1] call MISSION_CORE_fnc_tune) > 0 && { !isNil "MISSION_CORE_ATTACK_GROUPS_RELAY" }) then {
+                        {
+                            private _data = _y;
+                            if ((_data select 5) != "active") then { continue; };
+                            private _ag = _data select 0;
+                            if (isNull _ag) then { continue; };
+                            private _ldr = leader _ag;
+                            if (alive _ldr && { _ldr distance _locPos < _engageRadius } && { _gracePlayers findIf { _x == _ldr } == -1 }) then { _gracePlayers pushBack _ldr; };
+                        } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
                     };
                     if (count _gracePlayers > 0) then {
                         [_loc, _gracePlayers, _defenders, _markerName, _locPos, _engageRadius] call MISSION_CORE_fnc_quadrantEngage;

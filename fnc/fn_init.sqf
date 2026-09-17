@@ -298,6 +298,11 @@ if (isServer) then {
 
     // 6. Start AI Commander system + assault planner
     call compile preprocessFileLineNumbers "fnc\fn_aiCommander.sqf";
+    // Multiplayer visibility for client-spawned BLUFOR assault groups (see fn_assaultRelay.sqf).
+    // Must run before the commander loops so MISSION_CORE_ATTACK_GROUPS_RELAY exists when they
+    // read it on the first tick.
+    call compile preprocessFileLineNumbers "fnc\commander\fn_assaultRelay.sqf";
+    [] spawn MISSION_CORE_fnc_assaultRelayLoop;
     [] spawn MISSION_CORE_fnc_aiCommanderLoop;
     [] spawn MISSION_CORE_fnc_aiAssaultLoop;
     [] spawn MISSION_CORE_fnc_armorCommanderLoop;

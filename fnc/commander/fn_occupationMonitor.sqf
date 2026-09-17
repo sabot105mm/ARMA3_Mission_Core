@@ -91,6 +91,18 @@ MISSION_CORE_fnc_occupationMonitor = {
                     if (alive _aldr && { [getPos _aldr] call _inside }) exitWith { _occupierPresent = true; };
                 } forEach MISSION_CORE_ATTACK_GROUPS;
             };
+            // MULTIPLAYER RELAY: client-spawned assault groups also block the marker revert.
+            if (!_occupierPresent && { !isNil "MISSION_CORE_ATTACK_GROUPS_RELAY" }) then {
+                {
+                    private _adata = _y;
+                    if ((_adata select 5) != "active") then { continue; };
+                    private _ag = _adata select 0;
+                    if (isNull _ag) then { continue; };
+                    if (side (leader _ag) != _occupier) then { continue; };
+                    private _aldr = leader _ag;
+                    if (alive _aldr && { [getPos _aldr] call _inside }) exitWith { _occupierPresent = true; };
+                } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
+            };
             // Flip-back trigger: an ENEMY counter-attack squad targeting THIS marker must be
             // physically inside the ellipse. Ordinary enemy patrols/garrison do NOT trigger - only
             // a group dispatched specifically to retake this marker (order counterattack/attack

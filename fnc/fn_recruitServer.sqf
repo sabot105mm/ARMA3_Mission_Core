@@ -1033,6 +1033,17 @@ MISSION_CORE_fnc_assaultArtySpotTarget = {
             if ({ alive _x } count units _ag > 0) then { _spotters pushBack _ag; };
         } forEach MISSION_CORE_ATTACK_GROUPS;
     };
+    // MULTIPLAYER RELAY: client-spawned assault groups reported to the server also act as spotters.
+    if (!(isNil "MISSION_CORE_ATTACK_GROUPS_RELAY") && { _aimName != "" }) then {
+        {
+            private _adata = _y;
+            if (count _adata < 7) then { continue; };
+            if ((_adata select 1) != _aimName) then { continue; };
+            private _ag = _adata select 0;
+            if (isNull _ag) then { continue; };
+            if ({ alive _x } count units _ag > 0) then { _spotters pushBack _ag; };
+        } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
+    };
     if (count _spotters == 0) exitWith { [] };
     // Search a radius that matches the marker footprint (largest half-axis + belt), never tiny.
     private _mSearch = 800;

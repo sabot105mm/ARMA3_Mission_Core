@@ -23,6 +23,32 @@ MISSION_CORE_RECRUIT_WP_BEHAVIOUR = "AWARE";
 
 if (isNil "MISSION_CORE_ATTACK_GROUPS") then { MISSION_CORE_ATTACK_GROUPS = createHashMap; };
 
+// MULTIPLAYER: publish this client's assault groups to the server so the server-side systems that
+// must react to an assault (marker contest, commander detection, counter-attack, assault artillery)
+// can see squads spawned on a client. Skipped on the machine acting as server - there the groups
+// already live in the shared MISSION_CORE_ATTACK_GROUPS and would otherwise be double-counted.
+// See fnc\commander\fn_assaultRelay.sqf for the receiving side.
+MISSION_CORE_fnc_reportAssaultGroups = {
+    if (isServer) exitWith {};
+    private _entries = [];
+    {
+        private _d = _y;
+        if ((count _d) < 7) then { continue; };
+        // A wiped group must not keep its target contested - drop it from the snapshot.
+        if ((_d select 5) == "wiped") then { continue; };
+        private _g = _d select 0;
+        if (isNull _g) then { continue; };
+        private _ldr = leader _g;
+        if (isNull _ldr || { !(alive _ldr) }) then { continue; };
+        private _tmpl = _d select 3;
+        private _subCat = if ((count _tmpl) > 3) then { _tmpl select 3 } else { "" };
+        private _catName = if ((count _tmpl) > 4) then { _tmpl select 4 } else { "" };
+        private _isMM = _g getVariable ["MISSION_CORE_MECH_MOTOR", false];
+        _entries pushBack [netId _g, netId _ldr, _d select 1, _d select 5, _d select 6, _isMM, _subCat, _catName];
+    } forEach MISSION_CORE_ATTACK_GROUPS;
+    [player, _entries] remoteExec ["MISSION_CORE_fnc_assaultRelayReceive", 2, false];
+};
+
 // Garrison tab state.
 MISSION_CORE_RECRUIT_GARRISON_MARKER = "";
 MISSION_CORE_RECRUIT_VEH_KIND = "tank";
@@ -140,6 +166,8 @@ MISSION_CORE_fnc_monitorAttackGroups = {
                     };
                 };
             } forEach MISSION_CORE_ATTACK_GROUPS;
+            // MULTIPLAYER: push the (possibly changed) snapshot to the server every loop tick.
+            call MISSION_CORE_fnc_reportAssaultGroups;
         };
     };
 };

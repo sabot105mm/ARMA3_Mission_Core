@@ -130,6 +130,20 @@ MISSION_CORE_fnc_proximitySpawner = {
                 _actors pushBack _ldr;
             } forEach MISSION_CORE_ATTACK_GROUPS;
         };
+        // MULTIPLAYER RELAY: client-spawned assault groups also act as spawn actors (see
+        // fn_assaultRelay.sqf) so pass-through / target markers activate for remote squads too.
+        if (!isNil "MISSION_CORE_ATTACK_GROUPS_RELAY") then {
+            {
+                private _adata = _y;
+                if (count _adata < 7) then { continue; };
+                if ((_adata select 5) != "active") then { continue; };
+                private _ag = _adata select 0;
+                if (isNull _ag) then { continue; };
+                private _ldr = leader _ag;
+                if (isNull _ldr || { !alive _ldr }) then { continue; };
+                _actors pushBack _ldr;
+            } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
+        };
         // Snapshot allUnits once per tick and reuse for every marker below, instead of re-fetching
         // the full list per marker (despawn & garrison-gate checks). Behavior-neutral: allUnits only
         // changes between frames, not while this tick iterates the markers.
