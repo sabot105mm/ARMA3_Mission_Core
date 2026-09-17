@@ -23,6 +23,59 @@ MISSION_CORE_RECRUIT_WP_BEHAVIOUR = "AWARE";
 
 if (isNil "MISSION_CORE_ATTACK_GROUPS") then { MISSION_CORE_ATTACK_GROUPS = createHashMap; };
 
+// -------------------------------------------------------------------
+// SERVER-AUTHORITATIVE ATTACK TAB (Milestone 1 of the MP conversion)
+//
+// The server now owns every recruit attack group (fnc\fn_assaultServer.sqf). Clients
+// forward button presses there via remoteExec target 2 and render a netId-based mirror
+// of the authoritative MISSION_CORE_ATTACK_GROUPS, so the whole menu (attack list,
+// idle redeploy list, re-recruit list, commander tab) shows the same truth everywhere.
+// The client-side monitors were retired - a client can no longer order server-owned
+// groups around directly.
+// -------------------------------------------------------------------
+
+// Server -> this player hint channel (assaultServerHint remoteExec's here).
+MISSION_CORE_fnc_assaultClientHint = {
+    params ["_msg"];
+    if !(isNil "_msg") then { hint _msg; };
+};
+
+// Rebuild the local menu map from the server-broadcast snapshot. Entries whose group
+// netId is not usable yet (join-in-progress race) are skipped this pass and retried on
+// the next broadcast - the server keeps re-sending the full snapshot on every change.
+MISSION_CORE_fnc_assaultMirrorApply = {
+    if (isNil "MISSION_CORE_ASSAULT_MIRROR") exitWith {};
+    if (MISSION_CORE_ASSAULT_MIRROR isEqualTo (missionNamespace getVariable ["MISSION_CORE_ASSAULT_MIRROR_SEEN", []])) exitWith {};
+    MISSION_CORE_ASSAULT_MIRROR_SEEN = +MISSION_CORE_ASSAULT_MIRROR;
+    private _map = createHashMap;
+    {
+        _x params ["_gid", "_gNet", "_lNet", "_tgt", "_wps", "_tmpl", "_status", "_tpos"];
+        private _grp = objNull;
+        if (_gNet != "") then { _grp = groupFromNetId _gNet; };
+        if (isNull _grp && { _lNet != "" }) then {
+            private _ldr = objectFromNetId _lNet;
+            if (!isNull _ldr) then { _grp = group _ldr; };
+        };
+        if (isNull _grp) then { continue; };
+        _map set [_gid, [_grp, _tgt, _wps, _tmpl, WEST, _status, _tpos]];
+    } forEach MISSION_CORE_ASSAULT_MIRROR;
+    MISSION_CORE_ATTACK_GROUPS = _map;
+    call MISSION_CORE_fnc_recruitMenuRefresh;
+};
+
+// Polls the network snapshot and keeps the menu map in step with the server. Hosted
+// games skip this - the host shares the server's own namespace and map already.
+MISSION_CORE_fnc_assaultMirrorLoop = {
+    if (isServer) exitWith {};
+    [] spawn {
+        waitUntil { !isNil "MISSION_CORE_INITIALIZED" && { MISSION_CORE_INITIALIZED } };
+        while { true } do {
+            sleep 2;
+            call MISSION_CORE_fnc_assaultMirrorApply;
+        };
+    };
+};
+
 // MULTIPLAYER: publish this client's assault groups to the server so the server-side systems that
 // must react to an assault (marker contest, commander detection, counter-attack, assault artillery)
 // can see squads spawned on a client. Skipped on the machine acting as server - there the groups
@@ -1403,10 +1456,9 @@ MISSION_CORE_fnc_recruitAttackClickMap = {
 // This applies to the PLAYER's own staged squads ONLY (bought against an enemy marker that was
 // not yet contested). The AI commander's REDFOR staging is tank-wait only - this button never
 // touches it and there is no manual release for enemy forces.
+// Server-authoritative (Milestone 1): the staged register lives on the server now.
 MISSION_CORE_fnc_recruitAssaultRelease = {
-    if (isNil "MISSION_CORE_BLUFOR_STAGED") then { MISSION_CORE_BLUFOR_STAGED = []; };
-    if (count MISSION_CORE_BLUFOR_STAGED == 0) exitWith { hint "No BLUFOR squads are staged."; };
-    [] call MISSION_CORE_fnc_releaseBluforStaged;
+    [player] remoteExecCall ["MISSION_CORE_fnc_assaultServerReleaseStaged", 2];
 };
 
 // Staged-squad leader Killed EH: when the leader dies the staging torch passes to the next
@@ -1619,387 +1671,69 @@ MISSION_CORE_fnc_assaultArtyDeploy = {
     };
 };
 
+// ATTACK TAB DEPLOY (server-authoritative; Milestone 1 of the MP conversion).
+// The menu gathers the request and forwards it to the server, which spawns, orders,
+// registers and (on success) hints the result back. The local menu map is refreshed
+// automatically by the mirror broadcast (assaultMirrorLoop). No local spawning,
+// waypoint application or manpower deduction happens here any more.
 MISSION_CORE_fnc_recruitAttackDeploy = {
     if !(alive player) exitWith {};
     if !(player getVariable ["MISSION_CAN_RECRUIT", false]) exitWith { hint "Too far from base."; };
     disableSerialization;
     private _disp = uiNamespace getVariable "DYNOPS_RecruitMenu";
+    if (isNull _disp) exitWith {};
 
-    // Get target (a fresh list selection wins; the click-map/WP-editor stored target is the fallback)
+    // Target: a fresh list selection wins; the click-map/WP-editor stored target is the fallback.
     private _targetList = _disp displayCtrl 1632;
     private _tIdx = lbCurSel _targetList;
     private _targetName = if (_tIdx >= 0) then { _targetList lbData _tIdx } else { MISSION_CORE_RECRUIT_ATTACK_TARGET };
     if (_targetName == "") exitWith { hint "Select a target first."; };
 
-    // Find target position
-    private _locIdx = MISSION_CORE_LOCATIONS findIf { (_x select 0) == _targetName };
-    if (_locIdx < 0) exitWith { hint "Target marker not found."; };
-    private _targetPos = (MISSION_CORE_LOCATIONS select _locIdx select 1) select 0;
+    // The drawn route (WP editor) travels with the request; the server keeps the per-marker
+    // saved-route fallback lists itself. Cleared after sending, as the old flow did.
+    private _wps = +MISSION_CORE_RECRUIT_SAVED_WAYPOINTS;
 
-    // IDLE REDEPLOY path: an idle (holding) group selected in 1643 overrides squad-template
-    // selection. Free - the units already exist - but the group must be back at full strength;
-    // the refill attempt below tops it up with MP + armor-pool points, or blocks with a note.
+    // IDLE REDEPLOY: a holding group selected in 1643 overrides squad-template selection.
+    // Free (units already exist) - the server refills it first, then redeploys it.
     private _idleList = _disp displayCtrl 1643;
     private _idleIdx = lbCurSel _idleList;
-    private _idleHandled = false;
     if (_idleIdx >= 0) then {
         private _idleArr = uiNamespace getVariable ["MISSION_CORE_RECRUIT_IDLE_GROUPS", []];
         if (_idleIdx < count _idleArr) then {
-            private _ie = _idleArr select _idleIdx;
-            private _grpId = _ie select 0;
-            private _data = _ie select 1;
-            _data params ["_grp", "_oldTarget", "_oldWps", "_template", "_side", "_status", "_tpos"];
-            _template params ["_grpName", "_grpUnits", "_unitCount", ["_subCat", ""], ["_catName", ""]];
-            if (!isNull _grp) then {
-                _idleHandled = true;
-
-                // Refill first (MP + armor pool at the captured marker), then check battle readiness.
-                _data = [_grp, _oldTarget, _oldWps, _template, WEST, "hold", _tpos] call MISSION_CORE_fnc_attackGroupTryRefill;
-                private _alive = { alive _x } count units _grp;
-                if (_alive < _unitCount) then {
-                    hint format ["Group #%1 is not at full strength yet (%2/%3) - it must refill before the next assault. Waiting for manpower/tank pool.", _grpId, _alive, _unitCount];
-                } else {
-                    // Target owner decides the order: enemy = assault (back to "active"), friendly = held at that marker.
-                    private _owner = (MISSION_CORE_LOCATIONS select _locIdx) select 5;
-                    if (_owner == WEST) then {
-                        [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-                        _grp setBehaviour "SAFE";
-                        _grp setCombatMode "YELLOW";
-                        _grp setSpeedMode "LIMITED";
-                        private _wp = _grp addWaypoint [_targetPos, 50];
-                        _wp setWaypointType "MOVE";
-                        _wp setWaypointBehaviour "SAFE";
-                        _wp setWaypointCombatMode "YELLOW";
-                        _wp setWaypointSpeed "LIMITED";
-                        private _hwp = _grp addWaypoint [_targetPos, 0];
-                        _hwp setWaypointType "HOLD";
-                        _hwp setWaypointBehaviour "SAFE";
-                        _hwp setWaypointCombatMode "YELLOW";
-                        _hwp setWaypointSpeed "LIMITED";
-                        _grp setCurrentWaypoint _wp;
-                        _grp setVariable ["MISSION_CORE_ORDER", "hold"];
-                        _grp setVariable ["MISSION_CORE_ATTACK_TARGET", _targetPos];
-                        MISSION_CORE_ATTACK_GROUPS set [_grpId, [_grp, _targetName, [], _template, WEST, "hold", _targetPos]];
-                        hint format ["Group #%1 redeployed (free): holding at %2.", _grpId, _targetName];
-                    } else {
-                        // SPG/arty re-task to a new enemy target: never assault the marker. The piece
-                        // repositions to the best standoff firing line (nearest BLUFOR marker to the new
-                        // target) and keeps shelling - the fire loop is re-registered with the new aim point.
-                        if ([_template] call MISSION_CORE_fnc_isArtyTemplate) then {
-                            [_grp, _targetPos, _tpos] call MISSION_CORE_fnc_assaultArtyDeploy;
-                            MISSION_CORE_ATTACK_GROUPS set [_grpId, [_grp, _targetName, [], _template, WEST, "hold", _targetPos]];
-                            hint format ["Group #%1 (arty) repositioned to the best standoff line on %2.", _grpId, _targetName];
-                        } else {
-private _wps = +MISSION_CORE_RECRUIT_SAVED_WAYPOINTS;
-    // PER-MARKER WAYPOINT LISTS (session): the last route drawn & used for a target marker is
-    // remembered and shared across ALL squad types (motorized, mech, armored, infantry). If the
-    // editor is empty, fall back to that marker's saved list so re-deploys (multiples of any
-    // template) follow the same route. Empty -> recruit's default single-waypoint attack.
-    if (count _wps == 0 && { !isNil "MISSION_CORE_RECRUIT_WPS_PER_MARKER" }) then {
-        _wps = +((MISSION_CORE_RECRUIT_WPS_PER_MARKER getOrDefault [_targetName, []]));
-        // IDLE-REDEPLOY BASE-LEG TRIM: this saved route was drawn once from the base, so its first
-        // waypoints can sit behind where the squad actually is now (it redeploys from a captured
-        // marker far from base). Keep only the waypoints at-or-ahead of the squad on the bearing to
-        // the NEW target - otherwise every redeploy sends the squad marching back to the base-leg
-        // waypoints before it ever advances (felt as 'the AI commander yanks my squad home'). Drop
-        // behind-the-squad waypoints; an empty result = default straight-shot to the target.
-        private _aim = (_targetPos vectorDiff (getPosASL (leader _grp)));
-        private _len = vectorMagnitude _aim;
-        if (_len > 0) then {
-            _aim = _aim vectorMultiply (1 / _len);
-            _wps = _wps select {
-                private _proj = ((_x select 0) vectorDiff (getPosASL (leader _grp))) vectorDotProduct _aim;
-                _proj >= 0
-            };
+            private _grpId = (_idleArr select _idleIdx) select 0;
+            [player, _grpId, _targetName, _wps] remoteExecCall ["MISSION_CORE_fnc_assaultServerRequestIdle", 2];
         };
-    };
-                        _grp setBehaviour "AWARE";
-                        _grp setCombatMode "YELLOW";
-                        _grp setSpeedMode "FULL";
-                        _grp setVariable ["MISSION_CORE_ORDER", "attack"];
-                        [_grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
-                        MISSION_CORE_ATTACK_GROUPS set [_grpId, [_grp, _targetName, _wps, _template, WEST, "active", _targetPos]];
-                        MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = [];
-                        hint format ["Group #%1 redeployed (free): %2 men assaulting %3.", _grpId, _alive, _targetName];
-                        };
-                    };
-                };
-            } else {
-                hint "That group no longer exists.";
-            };
-        };
-    };
-    if (_idleHandled) exitWith {
-        call MISSION_CORE_fnc_recruitMenuUpdateMP;
-        call MISSION_CORE_fnc_recruitMenuPopulateAttack;
+        exitWith {};
     };
 
-    // Get squad template
+    // New squad-template deploy.
     private _squadList = _disp displayCtrl 1634;
     private _squadIdx = lbCurSel _squadList;
     if (_squadIdx < 0) exitWith { hint "Select a squad template."; };
     private _templates = uiNamespace getVariable ["MISSION_CORE_RECRUIT_ATTACK_GROUPS", []];
     if (_squadIdx >= count _templates) exitWith {};
     private _template = _templates select _squadIdx;
-    _template params ["_grpName", "_grpUnits", "_unitCount", ["_subCat", ""], ["_catName", ""]];
 
-    // Check manpower
-    private _costPer = if (isNil "MISSION_CORE_MANPOWER_PER_UNIT") then { 10 } else { MISSION_CORE_MANPOWER_PER_UNIT };
-    private _cost = _unitCount * _costPer;
-    if (isNil "MISSION_CORE_BLUFOR_MANPOWER") then { MISSION_CORE_BLUFOR_MANPOWER = 0; };
-    if (MISSION_CORE_BLUFOR_MANPOWER < _cost) exitWith { hint format ["Not enough manpower! Need %1 MP.", _cost]; };
-
-    // Deduct manpower
-    MISSION_CORE_BLUFOR_MANPOWER = MISSION_CORE_BLUFOR_MANPOWER - _cost;
-    publicVariable "MISSION_CORE_BLUFOR_MANPOWER";
-
-    // Spawn group via BIS_fnc_spawnGroup — follows CfgGroups config strictly
-    // Spawn at the BLUFOR marker the player is in
-    private _spawnPos = getPosATL player;
-    private _myMarker = "";
-    {
-        if ((_x select 5) == WEST) then {
-            private _mPos = ((_x select 1) select 0);
-            private _mSize = ((_x select 1) select 1);
-            private _a = if (count _mSize > 0) then { _mSize select 0 } else { 200 };
-            private _b = if (count _mSize > 1) then { _mSize select 1 } else { 200 };
-            private _d = player distance _mPos;
-            if (_d < ((_a max _b) * 0.5 + 100)) exitWith { _myMarker = _x select 0; _spawnPos = _mPos; };
-        };
-    } forEach MISSION_CORE_LOCATIONS;
-    private _faction = MISSION_CORE_BLUFOR_DATA select 3;
-    private _cfgPath = configFile >> "CfgGroups" >> "West" >> _faction >> _catName >> _grpName;
-    private _grp = [_spawnPos, side player, _cfgPath] call BIS_fnc_spawnGroup;
-    if (isNull _grp) exitWith { hint "Failed to spawn group."; };
-
-    // BIS_fnc_spawnGroup drops vehicles wherever the config formation lands - pull them back
-    // onto a road column near the deploy point so recruited attack armor deploys on the road.
-    [_grp, _spawnPos, [200, 200]] call MISSION_CORE_fnc_alignGroupVehiclesToRoad;
-
-    // Auto-load dismounted infantry into transport for mech/motor groups
-    private _isMotorized = _catName find "Motorized" > -1 || _subCat find "motor" > -1;
-    private _isMechanized = _catName find "Mechanized" > -1 || _subCat find "mech" > -1;
-    if (_isMotorized || _isMechanized) then {
-        private _transports = [];
-        { private _v = vehicle _x; if (_v != _x && {_v isKindOf "Car" || _v isKindOf "APC"} && {_transports findIf {_x == _v} < 0}) then { _transports pushBack _v; }; } forEach (units _grp);
-        { if (vehicle _x == _x) then {
-            private _cargoVeh = objNull;
-            private _unit = _x;
-            private _veh = objNull;
-            for "_t" from 0 to (count _transports - 1) do {
-                _veh = _transports select _t;
-                if (_veh emptyPositions "cargo" > 0) exitWith { _cargoVeh = _veh; };
-            };
-            if (!isNull _cargoVeh) then { _unit moveInCargo _cargoVeh; };
-        }; } forEach (units _grp);
-    };
-
-    // Set attack mode
-    _grp setBehaviour "AWARE";
-    _grp setCombatMode "YELLOW";
-    _grp setSpeedMode "FULL";
-    _grp setVariable ["MISSION_CORE_BLUFOR", true];
-    _grp setVariable ["MISSION_CORE_ORDER", "attack"];
-
-    // Friendly target: this is an escort/guard deploy, not an assault - park them on the marker
-    // with a move+hold so the monitor does not immediately misread it as a captured-assault flip.
-    private _owner = (MISSION_CORE_LOCATIONS select _locIdx) select 5;
-    private _status = "active";
-    private _wps = +MISSION_CORE_RECRUIT_SAVED_WAYPOINTS;
-    // Self-propelled guns / MLRS bought from the attack tab are FIRE SUPPORT, not assault units:
-    // they park at the best standoff firing line (nearest BLUFOR marker to the objective), shell it,
-    // and relocate back to a BLUFOR marker after each barrage. They never advance into the target.
-    private _isArty = [_template] call MISSION_CORE_fnc_isArtyTemplate;
-    if (_owner == WEST) then {
-        _status = "hold";
-        _wps = [];
-        [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-        _grp setBehaviour "SAFE";
-        _grp setCombatMode "YELLOW";
-        _grp setSpeedMode "LIMITED";
-        _grp setVariable ["MISSION_CORE_ORDER", "hold"];
-        private _wp = _grp addWaypoint [_targetPos, 50];
-        _wp setWaypointType "MOVE";
-        _wp setWaypointBehaviour "SAFE";
-        _wp setWaypointCombatMode "YELLOW";
-        _wp setWaypointSpeed "LIMITED";
-        private _hwp = _grp addWaypoint [_targetPos, 0];
-        _hwp setWaypointType "HOLD";
-        _hwp setWaypointBehaviour "SAFE";
-        _hwp setWaypointCombatMode "YELLOW";
-        _hwp setWaypointSpeed "LIMITED";
-        _grp setCurrentWaypoint _wp;
-        _grp setVariable ["MISSION_CORE_ATTACK_TARGET", _targetPos];
-    } else {
-        // EAST target: an arty piece gets the fire-support deploy (standoff + shelling, never advances).
-        if (_isArty) then {
-            [_grp, _targetPos, _spawnPos] call MISSION_CORE_fnc_assaultArtyDeploy;
-            _status = "hold";
-            _wps = [];
-        } else {
-            // EAST target: if a player is ALREADY engaging the marker the squad pushes in immediately;
-            // otherwise it STAGES at its source edge and waits - it only advances once the marker is
-            // engaged or the player presses RELEASE STAGED ASSAULT (recruit menu).
-            if (!isNil "MISSION_CORE_CONTESTED_MARKERS" && { _targetName in MISSION_CORE_CONTESTED_MARKERS }) then {
-                // Apply the player's saved assault waypoints (clear first -> follow exactly, no added-on
-                // waypoints, no CYCLE ever). Foot infantry still ride a transport if the drop-off is far away.
-                if (!(vehicle (leader _grp) != leader _grp) && { count _wps > 0 }) then {
-                    // Foot infantry - hop on a transport if the first waypoint is a long way off.
-                    private _usedTransport = [_grp, _wps, _targetPos] call MISSION_CORE_fnc_recruitSpawnTransport;
-                    if (!_usedTransport) then {
-                        [_grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
-                    };
-                } else {
-                    [_grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
-                };
-            } else {
-                _status = "staging";
-                private _srcSize = [200, 200];
-                {
-                    if ((_x select 0) == _myMarker && { count (_x select 1) > 1 }) exitWith { _srcSize = ((_x select 1) select 1); };
-                } forEach MISSION_CORE_LOCATIONS;
-                [_grp, _spawnPos, _srcSize, _targetPos, _targetName] call MISSION_CORE_fnc_stageBluforGroup;
-            };
-        };
-    };
-
-    // Register the attack group
-    private _grpId = MISSION_CORE_RECRUIT_NEXT_GRP_ID;
-    MISSION_CORE_RECRUIT_NEXT_GRP_ID = MISSION_CORE_RECRUIT_NEXT_GRP_ID + 1;
-    MISSION_CORE_ATTACK_GROUPS set [_grpId, [_grp, _targetName, _wps, _template, WEST, _status, _targetPos]];
-    MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
-
-    // A staged squad is registered so the RELEASE STAGED ASSAULT button can order it in with its
-    // saved waypoints and flip its ATTACK_GROUPS entry back to "active".
-    if (_status == "staging") then {
-        if (isNil "MISSION_CORE_BLUFOR_STAGED") then { MISSION_CORE_BLUFOR_STAGED = []; };
-        MISSION_CORE_BLUFOR_STAGED pushBack [_grp, _grpId, _template, _targetName, _targetPos, _wps];
-    };
-
-    // Remember this waypoint list as the target marker's saved route (session) so any later deploy
-    // of ANY squad type to the same target reuses it. Assault path only - friendly holds are not saved.
-    if (_owner != WEST && { count _wps > 0 }) then {
-        if (isNil "MISSION_CORE_RECRUIT_WPS_PER_MARKER") then { MISSION_CORE_RECRUIT_WPS_PER_MARKER = createHashMap; };
-        MISSION_CORE_RECRUIT_WPS_PER_MARKER set [_targetName, +_wps];
-    };
-
-    // Clear temp waypoints (the per-marker saved list above remains the fallback for re-deploys)
+    [player, _template, _targetName, _wps] remoteExecCall ["MISSION_CORE_fnc_assaultServerRequestNew", 2];
     MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = [];
-
-    if (_status == "staging") then {
-        hint format ["Attack group #%1 staged at the %2 edge! It holds until the marker is engaged or RELEASE STAGED ASSAULT is pressed. (-%4 MP)", _grpId, _targetName, _unitCount, _cost];
-    } else {
-        if (_isArty && { _owner != WEST }) then {
-            hint format ["Artillery support #%1 deployed! It holds the best standoff line and shells %2 - it never advances into the marker. (-%3 MP)", _grpId, _targetName, _cost];
-        } else {
-            hint format ["Attack group #%1 deployed! %2 men -> %3 (%4 WPs) (-%5 MP)", _grpId, _unitCount, _targetName, count _wps, _cost];
-        };
-    };
-    call MISSION_CORE_fnc_recruitMenuUpdateMP;
-    call MISSION_CORE_fnc_recruitMenuPopulateAttack;
 };
 
 // Re-recruit a wiped attack group with the same template and waypoints.
+// Re-recruit a wiped attack group (server-authoritative): the server re-spawns the group,
+// re-applies its template/waypoints and re-registers it under the same group id.
 MISSION_CORE_fnc_recruitAttackRERecruit = {
     if !(alive player) exitWith {};
     if !(player getVariable ["MISSION_CAN_RECRUIT", false]) exitWith { hint "Too far from base."; };
     disableSerialization;
     private _disp = uiNamespace getVariable "DYNOPS_RecruitMenu";
+    if (isNull _disp) exitWith {};
     private _reList = _disp displayCtrl 1638;
     private _idx = lbCurSel _reList;
     if (_idx < 0) exitWith { hint "Select a wiped group to re-recruit."; };
     private _rewiped = uiNamespace getVariable ["MISSION_CORE_RECRUIT_REWIPED", []];
     if (_idx >= count _rewiped) exitWith {};
-    private _entry = _rewiped select _idx;
-    private _grpId = _entry select 0;
-    private _data = _entry select 1;
-    _data params ["_oldGrp", "_target", "_wps", "_template", "_side", "_status", "_targetPos"];
-
-    // Check if target is still enemy-held
-    private _locIdx = MISSION_CORE_LOCATIONS findIf { (_x select 0) == _target };
-    if (_locIdx < 0) exitWith { hint "Target no longer exists."; };
-    private _owner = (MISSION_CORE_LOCATIONS select _locIdx) select 5;
-    if (_owner == WEST) exitWith { hint format ["%1 is already under BLUFOR control!", _target]; };
-
-    _template params ["_grpName", "_grpUnits", "_unitCount", ["_subCat", ""], ["_catName", ""]];
-
-    // Check manpower
-    private _costPer = if (isNil "MISSION_CORE_MANPOWER_PER_UNIT") then { 10 } else { MISSION_CORE_MANPOWER_PER_UNIT };
-    private _cost = _unitCount * _costPer;
-    if (isNil "MISSION_CORE_BLUFOR_MANPOWER") then { MISSION_CORE_BLUFOR_MANPOWER = 0; };
-    if (MISSION_CORE_BLUFOR_MANPOWER < _cost) exitWith { hint format ["Not enough manpower! Need %1 MP.", _cost]; };
-
-    // Deduct manpower
-    MISSION_CORE_BLUFOR_MANPOWER = MISSION_CORE_BLUFOR_MANPOWER - _cost;
-    publicVariable "MISSION_CORE_BLUFOR_MANPOWER";
-
-    // Spawn group via BIS_fnc_spawnGroup — follows CfgGroups config strictly
-    // Spawn at the BLUFOR marker the player is in
-    private _spawnPos = getPosATL player;
-    private _myMarker = "";
-    {
-        if ((_x select 5) == WEST) then {
-            private _mPos = ((_x select 1) select 0);
-            private _mSize = ((_x select 1) select 1);
-            private _a = if (count _mSize > 0) then { _mSize select 0 } else { 200 };
-            private _b = if (count _mSize > 1) then { _mSize select 1 } else { 200 };
-            private _d = player distance _mPos;
-            if (_d < ((_a max _b) * 0.5 + 100)) exitWith { _myMarker = _x select 0; _spawnPos = _mPos; };
-        };
-    } forEach MISSION_CORE_LOCATIONS;
-    private _faction = MISSION_CORE_BLUFOR_DATA select 3;
-    private _cfgPath = configFile >> "CfgGroups" >> "West" >> _faction >> _catName >> _grpName;
-    private _grp = [_spawnPos, side player, _cfgPath] call BIS_fnc_spawnGroup;
-    if (isNull _grp) exitWith { hint "Failed to spawn group."; };
-
-    // BIS_fnc_spawnGroup drops vehicles wherever the config formation lands - pull them back
-    // onto a road column near the deploy point so recruited attack armor deploys on the road.
-    [_grp, _spawnPos, [200, 200]] call MISSION_CORE_fnc_alignGroupVehiclesToRoad;
-
-    // Auto-load dismounted infantry into transport for mech/motor groups
-    private _isMotorized = _catName find "Motorized" > -1 || _subCat find "motor" > -1;
-    private _isMechanized = _catName find "Mechanized" > -1 || _subCat find "mech" > -1;
-    if (_isMotorized || _isMechanized) then {
-        private _transports = [];
-        { private _v = vehicle _x; if (_v != _x && { (_v isKindOf "Car" || _v isKindOf "APC") && _transports findIf {_x == _v} < 0 }) then { _transports pushBack _v; }; } forEach (units _grp);
-        { if (vehicle _x == _x) then {
-            private _cargoVeh = objNull;
-            private _unit = _x;
-            private _veh = objNull;
-            for "_t" from 0 to (count _transports - 1) do {
-                _veh = _transports select _t;
-                if (_veh emptyPositions "cargo" > 0) exitWith { _cargoVeh = _veh; };
-            };
-            if (!isNull _cargoVeh) then { _unit moveInCargo _cargoVeh; };
-        }; } forEach (units _grp);
-    };
-
-    // Set attack mode
-    _grp setBehaviour "AWARE";
-    _grp setCombatMode "YELLOW";
-    _grp setSpeedMode "FULL";
-    _grp setVariable ["MISSION_CORE_BLUFOR", true];
-    _grp setVariable ["MISSION_CORE_ORDER", "attack"];
-
-    // Apply the player's saved assault waypoints (clear first -> follow exactly, no added-on waypoints,
-    // no CYCLE ever). Foot infantry still ride a transport if the drop-off is far away.
-    if (!(vehicle (leader _grp) != leader _grp) && { count _wps > 0 }) then {
-        // Foot infantry - hop on a transport if the first waypoint is a long way off.
-        private _usedTransport = [_grp, _wps, _targetPos] call MISSION_CORE_fnc_recruitSpawnTransport;
-        if (!_usedTransport) then {
-            [_grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
-        };
-    } else {
-        [_grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
-    };
-
-    // Update the attack group entry
-    MISSION_CORE_ATTACK_GROUPS set [_grpId, [_grp, _target, _wps, _template, WEST, "active", _targetPos]];
-    MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
-
-    hint format ["Group #%1 re-recruited! %2 men -> %3 (-%4 MP)", _grpId, _unitCount, _target, _cost];
-    call MISSION_CORE_fnc_recruitMenuUpdateMP;
-    call MISSION_CORE_fnc_recruitMenuPopulateAttack;
+    private _grpId = (_rewiped select _idx) select 0;
+    [player, _grpId] remoteExecCall ["MISSION_CORE_fnc_assaultServerRERecruit", 2];
 };
 
 // -------------------------------------------------------------------

@@ -350,6 +350,12 @@ if (isServer) then {
 
     // 7b. Garrison management (server-authoritative spawning for the GARRISON recruit tab).
     call compile preprocessFileLineNumbers "fnc\fn_recruitServer.sqf";
+    // 7c. Server-authoritative ATTACK tab (Milestone 1 of the MP conversion): recruit assault
+    // groups are now spawned/owned/monitored on the server; clients forward button presses
+    // (fnc\fn_recruit.sqf) and render the netId mirror broadcast here.
+    call compile preprocessFileLineNumbers "fnc\fn_assaultServer.sqf";
+    [] spawn MISSION_CORE_fnc_serverMonitorAttackGroups;
+    [] spawn MISSION_CORE_fnc_serverMonitorStaging;
     // Plain-array vehicle pools for the client GARRISON tab menu (hashmaps don't survive
     // publicVariable reliably, so broadcast flat class lists like the defense builder does).
     private _bluVehMap2 = MISSION_CORE_BLUFOR_DATA select 7;

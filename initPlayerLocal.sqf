@@ -34,8 +34,9 @@ call compile preprocessFileLineNumbers "fnc\commander\fn_playNoteSound.sqf";
 call compile preprocessFileLineNumbers "fnc\fn_recruit.sqf";
 call compile preprocessFileLineNumbers "fnc\fn_manpower.sqf";
 [] call MISSION_CORE_fnc_initRecruitment;
-[] spawn MISSION_CORE_fnc_monitorAttackGroups;
-[] spawn MISSION_CORE_fnc_monitorBluforStaging;
+// ATTACK lifecycle is server-authoritative now (fnc\fn_assaultServer.sqf owns the groups and
+// broadcasts a netId mirror). Clients just keep their menu map in step with that broadcast.
+[] spawn MISSION_CORE_fnc_assaultMirrorLoop;
 // Actions on the unit are lost on respawn (new unit object), so (re)attach them via a wrapper
 // callable from init AND from the Respawn event handler below.
 MISSION_CORE_fnc_setupPlayerActions = {
