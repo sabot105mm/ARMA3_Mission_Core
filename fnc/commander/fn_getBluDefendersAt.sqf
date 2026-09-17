@@ -9,6 +9,10 @@ MISSION_CORE_fnc_getBluDefendersAt = {
         { (_x getVariable ["MISSION_CORE_ARMOR_SLOT", ""]) == "" } &&
         { !(_x getVariable ["MISSION_CORE_AA_DEFENSE", false]) } &&
         { !(_x getVariable ["MISSION_CORE_STATIC_DEFENSE", false]) } &&
+        // A squad under a player attack/staging/hold order is mid-assault - the commander must never
+        // yank it into a marker defense by re-SADing it back toward that marker (that is what kept
+        // sending assault squads back to their origin).
+        { !((_x getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "staging", "hold"]) } &&
         { (leader _x) distance _pos < _radius }
     }
 };

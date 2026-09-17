@@ -1,4 +1,5 @@
 // Loader: compiles every function from the split fnc\commander\ folder in source order.
+call compile preprocessFileLineNumbers "fnc\commander\fn_stopForDismount.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_aggression.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_getMarkerValue.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_getTargetPriority.sqf";
@@ -9,6 +10,8 @@ call compile preprocessFileLineNumbers "fnc\commander\fn_getLocationLabel.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_getMarkerDetermination.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_getDefendersAt.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_getBluDefendersAt.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_defendGate.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_snatch.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_sendReinforce.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_sendCounterAttack.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_commitToBattle.sqf";
@@ -48,6 +51,7 @@ call compile preprocessFileLineNumbers "fnc\commander\fn_captureMarkerForPlayers
 call compile preprocessFileLineNumbers "fnc\commander\fn_replenishLoop.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_deactivateNeighborMarkers.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_renewDefenses.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_assaultStaging.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_aiAssaultLoop.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_aiCommanderLoop.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_armorCommanderLoop.sqf";
@@ -64,6 +68,7 @@ call compile preprocessFileLineNumbers "fnc\commander\fn_deleteGroupCompletely.s
 call compile preprocessFileLineNumbers "fnc\commander\fn_getRetreatDest.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_playerHunt.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_objectiveDirector.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_playNoteSound.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_longRangeReaction.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_groupMaintenance.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_defenseSpotLoop.sqf";

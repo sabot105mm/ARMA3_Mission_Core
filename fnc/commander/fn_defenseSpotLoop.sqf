@@ -23,6 +23,9 @@ MISSION_CORE_fnc_defenseSpotLoop = {
         // re-fetching (and re-allocating) the full list once per group. Behavior-neutral: allUnits
         // only changes between frames, not while this tick iterates the groups.
         private _snapUnits = allUnits;
+        // Contest verdict is cached per origin marker for this tick so the body-wide reaction only
+        // asks isMarkerContested once per marker, not once per garrison group every tick.
+        private _contestedCache = createHashMap;
         {
             private _grp = _x;
             if (isNull _grp || { count units _grp == 0 }) then { continue; };
@@ -90,6 +93,25 @@ private _order = _grp getVariable ["MISSION_CORE_ORDER", ""];
             // Already reacting / in cooldown - don't re-yank posture every tick.
             if (time < (MISSION_CORE_SPOT_COOLDOWN getOrDefault [(groupId _grp), -99999])) then { continue; };
             if (!_threat) then { continue; };
+
+            // PERMANENT RULE (pass-through markers stay passive): a NON-CONTESTED marker only
+            // wakes its garrison as a body when a hostile PLAYER is the threat. An AI squad merely
+            // driving through a non-target marker (assault group crossing it, hunt/convoy passing a
+            // neighbor) must NOT mass-alert the whole garrison "as if contested" - the squads in
+            // direct contact still defend on their own, but the body-wide AWARE/RED is reserved for
+            // a real fight on this marker. No contested flag, no counter-attack spawns.
+            private _hPlayer = false;
+            {
+                if (alive _x && { isPlayer _x } && { (getPosATL _x) inArea [_home, _ma + _prox, _mb + _prox] } && { side _x getFriend _ldrSide < 0.6 }) exitWith { _hPlayer = true };
+            } forEach _snapUnits;
+            if (!_hPlayer && { _oMkr != "" }) then {
+                private _cc = _contestedCache getOrDefault [_oMkr, -1];
+                if (_cc == -1) then {
+                    _cc = if ([_home, side _ldr, _oMkr] call MISSION_CORE_fnc_isMarkerContested) then { 1 } else { 0 };
+                    _contestedCache set [_oMkr, _cc];
+                };
+                if (_cc == 0) then { continue; };
+            };
 
             // Alert but keep patrol: raise to AWARE/RED WITHOUT SAD-ing the marker center. The
             // center-clump is gone - quadrant/patrol/hunt own engagement. Keep whatever patrol

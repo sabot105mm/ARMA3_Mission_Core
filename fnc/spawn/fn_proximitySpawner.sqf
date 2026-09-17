@@ -113,6 +113,23 @@ MISSION_CORE_fnc_proximitySpawner = {
         sleep 10 + random 5;
         private _players = allPlayers select { alive _x };
         private _playerSides = _players apply { side _x };
+        // ACTIVE released assault-squad leaders are spawn actors too: a squad marching through
+        // enemy territory fields garrisons in the markers it passes, even when no player is near.
+        // Only the squad's assigned TARGET marker becomes contested (see isMarkerContested);
+        // pass-through markers just get spawned so there is something to fight.
+        private _actors = +_players;
+        if (!isNil "MISSION_CORE_ATTACK_GROUPS") then {
+            {
+                private _adata = _y;
+                if (count _adata < 7) then { continue; };
+                if ((_adata select 5) != "active") then { continue; };
+                private _ag = _adata select 0;
+                if (isNull _ag) then { continue; };
+                private _ldr = leader _ag;
+                if (isNull _ldr || { !alive _ldr }) then { continue; };
+                _actors pushBack _ldr;
+            } forEach MISSION_CORE_ATTACK_GROUPS;
+        };
         // Snapshot allUnits once per tick and reuse for every marker below, instead of re-fetching
         // the full list per marker (despawn & garrison-gate checks). Behavior-neutral: allUnits only
         // changes between frames, not while this tick iterates the markers.
@@ -197,7 +214,7 @@ MISSION_CORE_fnc_proximitySpawner = {
                         if ([_locName] call MISSION_CORE_fnc_isOccupied) then { continue; };
                         private _nearestDist = 99999;
                         private _nearestPlayer = objNull;
-                        { private _d = _x distance _locPos; if (_d < _nearestDist) then { _nearestDist = _d; _nearestPlayer = _x; }; } forEach _players;
+                        { private _d = _x distance _locPos; if (_d < _nearestDist) then { _nearestDist = _d; _nearestPlayer = _x; }; } forEach _actors;
                         // A freshly captured marker stays clear of the capturer's own garrison until
                         // the player MOVES OUT of the spawn radius and back IN. While suppressed we
                         // never spawn here; the flag clears once the player has actually left the

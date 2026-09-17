@@ -29,15 +29,31 @@ MISSION_CORE_DEFENSE_POINTS_CAPTURE_REWARD = getNumber (missionConfigFile >> "DE
 // Road-column spawn helper for client-side recruit ATTACK deploys (BIS_fnc_spawnGroup paths
 // reposition their vehicles onto a road through this file).
 call compile preprocessFileLineNumbers "fnc\spawn\fn_findVehicleColumnPos.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_stopForDismount.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_playNoteSound.sqf";
 call compile preprocessFileLineNumbers "fnc\fn_recruit.sqf";
 call compile preprocessFileLineNumbers "fnc\fn_manpower.sqf";
 [] call MISSION_CORE_fnc_initRecruitment;
 [] spawn MISSION_CORE_fnc_monitorAttackGroups;
-player addAction [
-    "Recruit Forces",
-    { [] call MISSION_CORE_fnc_openRecruitment; },
-    [], 1, true, true, "", "side player == WEST"
-];
+[] spawn MISSION_CORE_fnc_monitorBluforStaging;
+// Actions on the unit are lost on respawn (new unit object), so (re)attach them via a wrapper
+// callable from init AND from the Respawn event handler below.
+MISSION_CORE_fnc_setupPlayerActions = {
+    { player removeAction _x; } forEach (missionNamespace getVariable ["MISSION_CORE_PLAYER_ACTION_IDS", []]);
+    MISSION_CORE_PLAYER_ACTION_IDS = [
+        player addAction [
+            "Recruit Forces",
+            { [] call MISSION_CORE_fnc_openRecruitment; },
+            [], 1, true, true, "", "side player == WEST"
+        ],
+        player addAction [
+            "Marine Force Recon HQ",
+            { [] call MISSION_CORE_fnc_openUnlockMenu; },
+            [], 6, true, true, "", "[] call MISSION_CORE_fnc_reconActionVisible"
+        ]
+    ];
+};
+[] call MISSION_CORE_fnc_setupPlayerActions;
 
 // Renown + Force Recon: unlocked units + gear bought at the HQ flag
 call compile preprocessFileLineNumbers "fnc\fn_reconClient.sqf";
@@ -47,11 +63,6 @@ call compile preprocessFileLineNumbers "fnc\fn_reconClient.sqf";
     sleep 1;
     [] call MISSION_CORE_fnc_reconPullState;
 };
-player addAction [
-    "Marine Force Recon HQ",
-    { [] call MISSION_CORE_fnc_openUnlockMenu; },
-    [], 6, true, true, "", "[] call MISSION_CORE_fnc_nearHQ"
-];
 
 // Field manual (help menu, H key)
 call compile preprocessFileLineNumbers "fnc\fn_helpMenu.sqf";
@@ -74,6 +85,15 @@ call compile preprocessFileLineNumbers "fnc\fn_diary.sqf";
     };
     if (_this select 1 == 0x23) then { // H key
         [] call MISSION_CORE_fnc_openHelpMenu;
+    };
+}];
+
+// Re-attach unit menus across respawns (addActions do not survive a new unit object).
+addMissionEventHandler ["EntityRespawned", {
+    params ["_newEntity", "_oldEntity"];
+    if (_newEntity == player) then {
+        { _oldEntity removeAction _x; } forEach (missionNamespace getVariable ["MISSION_CORE_PLAYER_ACTION_IDS", []]);
+        [] call MISSION_CORE_fnc_setupPlayerActions;
     };
 }];
 

@@ -4,10 +4,11 @@
 // When a marker's initial garrison is wiped, the attacker SWITCHES the
 // marker to their side but is NOT the rightful owner yet. The marker is
 // OCCUPIED: for 10 minutes the attacker gets NO defender spawns, the
-// previous owner counter-attacks to win it back, and if every attacker
-// unit leaves/dies inside, the marker reverts to the previous owner.
-// Only after holding for 10 minutes does the attacker become the
-// rightful owner (and defender spawns resume for them).
+// previous owner counter-attacks to win it back, and the marker only
+// reverts to the previous owner once the occupier's players / active
+// assault squads are gone AND an enemy counter-attack squad physically
+// moves into the marker. Only after holding for 10 minutes does the
+// attacker become the rightful owner (and defender spawns resume).
 // =====================================================================
 
 // True when a marker is currently in the occupation (hold) phase
@@ -60,7 +61,11 @@ MISSION_CORE_fnc_occupationMonitor = {
             private _ma = _mSize select 0;
             private _mb = _mSize select 1;
             private _md = if (count _mSize > 2) then { _mSize select 2 } else { 0 };
-            // Attacker (occupier) units still inside the marker ellipse?
+            // Attacker (occupier) presence inside the marker ellipse that BLOCKS a revert. Narrow
+            // definition: only the capturing players themselves and ACTIVE released assault-squad
+            // leaders hold the marker. Ordinary occupier-side AI (patrols, garrison) does NOT -
+            // walking away with just AI behind flips it back the moment an enemy counter-attacker
+            // steps in, without any player requirement.
             private _inside = {
                 params ["_p"];
                 private _dx = (_p select 0) - (_locPos select 0);
@@ -69,14 +74,50 @@ MISSION_CORE_fnc_occupationMonitor = {
                 private _ry = _dx * sin _md + _dy * cos _md;
                 (_rx*_rx)/(_ma*_ma) + (_ry*_ry)/(_mb*_mb) <= 1
             };
-            private _attackersInside = { alive _x && { side _x == _occupier } && { [getPos _x] call _inside } } count allUnits;
-            if (_attackersInside == 0) then {
-                // Attacker wiped - revert to the previous owner
+            private _occupierPresent = false;
+            {
+                if (alive _x && { isPlayer _x } && { side _x == _occupier } && { [getPos _x] call _inside }) exitWith { _occupierPresent = true; };
+            } forEach allPlayers;
+            // ACTIVE released assault-squad leaders also block a revert (their squad is actively
+            // pressing/holding the marker even when the player physically walks away).
+            if (!_occupierPresent && { !isNil "MISSION_CORE_ATTACK_GROUPS" }) then {
+                {
+                    private _adata = _y;
+                    if ((_adata select 5) != "active") then { continue; };
+                    private _ag = _adata select 0;
+                    if (isNull _ag) then { continue; };
+                    if (side (leader _ag) != _occupier) then { continue; };
+                    private _aldr = leader _ag;
+                    if (alive _aldr && { [getPos _aldr] call _inside }) exitWith { _occupierPresent = true; };
+                } forEach MISSION_CORE_ATTACK_GROUPS;
+            };
+            // Flip-back trigger: an ENEMY counter-attack squad targeting THIS marker must be
+            // physically inside the ellipse. Ordinary enemy patrols/garrison do NOT trigger - only
+            // a group dispatched specifically to retake this marker (order counterattack/attack
+            // aimed at the marker center within the neighbor range) counts.
+            private _enemyRetook = false;
+            if (!_occupierPresent) then {
+                {
+                    if (side _x != _prevOwner) then { continue; };
+                    if !((_x getVariable ["MISSION_CORE_ORDER", ""]) in ["counterattack", "attack"]) then { continue; };
+                    private _at = _x getVariable ["MISSION_CORE_ATTACK_TARGET", [0, 0, 0]];
+                    if (_at distance2D _locPos > (["neighborRange", 4000] call MISSION_CORE_fnc_tune)) then { continue; };
+                    if ({ alive _x && { [getPos _x] call _inside } } count units _x > 0) exitWith { _enemyRetook = true; };
+                } forEach allGroups;
+            };
+            if (!_occupierPresent && { _enemyRetook }) then {
+                // Occupier gone + an enemy counter-attacker physically retook the marker - revert
+                // to the previous owner. The marker flips back with ZERO manpower: it fields no
+                // garrisons until its supply network delivers manpower again.
                 [_locName, _prevOwner] call MISSION_CORE_fnc_setMarkerOwner;
                 MISSION_CORE_OCCUPATION deleteAt _locName;
                 if (!isNil "MISSION_CORE_CAPTURED_RETAKE") then { MISSION_CORE_CAPTURED_RETAKE deleteAt _locName; };
                 MISSION_CORE_SPAWNED_LOCATIONS set [_locName, false];
-                diag_log format ["DYNAMIC CAPTURE: %1 reverted to %2 (attackers wiped)", _locName, _prevOwner];
+                if (isNil "MISSION_CORE_MANPOWER") then { MISSION_CORE_MANPOWER = createHashMap; };
+                if (isNil "MISSION_CORE_COMMIT") then { MISSION_CORE_COMMIT = createHashMap; };
+                MISSION_CORE_MANPOWER set [_locName, []];
+                MISSION_CORE_COMMIT set [_locName, 0];
+                diag_log format ["DYNAMIC CAPTURE: %1 reverted to %2 (occupier left + retake squad entered, 0 manpower)", _locName, _prevOwner];
                 ["DynOps_MarkerLost",
                     ["MARKER LOST", format ["%1 reverted to the enemy.", _locName]]
                 ] remoteExec ["BIS_fnc_showNotification", 0];

@@ -51,6 +51,19 @@ MISSION_CORE_fnc_nearHQ = {
     (player distance _pos) <= _range
 };
 
+// Diagnostic wrapper for the addAction visibility condition - logs WHY the Force Recon action is
+// hidden so we can chase the runtime state instead of guessing.
+MISSION_CORE_fnc_reconActionVisible = {
+    private _locNil = isNil "MISSION_CORE_LOCATIONS";
+    private _locCount = if (_locNil) then { -1 } else { count MISSION_CORE_LOCATIONS };
+    private _westHq = if (_locNil) then { 0 } else { { (_x select 5) == WEST && { toLower (_x select 2) == "hq" } } count MISSION_CORE_LOCATIONS };
+    private _near = [] call MISSION_CORE_fnc_nearHQ;
+    private _rnk = rank player;
+    private _ok = _near && { _rnk in ["COLONEL", "GENERAL"] };
+    diag_log format ["RECON ACTION: locNil=%1 locCount=%2 westHq=%3 near=%4 rank=%5 show=%6", _locNil, _locCount, _westHq, _near, _rnk, _ok];
+    _ok
+};
+
 // Pull the authoritative recon state from the server (idempotent re-broadcast). Covers clients
 // that joined mid-mission and missed the init publicVariable, and any state-loss hitches.
 MISSION_CORE_fnc_reconPullState = {
@@ -63,6 +76,7 @@ MISSION_CORE_fnc_reconPullState = {
 
 MISSION_CORE_fnc_openUnlockMenu = {
     call MISSION_CORE_fnc_ensureLocalReconDefaults;
+    if !(rank player in ["COLONEL", "GENERAL"]) exitWith { hint "Only the commanding officer (COLONEL) can access Force Recon."; };
     if !([] call MISSION_CORE_fnc_nearHQ) exitWith { hint "Move to your HQ flag to access Force Recon command."; };
     // Require real content - an empty/missing list is never a valid unlock screen. Pull again
     // and retry once after the broadcast lands instead of opening an empty menu.

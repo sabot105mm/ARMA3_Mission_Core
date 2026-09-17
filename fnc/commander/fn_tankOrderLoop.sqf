@@ -396,7 +396,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
                         if (isNull _tank) then { continue; };
                         private _tankCrew = crew _tank;
                         if (count _tankCrew > 0) then {
-                            { unassignVehicle _x; [_x] orderGetIn false; _x action ["getOut", _tank]; } forEach _tankCrew;
+                            { unassignVehicle _x; _x leaveVehicle _tank; [_x] orderGetIn false; _x action ["getOut", _tank]; } forEach _tankCrew;
                             sleep 0.3;
                             private _runnerGrp = createGroup _sSide;
                             { if (!isNull _x) then { [_x] joinSilent _runnerGrp; }; } forEach _tankCrew;

@@ -118,6 +118,7 @@ MISSION_CORE_fnc_spawnHQForce = {
                     {
                         if (_x != driver _apc && _x != gunner _apc) then {
                             unassignVehicle _x;
+                            _x leaveVehicle _apc;
                             [_x] orderGetIn false;
                             _x action ["Eject", _apc];
                         };

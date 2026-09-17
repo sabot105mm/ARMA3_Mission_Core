@@ -97,9 +97,6 @@ class RscStructuredText: RscText {
 
 class Header { gameType = Coop; minPlayers = 1; maxPlayers = 16; };
 author = "Dynamic Operations";
-respawn = "NONE";
-respawnDelay = 10;
-respawnTemplates[] = {};
 joinUnassigned = 0;
 class DYNOPS_SpawnSelector
 {
@@ -460,34 +457,43 @@ class DYNOPS_RecruitMenu
         class TabPlayer: RscButton
         {
             idc = 1601;
-            x = 0.17; y = 0.21; w = 0.18; h = 0.04;
-            text = "PLAYER GROUP";
-            sizeEx = 0.025;
+            x = 0.17; y = 0.21; w = 0.13; h = 0.04;
+            text = "PLAYER";
+            sizeEx = 0.02;
             colorBackground[] = {0.3,0.5,0.2,0.95};
             action = "0 call MISSION_CORE_fnc_recruitMenuTab;";
         };
         class TabDefend: RscButton
         {
             idc = 1602;
-            x = 0.36; y = 0.21; w = 0.18; h = 0.04;
+            x = 0.32; y = 0.21; w = 0.13; h = 0.04;
             text = "GARRISON";
-            sizeEx = 0.025;
+            sizeEx = 0.02;
             colorBackground[] = {0.2,0.3,0.5,0.95};
             action = "1 call MISSION_CORE_fnc_recruitMenuTab;";
         };
         class TabAttack: RscButton
         {
             idc = 1603;
-            x = 0.55; y = 0.21; w = 0.18; h = 0.04;
+            x = 0.47; y = 0.21; w = 0.13; h = 0.04;
             text = "ATTACK";
-            sizeEx = 0.025;
+            sizeEx = 0.02;
             colorBackground[] = {0.5,0.2,0.2,0.95};
             action = "2 call MISSION_CORE_fnc_recruitMenuTab;";
+        };
+        class TabCommand: RscButton
+        {
+            idc = 1608;
+            x = 0.62; y = 0.21; w = 0.13; h = 0.04;
+            text = "COMMANDER";
+            sizeEx = 0.018;
+            colorBackground[] = {0.5,0.45,0.15,0.95};
+            action = "3 call MISSION_CORE_fnc_recruitMenuTab;";
         };
         class TabSeparator: RscText
         {
             idc = -1;
-            x = 0.17; y = 0.26; w = 0.56; h = 0.005;
+            x = 0.17; y = 0.26; w = 0.58; h = 0.005;
             colorBackground[] = {0.4,0.4,0.4,0.6};
         };
 
@@ -692,7 +698,7 @@ class DYNOPS_RecruitMenu
         {
             idc = 1662;
             type = 4;
-            x = 0.46; y = 0.85; w = 0.27; h = 0.03;
+            x = 0.46; y = 0.885; w = 0.27; h = 0.03;
             checked = 0;
             text = "REFILL GARRISON ON DEATH (4x MP)";
             sizeEx = 0.017;
@@ -846,6 +852,67 @@ class DYNOPS_RecruitMenu
             colorBackground[] = {0.5,0.15,0.15,0.95};
             action = "[] call MISSION_CORE_fnc_recruitAttackDeploy;";
         };
+        class AttackReleaseStagedBtn: RscButton
+        {
+            idc = 1665;
+            x = 0.18; y = 0.855; w = 0.26; h = 0.03;
+            text = "RELEASE STAGED ASSAULT";
+            sizeEx = 0.018;
+            colorBackground[] = {0.5,0.3,0.2,0.95};
+            action = "[] call MISSION_CORE_fnc_recruitAssaultRelease;";
+        };
+        class AttackStagingNote: RscText
+        {
+            idc = 1666;
+            x = 0.46; y = 0.855; w = 0.26; h = 0.04;
+            text = "Enemy assaults hold at their edge awaiting armor before pushing. Your own squads bought before a marker is contested hold too - RELEASE STAGED ASSAULT to order them in.";
+            colorText[] = {0.65,0.65,0.65,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.015;
+        };
+
+        // --- COMMANDER TAB CONTROLS (IDC 1615-1619) ---
+        // Commander slot (rank COLONEL+) only: list assault-marked groups + player squad/platoon
+        // leaders, multi-select by clicking, then SET WAYPOINTS reuses the attack WP editor.
+        class CommanderPanel: RscText
+        {
+            idc = 1615;
+            x = 0.17; y = 0.27; w = 0.56; h = 0.58;
+            colorBackground[] = {0,0,0,0};
+        };
+        class CommanderLabel: RscText
+        {
+            idc = 1618;
+            x = 0.18; y = 0.275; w = 0.54; h = 0.03;
+            text = "Click to select 1 group, SHIFT+click for more. Then SET WAYPOINTS.";
+            colorText[] = {0.9,0.85,0.45,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.02;
+        };
+        class CommanderList: RscListBox
+        {
+            idc = 1616;
+            x = 0.18; y = 0.31; w = 0.54; h = 0.42;
+            onLBSelChanged = "_this call MISSION_CORE_fnc_recruitCommanderSelect;";
+        };
+        class CommanderNote: RscText
+        {
+            idc = 1619;
+            x = 0.18; y = 0.74; w = 0.54; h = 0.03;
+            text = "Waypoints apply to every selected group. ESC in editor = keep current path.";
+            colorText[] = {0.65,0.65,0.65,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.017;
+        };
+        class CommanderSetWPBtn: RscButton
+        {
+            idc = 1617;
+            x = 0.18; y = 0.78; w = 0.54; h = 0.035;
+            text = "SET WAYPOINTS FOR SELECTED";
+            sizeEx = 0.02;
+            colorBackground[] = {0.5,0.45,0.15,0.95};
+            action = "[] spawn MISSION_CORE_fnc_recruitCommanderOpenWP;";
+        };
 
         class CloseBtn: RscButton
         {
@@ -854,6 +921,61 @@ class DYNOPS_RecruitMenu
             text = "CLOSE";
             sizeEx = 0.025;
             action = "closeDialog 0;";
+        };
+    };
+};
+
+// Commander approval dialog - appears on the commander slot's screen when the AI commander wants to
+// reroute a player-side assault squad to a defend marker. Keyed off MISSION_CORE_REROUTE_ASKS; the
+// server defaults to "reroute anyway" after commanderRerouteTimeout (30s). idd 1610 is free.
+class DYNOPS_CommanderPrompt
+{
+    idd = 1610;
+    movingEnable = 0;
+    class Controls
+    {
+        class PromptBackground: RscText
+        {
+            idc = -1;
+            x = 0.3; y = 0.35; w = 0.4; h = 0.22;
+            colorBackground[] = {0.02,0.03,0.06,0.95};
+        };
+        class PromptTitle: RscText
+        {
+            idc = 1671;
+            x = 0.32; y = 0.37; w = 0.36; h = 0.035;
+            text = "AI COMMANDER";
+            colorText[] = {0.9,0.85,0.3,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.028;
+        };
+        class PromptBody: RscText
+        {
+            idc = 1672;
+            x = 0.32; y = 0.42; w = 0.36; h = 0.07;
+            text = "";
+            colorText[] = {0.8,0.8,0.8,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.022;
+            style = 0x02;
+        };
+        class PromptYes: RscButton
+        {
+            idc = 1673;
+            x = 0.32; y = 0.5; w = 0.17; h = 0.04;
+            text = "REROUTE";
+            sizeEx = 0.022;
+            colorBackground[] = {0.4,0.3,0.15,0.95};
+            action = "call MISSION_CORE_fnc_commanderRerouteYes;";
+        };
+        class PromptNo: RscButton
+        {
+            idc = 1674;
+            x = 0.51; y = 0.5; w = 0.17; h = 0.04;
+            text = "KEEP THEM";
+            sizeEx = 0.022;
+            colorBackground[] = {0.5,0.15,0.15,0.95};
+            action = "call MISSION_CORE_fnc_commanderRerouteNo;";
         };
     };
 };
@@ -993,6 +1115,9 @@ class MISSION_CORE_TUNE {
     assaultTankBase = 2;
     assaultTankPerImp = 0.5;
     assaultTankMax = 4;
+    assaultSquadCapture = 1;
+    assaultLeaderQuads = 1;
+    assaultLeaderHunts = 1;
 
     aggressionStart = 5;
     aggressionMax = 100;

@@ -13,7 +13,7 @@ MISSION_CORE_fnc_attackStuckWatchdogTick = {
         if (count _contested == 0) then { continue; };
         private _groups = MISSION_CORE_SPAWNED_GROUPS select {
             !isNull _x && { count units _x > 0 } && { _x getVariable [_sideVar, false] } &&
-            { (_x getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "counterattack", "reinforce"] }
+            { (_x getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "counterattack", "reinforce", "staging"] }
         };
         {
             private _grp = _x;
@@ -21,9 +21,37 @@ MISSION_CORE_fnc_attackStuckWatchdogTick = {
             if (isNull _ldr || { !(alive _ldr) }) then { continue; };
             private _at = _grp getVariable ["MISSION_CORE_ATTACK_TARGET", []];
             if (count _at == 0) then { continue; };
-            // Match the group to the contested zone it is marching toward; skip if none matches.
+            // Match the group to the contested zone it is marching toward.
             private _cEntry = _contested select { (_x select 1) distance2D _at <= 100 } param [0, []];
-            if (count _cEntry == 0) then { continue; };
+            if (count _cEntry == 0) then {
+                // PERMANENT RULE (STALE-ORDER RELEASE): the group's one-way task has no live
+                // contested target anymore (the marker it was marching on flipped / the fight it
+                // was committed to ended). Such an order would otherwise block the group from ever
+                // rejoining a new assault (the "assault groups refuse to assault a new marker"
+                // bug) and from ever reverting to patrol (restartPatrol refuses attack/counterattack/
+                // reinforce orders). One exception: a group still committed to the ACTIVE assault
+                // target is on a live task - its target is a BLUFOR marker, not an EAST contested
+                // zone, so it must be spared.
+                private _release = true;
+                if (!(isNil "MISSION_CORE_ASSAULT_ACTIVE") && { MISSION_CORE_ASSAULT_ACTIVE } &&
+                    { !(isNil "MISSION_CORE_ASSAULT_TARGET") } && { MISSION_CORE_ASSAULT_TARGET != "" }) then {
+                    private _aPos = _grp getVariable ["MISSION_CORE_ATTACK_TARGET", []];
+                    if (count _aPos == 0) then { _aPos = _at; };
+                    private _curAssaultPos = [];
+                    if (!(isNil "MISSION_CORE_CACHED_POSITIONS")) then {
+                        private _aIx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == MISSION_CORE_ASSAULT_TARGET };
+                        if (_aIx >= 0) then { _curAssaultPos = (MISSION_CORE_CACHED_POSITIONS select _aIx) select 1; };
+                    };
+                    if (count _curAssaultPos > 0 && { _aPos distance2D _curAssaultPos <= 300 }) then { _release = false; };
+                };
+                if (_release) then {
+                    diag_log format ["AI COMMANDER: %1 stale %2 order released (no live contested/assault target) - back to patrol", groupId _grp, _grp getVariable ["MISSION_CORE_ORDER", ""]];
+                    _grp setVariable ["MISSION_CORE_ORDER", ""];
+                    _grp setVariable ["MISSION_CORE_ASSAULT_GROUP", false];
+                    [_grp] call MISSION_CORE_fnc_restartPatrol;
+                };
+                continue;
+            };
             private _cPos = _cEntry select 1;
             private _cSize = _cEntry select 2;
             // The group must have had time to move before we call it stuck

@@ -53,6 +53,11 @@ MISSION_CORE_fnc_commitToBattle = {
             if (_ownName != "") then {
                 _ownZone = _contested select { (_x select 0) == _ownName } param [0, []];
             };
+            // PERMANENT RULE (HOME GARRISONS): a group in defensive posture (order "defend") is its
+            // marker's garrison - it defends ONLY its own marker and is NEVER committed to a
+            // different / "best-global" contested zone. Its own-marker fight is served by the
+            // own-zone path below; if its own marker is not contested it stays home and guards it.
+            if ((_grp getVariable ["MISSION_CORE_ORDER", ""]) == "defend" && { count _ownZone == 0 }) then { continue; };
             // Preferred: the contested marker closest to a player among those within 1500m of the
             // group. Fallback: the overall contested marker closest to a player (far patrols).
             private _bestMkr = if (count _ownZone > 0) then { _ownZone } else { _bestGlobal };
@@ -82,6 +87,12 @@ MISSION_CORE_fnc_commitToBattle = {
                 private _cur = _grp getVariable ["MISSION_CORE_ORDER", ""];
                 private _at = _grp getVariable ["MISSION_CORE_ATTACK_TARGET", [0, 0, 0]];
                 if (_cur == "counterattack" && { (_bestMkr select 1) distance _at < 200 }) then { continue; };
+                // SNATCH FILTER: a group being pulled into a battle is only eligible when the
+                // defender pickup rules pass (> surface-skips a far away / self-assaulting / already-
+                // there group, and asks the commander before rerouting a player assault squad).
+                // Only non-own-zone commits are "snatches" - a zone's own garrison always defends
+                // its own fight regardless of the filter.
+                if (count _ownZone == 0 && { !([_grp, _bestMkr select 0, _bestMkr select 1] call MISSION_CORE_fnc_canSnatchGroup) }) then { continue; };
                 if ({ vehicle _x == _x } count units _grp == count units _grp) then { _footCount = _footCount + 1; };
                 [_grp, _bestMkr select 1, _bestMkr select 2] call MISSION_CORE_fnc_sendCounterAttack;
                 _grp setVariable ["MISSION_CORE_DISPATCH_MARKER", _bestMkr select 0];

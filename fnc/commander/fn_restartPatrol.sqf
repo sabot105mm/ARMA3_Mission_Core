@@ -3,7 +3,8 @@ MISSION_CORE_fnc_restartPatrol = {
     params ["_group"];
     // Groups on a one-way attack task never revert to their old patrol waypoints - they stay on
     // the task. Defend/engage groups are temporary combat states and may resume patrol.
-    if ((_group getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "counterattack", "reinforce"]) exitWith {};
+    // "staging" is the staged-assault edge hold: those groups are committed to an assault.
+    if ((_group getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "counterattack", "reinforce", "staging"]) exitWith {};
     // Quadrant-committed groups stay on their sector sweep - never revert them to a whole-marker
     // random patrol (that scatters them across the center and the far side).
     if ((_group getVariable ["MISSION_CORE_ORDER", ""]) == "engage" && { (_group getVariable ["MISSION_CORE_QUAD_MARKER", ""]) != "" }) exitWith {};

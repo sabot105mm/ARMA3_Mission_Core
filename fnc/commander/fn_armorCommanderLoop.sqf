@@ -9,6 +9,24 @@ MISSION_CORE_fnc_armorCommanderLoop = {
         // behavior-neutral: allUnits/allGroups only change between frames, not mid-script.
         private _allUnits = allUnits;
         private _allGroups = allGroups;
+        // PERMANENT RULE: gun vehicles keep their crew inside even when the hull is immobile. A few
+        // blown tires or a lost track must never make the crew bail out and get cut down in the open
+        // - tank, APC and gun-truck crews fight from the vehicle to the end. Covers every vehicle
+        // regardless of which path spawned it (recruit, defense, reinforcement, patrol, escort).
+        // PERF: rescan only when the server's vehicle list changed size (something spawned or died).
+        // Crews are already-flagged once handled, so a stable battlefield costs ~nothing per tick
+        // instead of iterating/hasMountedGun-ing the entire vehicle list every ~12s.
+        if (isNil "MISSION_CORE_CREW_VEH_COUNT") then { MISSION_CORE_CREW_VEH_COUNT = -1; };
+        private _vehCount = count vehicles;
+        if (_vehCount != MISSION_CORE_CREW_VEH_COUNT) then {
+            MISSION_CORE_CREW_VEH_COUNT = _vehCount;
+            {
+                if (!(_x getVariable ["MISSION_CORE_CREW_IN_IMMOBILE", false]) && { [_x] call MISSION_CORE_fnc_hasMountedGun }) then {
+                    _x allowCrewInImmobile true;
+                    _x setVariable ["MISSION_CORE_CREW_IN_IMMOBILE", true, true];
+                };
+            } forEach vehicles;
+        };
         {
             private _side = _x;
             private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
@@ -62,6 +80,68 @@ MISSION_CORE_fnc_armorCommanderLoop = {
                 private _homePos = _grp getVariable ["MISSION_CORE_MARKER_CENTER", getPos leader _grp];
                 _homePos = [_homePos, getPos leader _grp] call MISSION_CORE_fnc_safeWaypointPos;
                 private _cooldown = _grp getVariable ["MISSION_CORE_ARMOR_COOLDOWN", 0];
+
+                // MECH IMMOBILE DISMOUNT: a mech APC that can no longer move stays behind and must not
+                // trap its infantry. The riders split out into their OWN group (so the foot leader
+                // takes over and they keep fighting on foot), while the APC + crew hold in place.
+                // Runs once per vehicle - a variable flag stops re-ejection after the tractor settles.
+                if ((_grp getVariable ["MISSION_CORE_ARMOR_SLOT", ""]) == "mech") then {
+                    private _apc = objNull;
+                    {
+                        private _v = vehicle _x;
+                        if (_v != _x && { (_v isKindOf "APC" || _v isKindOf "Wheeled_APC" || _v isKindOf "Tracked_APC") && { (_v getVariable ["MISSION_CORE_MECH_IMMOBILE_DISMOUNTED", false]) == false } }) exitWith { _apc = _v; };
+                    } forEach units _grp;
+                    if (!isNull _apc) then {
+                        // Riders = cargo infantry (in the APC but not driving/gunning/commanding).
+                        private _crewSet = [driver _apc, gunner _apc, commander _apc] select { !isNull _x };
+                        private _riders = units _grp select {
+                            if (vehicle _x != _apc || { !alive _x }) exitWith { false };
+                            private _u = _x;
+                            _crewSet findIf { _x == _u } < 0
+                        };
+                        if (count _riders > 0 && { !canMove _apc }) then {
+                            _apc setVariable ["MISSION_CORE_MECH_IMMOBILE_DISMOUNTED", true];
+                            private _side = side _grp;
+                            private _newGrp = createGroup _side;
+                            _riders joinSilent _newGrp;
+                            {
+                                private _v = _grp getVariable [_x, nil];
+                                if (!isNil "_v") then { _newGrp setVariable [_x, _v]; };
+                            } forEach ["MISSION_CORE_BLUFOR", "MISSION_CORE_REDFOR", "MISSION_CORE_ORIGIN_MARKER", "MISSION_CORE_MARKER_CENTER", "MISSION_CORE_IMPORTANCE", "MISSION_CORE_ORDER", "MISSION_CORE_ATTACK_TARGET"];
+                            // Foot leader owns the new squad - clear persistent vars that would make the
+                            // armor loop re-claim it as a riding APC group.
+                            _newGrp setVariable ["MISSION_CORE_ARMOR_SLOT", ""];
+                            _newGrp setVariable ["MISSION_CORE_IDLE", false];
+                            _newGrp setVariable ["MISSION_CORE_PATROLLING", false];
+                            leader _newGrp setVariable ["MISSION_CORE_PATROLLING", false];
+                            _newGrp setBehaviour "AWARE";
+                            _newGrp setCombatMode "RED";
+                            _newGrp setSpeedMode "FULL";
+                            if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+                            MISSION_CORE_SPAWNED_GROUPS pushBack _newGrp;
+                            // Continue the march: SAD the same target the APC was driving toward, so the
+                            // dismounted squad still rolls onto the objective on foot.
+                            private _driveTarget = _grp getVariable ["MISSION_CORE_ATTACK_TARGET", [0, 0, 0]];
+                            if (count _driveTarget < 2) then {
+                                private _cw = currentWaypoint _grp;
+                                if (_cw >= 0) then { _driveTarget = waypointPosition [_grp, _cw]; };
+                            };
+                            [_newGrp] call MISSION_CORE_fnc_clearGroupWaypoints;
+                            if (count _driveTarget >= 2) then {
+                                private _wp = _newGrp addWaypoint [_driveTarget, 60];
+                                _wp setWaypointType "SAD";
+                                _wp setWaypointSpeed "FULL";
+                                _wp setWaypointBehaviour "AWARE";
+                                _newGrp setCurrentWaypoint _wp;
+                            };
+                            // The APC group now sits without riders - clear its march orders so it holds
+                            // behind instead of trying to drive a broken hull against the target.
+                            [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
+                            _grp setVariable ["MISSION_CORE_ORDER", "defend"];
+                            diag_log format ["AI ARMOR: %1 mech APC immobilised mid-march -> %2 riders dismounted to own foot group", groupId _grp, count _riders];
+                        };
+                    };
+                };
 
                 // Priority 1 - DEFEND: enemy units near home position
                 private _defendEnemies = _allUnits select {

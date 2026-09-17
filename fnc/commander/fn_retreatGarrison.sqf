@@ -1,20 +1,21 @@
-
 // Retreat a marker's surviving garrison once its defense collapses. Every unit keeps firing while
 // it withdraws (RED combat mode), holds formation (WEDGE + AWARE), stands up (UP) and runs (FULL)
 // toward the closest friendly marker, then despawns on arrival. The despawn is what removes them
 // from the map - they are never left patrolling their abandoned home.
+//
+// The retreat destination comes from fn_getRetreatDest, so the garrison NEVER retreats to a marker
+// whose line of retreat passes through an enemy-held base - it falls back to the next closest
+// friendly marker instead of driving home through hostile territory.
 MISSION_CORE_fnc_retreatGarrison = {
     params ["_locName", "_locPos", "_side"];
-    private _ally = "";
-    private _allyPos = [0, 0, 0];
-    private _allyD = 1e10;
-    {
-        if ((_x select 4) == _side && { (_x select 0) != _locName }) then {
-            private _d = (_x select 1) distance _locPos;
-            if (_d < _allyD) then { _allyD = _d; _ally = _x select 0; _allyPos = _x select 1; };
-        };
-    } forEach MISSION_CORE_CACHED_POSITIONS;
-    if (_ally == "") exitWith {};
+    // The retreat destination comes from fn_getRetreatDest, which returns the closest friendly
+    // marker whose path from the LOST marker does not cross an enemy-held base. Drawn from _locPos
+    // (marker WE LOST), not the squad's mid-retreat position, so the whole escape route stays out
+    // of enemy territory.
+    private _allyPos = [_locPos, _side, [_locName]] call MISSION_CORE_fnc_getRetreatDest;
+    if (_allyPos distance [0, 0, 0] < 1) exitWith {};
+    private _allyIdx = MISSION_CORE_CACHED_POSITIONS findIf { ((_x select 1) isEqualTo _allyPos) && { (_x select 4) == _side } };
+    private _ally = if (_allyIdx >= 0) then { (MISSION_CORE_CACHED_POSITIONS select _allyIdx) select 0 } else { "" };
     {
         if (!isNull _x && { (_x getVariable ["MISSION_CORE_ORIGIN_MARKER", ""]) == _locName } && { { alive _x } count units _x > 0 }) then {
             _x setVariable ["MISSION_CORE_ORDER", "retreat"];

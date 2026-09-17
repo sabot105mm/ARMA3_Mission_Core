@@ -155,6 +155,9 @@ class MISSION_CORE_TUNE {
     assaultTankBase = 2;             // tanks = base + floor(importance * tankPerImp), capped
     assaultTankPerImp = 0.5;
     assaultTankMax = 4;
+    assaultSquadCapture = 1;        // 1 = released/active assault squads can capture a wiped marker without a player inside
+    assaultLeaderQuads = 1;         // 1 = quads + counter-attacks target released/active assault leaders near the marker
+    assaultLeaderHunts = 1;         // 1 = hunt director also tracks released/active assault leaders
 
     // ----- Aggression -----
     aggressionStart = 5;            // enemy aggression when the mission starts (low = holds off)

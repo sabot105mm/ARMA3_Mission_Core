@@ -1,11 +1,21 @@
 
 MISSION_CORE_fnc_spawnDefenses = {
     params ["_targetPos", "_targetSize", "_side", "_factionData", "_importance", ["_axisPos", []]];
-    // PERMANENT RULE: Powerplants / Solar are static tiny garrisons - they get NO bunkers, MG nests or
-    // AT emplacements. The small garrison holds with plain infantry only.
-    if !(isNil "MISSION_CORE_CACHED_POSITIONS") then {
+    // PERMANENT RULE: each marker's static defense ring is built exactly once. The coordinator may
+    // release and re-hand-out a defense assignment when the player leaves and returns; without this
+    // gate a marker would repeatedly materialize fresh bunkers. Keyed by the marker name so every
+    // spawn path (defense coordinator, assault loop) observes the same decision.
+    if (isNil "MISSION_CORE_DEFENSE_BUILT") then { MISSION_CORE_DEFENSE_BUILT = createHashMap; };
+    private _nameHere = "";
+    if (!(isNil "MISSION_CORE_CACHED_POSITIONS")) then {
         private _locAt = [_targetPos] call MISSION_CORE_fnc_getLocByPos;
-        if (count _locAt > 2 && { [_locAt] call MISSION_CORE_fnc_isLightInfrastructure }) exitWith { grpNull };
+        if (count _locAt > 2) then {
+            // PERMANENT RULE: Powerplants / Solar are static tiny garrisons - they get NO bunkers, MG
+            // nests or AT emplacements. The small garrison holds with plain infantry only.
+            if ([_locAt] call MISSION_CORE_fnc_isLightInfrastructure) exitWith { grpNull };
+            _nameHere = _locAt select 0;
+            if (MISSION_CORE_DEFENSE_BUILT getOrDefault [_nameHere, false]) exitWith { grpNull };
+        };
     };
     private _axisDir = if (count _axisPos > 0) then { _axisPos getDir _targetPos } else { [_targetPos, _side] call MISSION_CORE_fnc_findDefenseAxis };
     private _sa = _targetSize select 0;
@@ -124,6 +134,10 @@ MISSION_CORE_fnc_spawnDefenses = {
     };
 
     if (_placedAny) then {
+        if (_nameHere != "" && { !(MISSION_CORE_DEFENSE_BUILT getOrDefault [_nameHere, false]) }) then {
+            MISSION_CORE_DEFENSE_BUILT set [_nameHere, true];
+            diag_log format ["DYNAMIC DEFENSE: %1 static ring built at %2 (imp=%3)", if (_side == WEST) then { "BLUFOR" } else { "REDFOR" }, _nameHere, _importance];
+        };
         _defGroup setBehaviour "SAFE";
         _defGroup setCombatMode "RED";
         private _isBLU = if (_side == WEST) then { "BLUFOR" } else { "REDFOR" };

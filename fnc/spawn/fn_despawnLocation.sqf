@@ -28,6 +28,17 @@ MISSION_CORE_fnc_despawnLocation = {
     private _toDelete = [];
     {
         if (!isNull _x) then {
+            // PERMANENT RULE: player-recruited BLUFOR assets (assault squads, garrison squads,
+            // delivered vehicles) are never deleted by marker cleanup. Markers sit close together
+            // (adjacent outposts/hqs are often <100m apart), so a winning assault squad standing on
+            // the captured edge can easily fall inside a despawned NEIGHBOR's 500m radius and be
+            // wiped out the moment the battle around it goes dormant.
+            if (_x getVariable ["MISSION_CORE_BLUFOR", false]) then { continue; };
+            // PERMANENT RULE: an ACTIVE hunt contingent is never deleted by marker cleanup - the
+            // hunt controller owns its life (sweep -> retreat -> despawn on arrival). A hunt just
+            // dispatched at its source marker is within 500m of it, so a neighbor going dormant the
+            // instant the hunt looses would otherwise wipe the whole contingent in place.
+            if ((_x getVariable ["MISSION_CORE_HUNT_KEY", ""]) != "") then { continue; };
             private _leaderPos = if (!isNull (leader _x)) then { getPos (leader _x) } else { [0, 0, 0] };
             // "Near" is judged by the group's LIVE position, not its frozen MARKER_CENTER - a group
             // that already marched away must not be deleted with its origin location.

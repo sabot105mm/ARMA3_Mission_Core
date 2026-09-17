@@ -13,26 +13,23 @@ if (isNull _veh) exitWith {};
 
 // Bring the truck to a FULL STOP before ejecting anyone: the UNLOAD waypoint completes against a
 // tight radius while the truck is still rolling, and ejecting from a moving vehicle throws men out
-// at speed and kills them on landing. Order the driver to stop and wait until the wheels actually
-// stop, then eject. New waypoints assigned later cancel the doStop so the truck can drive on.
-if (alive _veh) then {
-    _veh setSpeedMode "LIMITED";
-    private _drvStop = driver _veh;
-    if (!isNull _drvStop) then { doStop _drvStop; };
-    private _stopBy = time + 6;
-    waitUntil { sleep 0.2; isNull _veh || { !(alive _veh) } || { speed _veh < 2 } || { time > _stopBy } };
-};
+// at speed and kills them on landing. New waypoints assigned later cancel the doStop so the truck
+// can drive on. Shared stop routine (see fn_stopForDismount.sqf).
+[_veh] call MISSION_CORE_fnc_stopForDismount;
 
 // Unlock the transport first: moveOut (like action "Eject") respects the vehicle's lock state, so
 // a locked vehicle would silently stop the driver from being forced out. We unlock, dismount
 // everyone, then re-lock cargo afterwards to keep the on-foot squad from re-boarding.
 _veh lock false;
 
-// Order every squad member still mounted to disembark. orderGetIn false makes AI leave even while
-// seats are locked; action getOut ejects them immediately.
+// Order every squad member still mounted to disembark. leaveVehicle (group + unit) is what stops
+// the AI trying to re-board; unassignVehicle/orderGetIn false alone leave them spamming "get back
+// in" while lockCargo refuses them.
+_grp leaveVehicle _veh;
 {
     if (vehicle _x == _veh) then {
         unassignVehicle _x;
+        _x leaveVehicle _veh;
         [_x] orderGetIn false;
         _x action ["getOut", _veh];
     };
@@ -45,6 +42,7 @@ private _drv = driver _veh;
 private _retry = 0;
 while { !isNull _drv && { vehicle _drv == _veh } && _retry < 25 } do {
     unassignVehicle _drv;
+    _drv leaveVehicle _veh;
     [_drv] orderGetIn false;
     doGetOut _drv;
     moveOut _drv;
@@ -56,12 +54,10 @@ while { !isNull _drv && { vehicle _drv == _veh } && _retry < 25 } do {
 // Re-lock cargo so the on-foot squad can never re-board the transport.
 _veh lockCargo true;
 
-// Hand the squad over to their saved assault waypoint chain.
+// Hand the squad over to their saved assault waypoint chain (sets group-level speed / ROE /
+// behaviour from the first waypoint's saved state).
 private _wps = _grp getVariable ["MISSION_CORE_TRANSPORT_WPS", []];
 private _targetPos = _grp getVariable ["MISSION_CORE_TRANSPORT_TARGET", _wpPos];
 [_grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
-
-_grp setBehaviour "AWARE";
-_grp setCombatMode "YELLOW";
 
 diag_log format ["DYNOPS TRANSPORT: %1 squad dismounted at UNLOAD waypoint", groupId _grp];

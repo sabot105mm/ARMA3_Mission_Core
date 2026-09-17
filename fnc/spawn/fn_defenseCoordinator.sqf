@@ -88,6 +88,11 @@ MISSION_CORE_fnc_defenseCoordinator = {
                     // Do not re-spawn defenses for a marker the player already cleared while still
                     // attacking it - the enemy can be killed, not replaced.
                     if (_mName in MISSION_CORE_DEFENSE_LOCKED) then { continue; };
+                    // PERMANENT RULE: a marker's static defense ring is built once. Skip markers that
+                    // already had their ring so the coordinator never re-hands out an assignment for a
+                    // ring that was built and later released.
+                    if (isNil "MISSION_CORE_DEFENSE_BUILT") then { MISSION_CORE_DEFENSE_BUILT = createHashMap; };
+                    if (MISSION_CORE_DEFENSE_BUILT getOrDefault [_mName, false]) then { continue; };
                     private _spawned = MISSION_CORE_SPAWNED_LOCATIONS getOrDefault [_mName, false];
                     if (_spawned) then {
                         private _locPos = _locEntry select 1;

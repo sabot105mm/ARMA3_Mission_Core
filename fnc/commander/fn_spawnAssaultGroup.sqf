@@ -60,6 +60,14 @@ MISSION_CORE_fnc_spawnAssaultGroup = {
     // group and lose ownership of the transport. Armor spawns engage (YELLOW) but not engage-at-will.
     private _assaultCombat = if (_subCat find "tank" > -1 || _subCat == "mech") then { "YELLOW" } else { "RED" };
     [_grp, _targetPos, [50, 50], _assaultCombat] call MISSION_CORE_fnc_sendCounterAttack;
+    // PERMANENT RULE (ARMOR FORMATION): tanks/mech follow their group leader (doFollow) so the
+    // column advances in formation behind the lead tank instead of each crew free-driving to the
+    // target. The leader himself is skipped.
+    if (_subCat find "tank" > -1 || _subCat == "mech") then {
+        {
+            if (_x != leader _grp) then { _x doFollow leader _grp; };
+        } forEach units _grp;
+    };
     MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
     _grp
 };

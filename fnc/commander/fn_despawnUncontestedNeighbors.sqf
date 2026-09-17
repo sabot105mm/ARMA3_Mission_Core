@@ -10,29 +10,6 @@
 // garrison is never touched here - the battle loop already returns it to patrol on its own.
 //
 // One tick of the group maintenance loop.
-MISSION_CORE_fnc_rerouteRetreating = {
-    params ["_markerName", "_locPos", "_side"];
-    if (_markerName == "") exitWith {};
-    if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith {};
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
-    private _size = [50, 50];
-    private _idx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _markerName };
-    if (_idx >= 0) then {
-        private _sz = (MISSION_CORE_CACHED_POSITIONS select _idx) select 8;
-        if (count _sz > 0) then { _size = [_sz select 0, _sz select 1]; };
-    };
-    {
-        if (!isNull _x && { count units _x > 0 } &&
-            { _x getVariable [_sideVar, false] } &&
-            { (_x getVariable ["MISSION_CORE_ORDER", ""]) == "retreat" } &&
-            { (_x getVariable ["MISSION_CORE_RETREAT_FROM", ""]) != _markerName }) then {
-            _x setVariable ["MISSION_CORE_ORDER", "counterattack"];
-            [_x, _locPos, _size] call MISSION_CORE_fnc_sendCounterAttack;
-            diag_log format ["AI COMMANDER: %1 re-routed from retreat to newly-contested %2", groupId _x, _markerName];
-        };
-    } forEach MISSION_CORE_SPAWNED_GROUPS;
-};
-
 MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith {};
     if (isNil "MISSION_CORE_CACHED_POSITIONS") exitWith {};
@@ -106,8 +83,9 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
             _wp setWaypointBehaviour "AWARE";
             _grp setCurrentWaypoint _wp;
         } forEach +MISSION_CORE_SPAWNED_GROUPS;
-        // Despawn any retreating squad that reached its retreat marker or timed out. (Re-routing to
-        // a newly-contested marker is event-driven - see isMarkerContested -> rerouteRetreating.)
+        // Despawn any retreating squad that reached its retreat marker or timed out. Retreats are
+        // final - a retreating garrison is never re-tasked into a fresh counter-attack (its
+        // defense collapses exhausted the units it already fielded, so it always just retreats).
         {
             private _grp = _x;
             if (isNull _grp || { count units _grp == 0 }) then { continue; };

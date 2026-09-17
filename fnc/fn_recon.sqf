@@ -162,6 +162,11 @@ MISSION_CORE_fnc_reconServerAction = {
     params ["_caller", "_kind", "_slot", ["_item", ""]];
     if (!isServer) exitWith {};
     if (isNull _caller || isNil "MISSION_CORE_RECON_UNITS") exitWith {};
+    // Server-authoritative rank gate: only a COLONEL/GENERAL (CO) may spend renown. Runs on every
+    // spend regardless of how the client came in (remoteExec is spoofable).
+    if !(rank _caller in ["COLONEL", "GENERAL"]) exitWith {
+        [format ["%1 (%2) tried Force Recon spend - access denied (COLONEL only).", name _caller, rank _caller]] remoteExec ["systemChat", 0];
+    };
     private _maxR = count MISSION_CORE_RECON_UNITS;
     if (_slot < 0 || { _slot >= _maxR }) exitWith {};
     switch (_kind) do {

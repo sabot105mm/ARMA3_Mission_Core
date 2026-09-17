@@ -499,8 +499,12 @@ MISSION_CORE_fnc_serverAddVehicle = {
     // MLRS/SPG/mortar (player-placed artillery) get an arty AI controller.
     if (_kind == "mlrs_spg" || _kind == "mortar") then {
         MISSION_CORE_PLAYER_ARTY set [_markerName, [_veh, _grp]];
-        if (!(MISSION_CORE_PLAYER_ARTY getOrDefault ["_LOOP_RUNNING", false])) then {
+        // Start the fire loop unless one is already running - OR unless the running one crashed
+        // (no heartbeat for >90s = dead, see MISSION_CORE_fnc_playerArtyLoop). Without this a dead
+        // loop keeps _LOOP_RUNNING true forever and the piece never fires for the whole mission.
+        if (!(MISSION_CORE_PLAYER_ARTY getOrDefault ["_LOOP_RUNNING", false]) || { time - (MISSION_CORE_PLAYER_ARTY getOrDefault ["_LOOP_TICK", -1e10]) > 90 }) then {
             MISSION_CORE_PLAYER_ARTY set ["_LOOP_RUNNING", true];
+            MISSION_CORE_PLAYER_ARTY set ["_LOOP_TICK", time];
             [] spawn MISSION_CORE_fnc_playerArtyLoop;
         };
     };
@@ -769,8 +773,10 @@ MISSION_CORE_fnc_garrisonRefillRespawnVehicle = {
     if (_kind == "mlrs_spg" || _kind == "mortar") then {
         if (isNil "MISSION_CORE_PLAYER_ARTY") then { MISSION_CORE_PLAYER_ARTY = createHashMap; };
         MISSION_CORE_PLAYER_ARTY set [_markerName, [_veh, _grp]];
-        if (!(MISSION_CORE_PLAYER_ARTY getOrDefault ["_LOOP_RUNNING", false])) then {
+        // Heartbeat-aware start: a crashed loop (no _LOOP_TICK in 90s) must not block firing forever.
+        if (!(MISSION_CORE_PLAYER_ARTY getOrDefault ["_LOOP_RUNNING", false]) || { time - (MISSION_CORE_PLAYER_ARTY getOrDefault ["_LOOP_TICK", -1e10]) > 90 }) then {
             MISSION_CORE_PLAYER_ARTY set ["_LOOP_RUNNING", true];
+            MISSION_CORE_PLAYER_ARTY set ["_LOOP_TICK", time];
             [] spawn MISSION_CORE_fnc_playerArtyLoop;
         };
     };
@@ -926,6 +932,134 @@ MISSION_CORE_fnc_garrisonWarnLoop = {
 
 // ---- player artillery AI ----------------------------------------------
 
+// Register an assault-tab SPG/MLRS piece into the player-arty fire system with an explicit target.
+// _veh arrives as a netId string from the client (the deploy happens client-side); resolve it here.
+MISSION_CORE_fnc_serverRegisterAssaultArty = {
+    params ["_veh", "_targetPos"];
+    if (_veh isEqualType "") then { _veh = objectFromNetId _veh; };
+    if (isNull _veh) exitWith {};
+    private _crew = crew _veh;
+    if (count _crew == 0) then {
+        private _cmdr = driver _veh;
+        if (isNull _cmdr) then { _cmdr = gunner _veh; };
+        if (isNull _cmdr) exitWith {};
+        _crew = units _cmdr;
+    };
+    if (count _crew == 0) exitWith {};
+
+    private _grp = group (_crew select 0);
+    if (isNull _grp) exitWith {};
+    if (isNil "MISSION_CORE_PLAYER_ARTY") then { MISSION_CORE_PLAYER_ARTY = createHashMap; };
+    private _key = "ASSAULT_" + str (netId _veh);
+    MISSION_CORE_PLAYER_ARTY set [_key, [_veh, _grp, _targetPos]];
+    // Heartbeat-aware start: a crashed loop (no _LOOP_TICK in 90s) must not block firing forever.
+    if (!(MISSION_CORE_PLAYER_ARTY getOrDefault ["_LOOP_RUNNING", false]) || { time - (MISSION_CORE_PLAYER_ARTY getOrDefault ["_LOOP_TICK", -1e10]) > 90 }) then {
+        MISSION_CORE_PLAYER_ARTY set ["_LOOP_RUNNING", true];
+        MISSION_CORE_PLAYER_ARTY set ["_LOOP_TICK", time];
+        [] spawn MISSION_CORE_fnc_playerArtyLoop;
+    };
+    diag_log format ["PLAYER ARTY: assault piece %1 registered on target %2", _veh, _targetPos];
+};
+
+// Server-safe copies of the client standoff helpers (the loop runs on the server only; fn_recruit.sqf
+// copies are not compiled there). Same behavior: an assault piece wants a real 2D aim position.
+MISSION_CORE_fnc_isValidArtyAim = {
+    params ["_aimAt"];
+    if (isNil "_aimAt" || { typeName _aimAt != "ARRAY" }) exitWith { false };
+    private _c = count _aimAt;
+    if (_c < 2) exitWith { false };
+    private _fake = _aimAt findIf { !(_x isEqualType 0) };
+    _fake == -1
+};
+
+// Nearest BLUFOR marker (owner == WEST) to a reference position - the "best standoff" a piece parks
+// on. Mirrors the client fn_recruit.sqf helper using the server-visible MISSION_CORE_LOCATIONS.
+// Optional _minDist skips the reference's own marker so run-away relocation actually displaces.
+// NAMED distinct from the client helper (MISSION_CORE_fnc_bluforStandoff) so a hosted game's single
+// namespace never gets one copy silently overwriting the other.
+MISSION_CORE_fnc_serverArtyStandoff = {
+    params ["_refPos", ["_minDist", -1], ["_aimAt", []], ["_aimMinR", 0]];
+    private _best = [0, 0, 0];
+    private _bestD = 1e10;
+    if (isNil "MISSION_CORE_LOCATIONS") exitWith { _best };
+    {
+        if ((_x select 5) == WEST) then {
+            private _c = (_x select 1) select 0;
+            if (_minDist > 0 && { _c distance2D _refPos < _minDist }) then { continue; };
+            // The relocated spot must also keep the piece's minimum ballistic range from the aim
+            // target, or the next salvo would be refused again. No qualifying marker -> stay put.
+            if (_aimMinR > 0 && { count _aimAt >= 2 && { _c distance2D _aimAt < _aimMinR } }) then { continue; };
+            private _d = _c distance2D _refPos;
+            if (_d < _bestD) then { _bestD = _d; _best = _c; };
+        };
+    } forEach MISSION_CORE_LOCATIONS;
+    _best
+};
+
+// Server-side mirror of the client fn_assaultArtyMinRange: the minimum ballistic range a single
+// piece must hold from its target (MLRS 1000m, SPG 825m) so relocated standoffs still work.
+MISSION_CORE_fnc_serverArtyMinRange = {
+    params ["_veh"];
+    private _ln = toLower (typeOf _veh);
+    if (_ln find "mlrs" > -1 || { _ln find "m270" > -1 } || { _ln find "grad" > -1 }) then { 1000 } else { 825 }
+};
+// the nearest enemy unit (man or vehicle) that an ASSAULT GROUP
+// currently marching on the same target marker has spotted (knowsAbout > 0.7) and that is inside
+// the target marker's footprint. Returns a position, or [] when nothing is spotted. An assault
+// piece shells the squads' actual enemy contacts - not the bare marker - so fire support follows
+// the infantry's eyes instead of hammering empty ground.
+MISSION_CORE_fnc_assaultArtySpotTarget = {
+    params ["_veh", "_aimAt"];
+    private _enemy = if (side _veh == WEST) then { EAST } else { WEST };
+    // Resolve which target marker this aim point belongs to (assigned target).
+    private _aimName = "";
+    if (!(isNil "MISSION_CORE_LOCATIONS") && { (typeName _aimAt) == "ARRAY" && { count _aimAt >= 2 } }) then {
+        private _li = MISSION_CORE_LOCATIONS findIf { ((_x select 1) select 0) distance2D _aimAt < 150 };
+        if (_li >= 0) then { _aimName = (MISSION_CORE_LOCATIONS select _li) select 0; };
+    };
+    // Collect every unit of every assault group assigned to THIS marker as spotters.
+    private _spotters = [];
+    if (!(isNil "MISSION_CORE_ATTACK_GROUPS") && { _aimName != "" }) then {
+        {
+            private _adata = _y;
+            if (count _adata < 7) then { continue; };
+            if ((_adata select 1) != _aimName) then { continue; };
+            private _ag = _adata select 0;
+            if (isNull _ag) then { continue; };
+            // _ag is a GROUP (the attack group assigned to this marker) - alive only accepts
+            // Objects, so a group must be tested via its units. A direct "alive _ag" here threw
+            // "Type Group, expected Object", killing the whole spawned playerArtyLoop (the _LOOP_RUNNING
+            // flag never reset, so no future deploy could ever respawn it - the SPG sat mute forever).
+            if ({ alive _x } count units _ag > 0) then { _spotters pushBack _ag; };
+        } forEach MISSION_CORE_ATTACK_GROUPS;
+    };
+    if (count _spotters == 0) exitWith { [] };
+    // Search a radius that matches the marker footprint (largest half-axis + belt), never tiny.
+    private _mSearch = 800;
+    if (!(isNil "MISSION_CORE_CACHED_POSITIONS") && { _aimName != "" }) then {
+        private _mi = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _aimName };
+        if (_mi >= 0) then {
+            private _sz = (MISSION_CORE_CACHED_POSITIONS select _mi) select 8;
+            private _ma = if (count _sz > 0) then { _sz select 0 } else { 200 };
+            private _mb = if (count _sz > 1) then { _sz select 1 } else { _ma };
+            _mSearch = (((_ma max _mb) max 300) + 150) min 2000;
+        };
+    };
+    private _rangeCap = if (_veh isKindOf "StaticMortar") then { 1700 } else { 10000 };
+    private _best = [];
+    private _bestD = 1e10;
+    {
+        private _u = _x;
+        if (!(alive _u) || { side _u != _enemy }) then { continue; };
+        if (_u distance2D _aimAt > _mSearch) then { continue; };
+        private _spotted = _spotters findIf { _x knowsAbout _u > 0.7 } != -1;
+        if (!_spotted) then { continue; };
+        private _d = _u distance2D _veh;
+        if (_d < _rangeCap && { _d < _bestD }) then { _bestD = _d; _best = getPos _u; };
+    } forEach (allUnits + vehicles);
+    _best
+};
+
 // One loop monitors every player-placed artillery piece and shells the
 // nearest spotted enemy near its marker's range. Reuses fn_artillery targets.
 MISSION_CORE_fnc_playerArtyLoop = {
@@ -933,13 +1067,23 @@ MISSION_CORE_fnc_playerArtyLoop = {
     while { _running } do {
         sleep 8;
         if (isNil "MISSION_CORE_PLAYER_ARTY") then { MISSION_CORE_PLAYER_ARTY = createHashMap; };
+        // Heartbeat so registration sites can detect a loop that crashed (a spawned script dies on
+        // any SQF error, leaving the _LOOP_RUNNING flag stuck true and blacklisting the piece for
+        // the rest of the mission) and respawn it. Updated BEFORE the work so a failed tick still
+        // proves the loop was alive.
+        MISSION_CORE_PLAYER_ARTY set ["_LOOP_TICK", time];
         private _anyLive = false;
+        // A platoon's vehicles share one group; relocate the group once per tick, not once per piece.
+        private _relocatedGroups = [];
         {
             private _key = _x;
             if (_key find "_LOOP" == 0) then { continue; };
             private _data = _y;
-            _data params ["_veh", "_grp"];
-            if (isNull _veh || { !(alive _veh) } || { isNull _grp } || { { alive _x } count units _grp == 0 }) then {
+            _data params ["_veh", "_grp", ["_aimAt", []]];
+            // An assault-arty piece stays registered (keeps firing) as long as the vehicle is alive
+            // and usable. Only a fully disabled or dead tank stops the script - ammo-down or immobilized
+            // vehicles keep the fire loop running for when the gun comes back / gets repaired.
+            if (isNull _veh || { !(alive _veh) } || { getDammage _veh >= 1 } || { isNull _grp } || { { alive _x } count units _grp == 0 }) then {
                 MISSION_CORE_PLAYER_ARTY deleteAt _key;
                 continue;
             };
@@ -956,20 +1100,120 @@ MISSION_CORE_fnc_playerArtyLoop = {
                     [side _veh, _veh, 10000] call MISSION_CORE_fnc_artilleryLaserTarget;
                 } else { [] };
                 private _preferLaser = count _laserTarget > 0;
-                private _target = if (_preferLaser) then { _laserTarget } else { [_veh, _enemy] call MISSION_CORE_fnc_artilleryTarget; };
+                // Assault-arty: fire at the assigned marker (the fire mission), not whatever threat
+                // happens to be nearest. LASER still wins - an exact dot lands where aimed. If the
+                // assigned marker flips WEST (another squad captured it first) the mission is void -
+                // revert to generic threat fire so we never shell a friendly-held position.
+                private _standoffGun = [_aimAt] call MISSION_CORE_fnc_isValidArtyAim;
+                if (_standoffGun && { side _veh == WEST } && { !(isNil "MISSION_CORE_LOCATIONS") }) then {
+                    private _aimLoc = MISSION_CORE_LOCATIONS findIf { ((_x select 1) select 0) distance2D _aimAt < 150 };
+                    if (_aimLoc >= 0 && { ((MISSION_CORE_LOCATIONS select _aimLoc) select 5) == WEST }) then { _standoffGun = false; };
+                };
+                // Assault-arty prefers real contacts: enemies the assault squads on the same marker
+                // have spotted (see fn_assaultArtySpotTarget). No contact -> fall back to the assigned
+                // marker so the piece still suppresses the objective. Plain garrison pieces / mortars
+                // keep generic nearest-spotted-target behavior.
+                private _target = [];
+                private _targetFromContact = false;
+                if (_preferLaser) then { _target = _laserTarget; } else {
+                    if (_standoffGun) then {
+                        _target = [_veh, _aimAt] call MISSION_CORE_fnc_assaultArtySpotTarget;
+                        if (count _target > 0) then { _targetFromContact = true; }
+                        else { _target = _aimAt; };
+                    } else {
+                        _target = [_veh, _enemy] call MISSION_CORE_fnc_artilleryTarget;
+                    };
+                };
                 if (!_preferLaser && { count _target == 0 }) then {
-                    // Fall back to shelling an enemy-held marker.
+                    // No assigned marker (garrison piece) or no spot: generic nearest-enemy-marker scan.
                     _target = [side _veh, getPosATL _veh, if (_veh isKindOf "StaticMortar") then { 1700 } else { 10000 }] call MISSION_CORE_fnc_artilleryMarkerTarget;
                 };
                 if (count _target > 0) then {
                     private _mag = [_veh, _preferLaser] call MISSION_CORE_fnc_pickArtilleryMag;
                     if (count _mag > 0) then {
-                        private _cmdr = leader _grp;
+                        // Command the shot from a crewmember actually IN the piece. doArtilleryFire
+                        // silently does nothing when the caller is a foot soldier (e.g. a CfgGroups
+                        // recruit template whose group leader walks outside the tank), so prefer the
+                        // vehicle's commander, then the gunner - never blindly the group leader.
+                        private _cmdr = commander _veh;
+                        if (isNull _cmdr || { !(alive _cmdr) }) then { _cmdr = gunner _veh; };
+                        if (isNull _cmdr || { !(alive _cmdr) }) then { _cmdr = leader _grp; };
                         if (!(isNull _cmdr) && { alive _cmdr }) then {
-                            _cmdr doArtilleryFire [_target, _mag select 0, if (_preferLaser) then { 1 } else { 3 }];
-                            _veh setVariable ["MISSION_CORE_ARTY_LAST_FIRE", time];
-                            diag_log format ["PLAYER ARTY: %1 fired at %2 (%3)", _veh, _target, if (_preferLaser) then { "laser-adjusted" } else { "spot/marker" }];
+                            private _salvo = if (_preferLaser) then { 1 } else { 3 };
+                            private _magClass = _mag select 0;
+                            // Standoff barrage is delivered to a scattered point so each volley lands
+                            // near the marker rather than on the head of a single soldier/vehicle.
+                            private _firePos = if (_preferLaser) then { _target } else { [_veh, _target, false] call MISSION_CORE_fnc_scatterArtilleryPoint; };
+                            // A fire mission outside the round's reach makes the crew radio "Invalid
+                            // coordinates. Cease fire." and nothing flies. Pull the aim back along the
+                            // bearing to the target (90%..30% of distance) until the point is verifiably
+                            // in range, so the piece still delivers a reachable suppression near the
+                            // intended marker instead of a dead radio line.
+                            private _tp = _firePos;
+                            if (_preferLaser) then {
+                                private _dotRange = _tp inRangeOfArtillery [[_veh], _magClass];
+                                if (!_dotRange) then {
+                                    diag_log format ["PLAYER ARTY: %1 (%2) laser dot %3 out of range for %4", _veh, typeOf _veh, _tp, _magClass];
+                                };
+                            } else {
+                                private _rangeOK = _tp inRangeOfArtillery [[_veh], _magClass];
+                                if (!_rangeOK) then {
+                                    private _bearing = _veh getDir _firePos;
+                                    private _dist = _veh distance2D _firePos;
+                                    {
+                                        private _cand = _veh getPos [_dist * _x, _bearing];
+                                        if (_cand inRangeOfArtillery [[_veh], _magClass]) exitWith { _tp = _cand; _rangeOK = true; };
+                                    } forEach [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3];
+                                };
+                                if (!_rangeOK) then {
+                                    diag_log format ["PLAYER ARTY: %1 (%2) mission %3 invalid - no in-range aim point for %4", _veh, typeOf _veh, _target, _magClass];
+                                };
+                            };
+                            if ((_tp inRangeOfArtillery [[_veh], _magClass])) then {
+                                _cmdr doArtilleryFire [_tp, _magClass, _salvo];
+                                _veh setVariable ["MISSION_CORE_ARTY_LAST_FIRE", time];
+                                diag_log format ["PLAYER ARTY: %1 (%2) fired %3x %4 at %5 -> %6m via %7 (%8)", _veh, typeOf _veh, _salvo, _magClass, _tp, round (_veh distance2D _tp), _cmdr, if (_preferLaser) then { "laser-adjusted" } else { if (_standoffGun) then { if (_targetFromContact) then { "assault-contact" } else { "assault-barrage" } } else { "spot/marker" } }];
+                            } else {
+                                diag_log format ["PLAYER ARTY: %1 (%2) skipped fire mission %3 - out of range / invalid coords", _veh, typeOf _veh, _target];
+                            };
                         };
+                    };
+                };
+            };
+            // Assault-arty reload: after each barrage the piece relocates to a BLUFOR marker to keep
+            // it safe (run-away behavior), exactly like the REDFOR artillery driver. Only relocates
+            // once it has actually fired at least once - a fresh piece never rushes away unseen.
+            if ([_aimAt] call MISSION_CORE_fnc_isValidArtyAim && { _lastFire > 0 }) then {
+                // A group of SPGs shares waypoints - relocate the whole platoon once per tick so the
+                // commander's standoff move applies to every vehicle together.
+                if (_relocatedGroups findIf { _x == _grp } != -1) then { continue; };
+                private _lastMove = _veh getVariable ["MISSION_CORE_ARTY_LAST_MOVE", 0];
+                if (time - _lastMove > 45 && { _lastFire + 30 < time }) then {
+                    // Run to a DIFFERENT BLUFOR marker (>= 800m away) so the shot-down position is
+                    // abandoned, mirroring the REDFOR artillery driver's retreat. The new standoff
+                    // must also keep this piece's minimum ballistic range from its aim target, or
+                    // the next salvo would be "Invalid coordinates / cease fire" again. When every
+                    // friendly marker is too close to the target, stay where it is.
+                    private _minR = _veh call MISSION_CORE_fnc_serverArtyMinRange;
+                    private _standoff = [getPosATL _veh, 800, _aimAt, _minR] call MISSION_CORE_fnc_serverArtyStandoff;
+                    if (_standoff distance [0, 0, 0] > 1) then {
+                        _relocatedGroups pushBack _grp;
+                        _veh setVariable ["MISSION_CORE_ARTY_LAST_MOVE", time];
+                        _grp setBehaviour "SAFE";
+                        _grp setSpeedMode "LIMITED";
+                        [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
+                        private _wp = _grp addWaypoint [_standoff, 50];
+                        _wp setWaypointType "MOVE";
+                        _wp setWaypointBehaviour "SAFE";
+                        _wp setWaypointCombatMode "YELLOW";
+                        _wp setWaypointSpeed "LIMITED";
+                        private _hwp = _grp addWaypoint [_standoff, 0];
+                        _hwp setWaypointType "HOLD";
+                        _hwp setWaypointBehaviour "SAFE";
+                        _hwp setWaypointCombatMode "YELLOW";
+                        _hwp setWaypointSpeed "LIMITED";
+                        _grp setCurrentWaypoint _wp;
+                        diag_log format ["PLAYER ARTY: assault piece %1 relocated to BLUFOR marker %2", _veh, _standoff];
                     };
                 };
             };

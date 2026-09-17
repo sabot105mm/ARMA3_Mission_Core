@@ -19,8 +19,32 @@ MISSION_CORE_fnc_generateLocationMarkers = {
         if (_radiusA == 0) then { _radiusA = 100; };
         if (_radiusB == 0) then { _radiusB = 100; };
         if (count _pos >= 2 && _type != "") then {
-            // Skip water locations - never create dynamic markers out at sea (PERMANENT RULE)
-            if (surfaceIsWater [_pos select 0, _pos select 1]) then { _skipped = _skipped + 1; continue; };
+            // Skip water locations - never create dynamic markers out at sea. Sample the ellipse
+            // area (center + 8 rim points + 4 interior axis midpoints) so a marker whose center
+            // is on land but whose footprint is mostly over water is also rejected. Editor-placed
+            // markers are NOT filtered by this (they are scanned separately in scanMarkers).
+            private _waterCount = 0;
+            private _sampleTotal = 1;
+            if (surfaceIsWater _pos) then { _waterCount = 1; };
+            for "_s" from 0 to 7 do {
+                private _t = _s * 45;
+                private _rx = _radiusA * cos _t;
+                private _ry = _radiusB * sin _t;
+                private _sp = [(_pos select 0) + _rx * cos _angle - _ry * sin _angle,
+                               (_pos select 1) + _rx * sin _angle + _ry * cos _angle];
+                _sampleTotal = _sampleTotal + 1;
+                if (surfaceIsWater _sp) then { _waterCount = _waterCount + 1; };
+            };
+            for "_s" from 0 to 3 do {
+                private _t = _s * 90;
+                private _rx = _radiusA * 0.5 * cos _t;
+                private _ry = _radiusB * 0.5 * sin _t;
+                private _sp = [(_pos select 0) + _rx * cos _angle - _ry * sin _angle,
+                               (_pos select 1) + _rx * sin _angle + _ry * cos _angle];
+                _sampleTotal = _sampleTotal + 1;
+                if (surfaceIsWater _sp) then { _waterCount = _waterCount + 1; };
+            };
+            if ((_waterCount / _sampleTotal) > 0.5) then { _skipped = _skipped + 1; continue; };
             // Only land locations get markers, and those markers follow the land orientation
             // (the CfgWorlds angle rotates the ellipse to match the coastline/terrain) (PERMANENT RULE)
             // Skip if this location's footprint overlaps any existing editor marker (BLUFOR included)

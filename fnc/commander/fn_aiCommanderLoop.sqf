@@ -19,20 +19,16 @@ MISSION_CORE_fnc_aiCommanderLoop = {
             // Importance is at index 7 in the location array - read it directly instead of doing
             // a per-tick linear findIf on CACHED_POSITIONS (both arrays carry importance at index 7).
             private _importance = _loc select 7;
-            // BLU DEFEND order: blue units engaged very near their spawn point stop attacking and defend
+            // BLU DEFEND order: BLUFOR defenders switch to defendSpawn only when the DEFEND GATE
+            // fires - a hostile ASSAULT-CLASSIFIED group leader crossed into a 2x-scaled copy of
+            // this friendly marker's real shape. The old player-knowsAbout / any-enemy-within-radius
+            // trigger sent defenders out after passing patrols and stray lone friendlies - the gate
+            // (shared with the objective director) reacts to a real directed attack only.
             if (_locOwner == WEST) then {
                 private _detectRadiusW = 600 + (_importance * 200);
                 private _bluDefenders = [_locPos, _detectRadiusW, _snapGroups] call MISSION_CORE_fnc_getBluDefendersAt;
-                private _bluEnemies = _snapUnits select { side _x == EAST && { _x distance _locPos < _detectRadiusW } };
-                private _bluDetected = false;
-                private _bluPlayer = objNull;
-                private _maxKnows = 0;
-                {
-                    private _knows = if (count _bluEnemies > 0) then { _x knowsAbout (_bluEnemies select 0) } else { 0 };
-                    if (_knows > _maxKnows) then { _maxKnows = _knows; _bluPlayer = _x; };
-                    if (_knows > 1.2) then { _bluDetected = true; };
-                } forEach _players;
-                if (_bluDetected && !isNull _bluPlayer) then {
+                private _bluUnderAttack = [_markerName, WEST, _snapGroups] call MISSION_CORE_fnc_defendGate;
+                if (_bluUnderAttack) then {
                     // Defend the MARKER, not the player's position - BLUFOR defenders hold their
                     // friendly marker center so they never run out into the open chasing a player.
                     {
@@ -96,6 +92,24 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                 if (_knows > (["quadrantEngageKnows", 1.2] call MISSION_CORE_fnc_tune)) then { _detected = true; };
             } forEach _players;
 
+            // ASSAULT LEADER TARGETING: released/active BLUFOR attack-group leaders within the
+            // engage radius also trigger the engagement gate and become the nearest target for
+            // counter-attacks / quadrant response.
+            if ((["assaultLeaderQuads", 1] call MISSION_CORE_fnc_tune) > 0 && { !isNil "MISSION_CORE_ATTACK_GROUPS" }) then {
+                {
+                    private _data = _y;
+                    if ((_data select 5) != "active") then { continue; };
+                    private _ag = _data select 0;
+                    if (isNull _ag) then { continue; };
+                    private _ldr = leader _ag;
+                    if (isNull _ldr || { !alive _ldr } || { _ldr distance _locPos > _engageRadius }) then { continue; };
+                    private _k = 0;
+                    { private _kk = _ldr knowsAbout _x; if (_kk > _k) then { _k = _kk; }; } forEach _enemies;
+                    if (_k > (["quadrantEngageKnows", 1.2] call MISSION_CORE_fnc_tune)) then { _detected = true; };
+                    if (_k > _maxKnows) then { _maxKnows = _k; _nearestPlayer = _ldr; };
+                } forEach MISSION_CORE_ATTACK_GROUPS;
+            };
+
             if (_detected && !isNull _nearestPlayer) then {
                 // Track this marker as an active battle so contested targeting (replenish, commit)
                 // keeps pointing at it even before the player "spots" the garrison. Newly spawned
@@ -120,6 +134,19 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                     { private _kk = _p knowsAbout _x; if (_kk > _k) then { _k = _kk; }; } forEach _enemies;
                     if (_k > (["quadrantEngageKnows", 1.2] call MISSION_CORE_fnc_tune)) then { _engagedPlayers pushBack _p; };
                 } forEach _players;
+                // Include assault leaders in the engaged quadrant list so foot force is spread
+                // across all active contacts (player + leaders).
+                if ((["assaultLeaderQuads", 1] call MISSION_CORE_fnc_tune) > 0 && { !isNil "MISSION_CORE_ATTACK_GROUPS" }) then {
+                    {
+                        private _data = _y;
+                        if ((_data select 5) != "active") then { continue; };
+                        private _ag = _data select 0;
+                        if (isNull _ag) then { continue; };
+                        private _ldr = leader _ag;
+                        if (!alive _ldr || { _ldr distance _locPos > _engageRadius }) then { continue; };
+                        if (_engagedPlayers findIf { _x == _ldr } == -1) then { _engagedPlayers pushBack _ldr; };
+                    } forEach MISSION_CORE_ATTACK_GROUPS;
+                };
 
                 [_loc, _engagedPlayers, _defenders, _markerName, _locPos, _engageRadius] call MISSION_CORE_fnc_quadrantEngage;
 
@@ -191,7 +218,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                     };
                     {
                         private _cgImp = _x getVariable ["MISSION_CORE_IMPORTANCE", 1];
-                        if (_canCounter && { random 1 < (_cgImp * 0.15) }) then {
+                        if (_canCounter && { random 1 < (_cgImp * 0.15) } && { [_x, _markerName, _locPos] call MISSION_CORE_fnc_canSnatchGroup }) then {
                             diag_log format ["AI COMMANDER: counter-attack %1", groupId _x];
                             [_x, _targetPos] call MISSION_CORE_fnc_sendCounterAttack;
                         };
@@ -206,7 +233,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                         { count units _x > 0 && { vehicle (leader _x) != leader _x } }
                     };
                     {
-                        if (_canCounter && { random 1 < 0.6 }) then {
+                        if (_canCounter && { random 1 < 0.6 } && { [_x, _markerName, _locPos] call MISSION_CORE_fnc_canSnatchGroup }) then {
                             diag_log format ["AI COMMANDER: vehicle assault %1", groupId _x];
                             [_x, _targetPos] call MISSION_CORE_fnc_sendCounterAttack;
                         };
@@ -223,7 +250,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                         { (leader _x) distance _locPos < _farRadius }
                     };
                     {
-                        if (random 1 < 0.4) then {
+                        if (random 1 < 0.4 && { [_x, _markerName, _locPos] call MISSION_CORE_fnc_canSnatchGroup }) then {
                             diag_log format ["AI COMMANDER: far reinforce %1", groupId _x];
                             [_x, _locPos, "FULL"] call MISSION_CORE_fnc_sendReinforce;
                         };
@@ -254,6 +281,17 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                     {
                         if (_x distance _locPos < _engageRadius) then { _gracePlayers pushBack _x; };
                     } forEach _players;
+                    // Grace quadrant also responds to assault leaders within radius.
+                    if ((["assaultLeaderQuads", 1] call MISSION_CORE_fnc_tune) > 0 && { !isNil "MISSION_CORE_ATTACK_GROUPS" }) then {
+                        {
+                            private _data = _y;
+                            if ((_data select 5) != "active") then { continue; };
+                            private _ag = _data select 0;
+                            if (isNull _ag) then { continue; };
+                            private _ldr = leader _ag;
+                            if (alive _ldr && { _ldr distance _locPos < _engageRadius } && { _gracePlayers findIf { _x == _ldr } == -1 }) then { _gracePlayers pushBack _ldr; };
+                        } forEach MISSION_CORE_ATTACK_GROUPS;
+                    };
                     if (count _gracePlayers > 0) then {
                         [_loc, _gracePlayers, _defenders, _markerName, _locPos, _engageRadius] call MISSION_CORE_fnc_quadrantEngage;
                     };

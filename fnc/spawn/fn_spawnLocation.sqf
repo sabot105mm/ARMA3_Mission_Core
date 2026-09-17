@@ -353,29 +353,17 @@ MISSION_CORE_fnc_spawnLocation = {
         } forEach _presetGroups;
 
         // Freshly spawned garrison units are committed to the contested area immediately: a
-        // marker that spawns into an active battle (player attacking a nearby marker) feeds its
-        // new groups straight into the fight instead of leaving them patrolling their own marker.
-        // PERMANENT RULE: a marker that is itself a contested zone NEVER marches its own garrison
-        // to a DIFFERENT zone - it defends its own fight (its fresh groups target its own center).
-        // Powerplants / solar are static tiny garrisons: they never commit ANY fresh
-        // garrison off-marker (light-infrastructure markers stay home).
+        // marker that spawns into an active battle at its OWN marker feeds its new groups straight
+        // into the fight instead of leaving them patrolling.
+        // PERMANENT RULE: a marker that is itself a contested zone commits to ITS OWN fight only -
+        // its fresh garrisons defend their own marker; they NEVER march to a DIFFERENT contested
+        // zone (cross-marker defense is the job of purpose-spawned counter-attack squads, not of
+        // one marker's garrison). Powerplants / solar are static tiny garrisons: they never commit
+        // ANY fresh garrison off-marker (light-infrastructure markers stay home).
         if (count _freshGroups > 0 && _owner in [WEST, EAST] && { !([_loc] call MISSION_CORE_fnc_isLightInfrastructure) }) then {
             private _contestedList = [_owner] call MISSION_CORE_fnc_getContestedMarkers;
-            if (count _contestedList > 0) then {
-                private _playersA = allPlayers select { alive _x };
-                private _selfZone = _contestedList select { (_x select 0) == _locName } param [0, []];
-                // A zone's own garrison holds the line at home. Otherwise commit toward the
-                // contested zone that's a player is fighting (the relative "own fight" for this marker).
-                private _cTarget = if (count _selfZone > 0) then { _selfZone } else { _contestedList select 0 };
-                private _bestPD = 1e10;
-                if (count _selfZone == 0 && { count _playersA > 0 }) then {
-                    {
-                        private _mPos = _x select 1;
-                        private _pd = 1e10;
-                        { private _d = _x distance _mPos; if (_d < _pd) then { _pd = _d; }; } forEach _playersA;
-                        if (_pd < _bestPD) then { _bestPD = _pd; _cTarget = _x; };
-                    } forEach _contestedList;
-                };
+            private _selfZone = _contestedList select { (_x select 0) == _locName } param [0, []];
+            if (count _selfZone > 0) then {
                 private _committed = 0;
                 {
                     if (!isNull _x &&
@@ -383,11 +371,13 @@ MISSION_CORE_fnc_spawnLocation = {
                         { !(_x getVariable ["MISSION_CORE_AA_DEFENSE", false]) } &&
                         { !(_x getVariable ["MISSION_CORE_ARTILLERY", false]) } &&
                         { !(_x getVariable ["MISSION_CORE_REPLENISH_GROUP", false]) }) then {
-                        [_x, _cTarget select 1, _cTarget select 2] call MISSION_CORE_fnc_sendCounterAttack;
+                        [_x, _selfZone select 1, _selfZone select 2] call MISSION_CORE_fnc_sendCounterAttack;
                         _committed = _committed + 1;
                     };
                 } forEach _freshGroups;
-                diag_log format ["DYNAMIC SPAWN: %1 committed %2/%3 fresh groups to contested %4", _locName, _committed, count _freshGroups, _cTarget select 0];
+                diag_log format ["DYNAMIC SPAWN: %1 committed %2/%3 fresh groups to own contested %4", _locName, _committed, count _freshGroups, _selfZone select 0];
+            } else {
+                diag_log format ["DYNAMIC SPAWN: %1 fresh garrison stays home (own zone not contested)", _locName];
             };
         };
 

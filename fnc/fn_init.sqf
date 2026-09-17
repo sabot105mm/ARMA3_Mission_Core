@@ -228,6 +228,10 @@ if (isServer) then {
 
     MISSION_CORE_DEFENSE_SCORE = createHashMap;
     MISSION_CORE_DEFENSE_ASSIGN = createHashMap;
+    // PERMANENT RULE: each marker's static defensive ring (bunkers / MG towers) is built ONCE per
+    // session. Once created it is never re-spawned - a released assignment handed out again or a
+    // player returning to the same marker must not materialize a fresh ring.
+    MISSION_CORE_DEFENSE_BUILT = createHashMap;
     MISSION_CORE_DEFENSE_DECAY_TIME = time + 1200;
     MISSION_CORE_AI_CONFIDENCE = createHashMap;
     // PERMANENT RULE: markers that have fired their one all-out assault are exhausted and can

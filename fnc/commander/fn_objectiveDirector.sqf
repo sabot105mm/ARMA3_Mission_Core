@@ -7,6 +7,8 @@
 //   - a map marker (DynOpsObj_<uid>) on the target
 //   - an official notification box when it changes
 //   - a systemChat line when the player draws near an enemy marker ("attack note")
+//   - a note sound from the "sounds" folder ("sounds\attack.ogg" / "sounds\defend.ogg")
+//     alongside every note (see MISSION_CORE_fnc_playNoteSound)
 //
 // REDFOR never gets objectives here (it has its own commander behaviors).
 
@@ -148,25 +150,19 @@ MISSION_CORE_fnc_objectiveDirector = {
                 };
             };
 
-            // The closest FRIENDLY marker that needs DEFENDING: its garrison is under attack by
-            // enemy units OR it is an occupied zone being held by this player's side.
+            // The closest FRIENDLY marker that needs DEFENDING. The DEFEND GATE replaces the old
+            // rules (occupied-hold zones and any enemy unit within objHouseThreatRadius): a friendly
+            // marker is defended ONLY when a hostile ASSAULT-CLASSIFIED group leader crosses into a
+            // 2x-scaled copy of the marker's real shape. Patrols, holds and idle squads never trigger
+            // it - only a real, directed attack does.
             private _defendTarget = [];
             private _defendD = 1e10;
+            private _defendPool = allGroups;
             {
                 if ((_x select 4) == _pSide) then {
                     private _mName = _x select 0;
                     private _mPos = _x select 1;
-                    private _underAttack = false;
-                    // Occupied = a hostile marker captured by this side, still in the hold phase.
-                    private _occ = if (isNil "MISSION_CORE_OCCUPATION") then { [] } else { MISSION_CORE_OCCUPATION getOrDefault [_mName, []] };
-                    if (count _occ >= 3 && { (_occ select 0) == _pSide }) then { _underAttack = true; };
-                    // A friendly marker with a live ENEMY inside/near is under attack.
-                    if (!_underAttack) then {
-                    private _enemyProbe = allUnits findIf {
-                        side _x getFriend _pSide < 0.6 && { alive _x } && { _x distance2D _mPos < (["objHouseThreatRadius", 600] call MISSION_CORE_fnc_tune) }
-                    };
-                        if (_enemyProbe != -1) then { _underAttack = true; };
-                    };
+                    private _underAttack = [_mName, _pSide, _defendPool] call MISSION_CORE_fnc_defendGate;
                     if (_underAttack) then {
                         private _d = _mPos distance2D _pos;
                         if (_d < _defendD) then { _defendD = _d; _defendTarget = _x; };
@@ -209,9 +205,10 @@ MISSION_CORE_fnc_objectiveDirector = {
                     _mk setMarkerSize [1, 1];
                     _mk setMarkerAlpha 0.9;
                     _mk setMarkerText (format ["%1 %2", _state select 0, _state select 2]);
-                    // Objective notification - official box.
+                    // Objective notification - official box + note sound.
                     private _tmpl = if ((_state select 0) == "DEFEND") then { "DynOps_ObjectiveDefend" } else { "DynOps_ObjectiveAttack" };
                     [_tmpl, [_state select 0, format ["%1 %2", _state select 0, _state select 2]]] remoteExec ["BIS_fnc_showNotification", 0];
+                    [(_state select 0)] remoteExec ["MISSION_CORE_fnc_playNoteSound", 0];
                 };
             };
 
@@ -224,6 +221,7 @@ MISSION_CORE_fnc_objectiveDirector = {
                     private _label = [_attackTarget select 0] call MISSION_CORE_fnc_getLocationLabel;
                     ["DynOps_ObjectiveAttack", ["ATTACK!", format ["Hostile position at %1 is ahead.", _label]]] remoteExec ["BIS_fnc_showNotification", 0];
                     [format ["ATTACK: %1 is %2m ahead - move in!", _label, round _attackD]] remoteExec ["systemChat", 0];
+                    ["ATTACK"] remoteExec ["MISSION_CORE_fnc_playNoteSound", 0];
                 };
             };
 

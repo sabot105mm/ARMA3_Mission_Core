@@ -65,6 +65,18 @@ MISSION_CORE_fnc_playerHunt = {
         if (isNil "MISSION_CORE_SPAWNED_LOCATIONS") then { continue; };
         if (isNil "MISSION_CORE_CACHED_POSITIONS") then { continue; };
         private _players = allPlayers select { alive _x && { side _x == _enemySide } };
+        // ASSAULT LEADER HUNTS: released/active BLUFOR attack-group leaders are also hunted
+        // alongside the player when the toggle is enabled.
+        if ((["assaultLeaderHunts", 1] call MISSION_CORE_fnc_tune) > 0 && { !isNil "MISSION_CORE_ATTACK_GROUPS" }) then {
+            {
+                private _data = _y;
+                if ((_data select 5) != "active") then { continue; };
+                private _ag = _data select 0;
+                if (isNull _ag) then { continue; };
+                private _ldr = leader _ag;
+                if (alive _ldr && { side _ldr == _enemySide }) then { _players pushBack _ldr; };
+            } forEach MISSION_CORE_ATTACK_GROUPS;
+        };
         if (count _players == 0) then { continue; };
         // Snapshot this side's units once per tick and reuse for all players. Avoids an allUnits
         // refetch per player (the list only changes between frames, not mid-loop-body).
@@ -365,22 +377,21 @@ MISSION_CORE_fnc_huntSweep = {
         // Bring the truck to a FULL STOP before ejecting anyone. The arrival/re-spot code can fire
         // while the truck is still rolling toward the contact, and ejecting at speed kills the men.
         // New waypoints assigned right after the drop cancel the doStop so the truck can drive on.
-        if (alive _v) then {
-            _v setSpeedMode "LIMITED";
-            private _drvStop = driver _v;
-            if (!isNull _drvStop) then { doStop _drvStop; };
-            private _stopBy = time + 6;
-            waitUntil { sleep 0.2; isNull _v || { !(alive _v) } || { speed _v < 2 } || { time > _stopBy } };
-        };
+        // Shared stop routine (see fn_stopForDismount.sqf).
+        [_v] call MISSION_CORE_fnc_stopForDismount;
         private _keepCrew = [_v] call MISSION_CORE_fnc_hasMountedGun;
         private _gDrv = driver _v;
         _v lock false;
+        // Per-unit leaveVehicle is what actually stops the AI re-boarding loop - orderGetIn false
+        // and lockCargo alone just make the men yell "get back in" while being refused. It is
+        // applied per rider (not _g leaveVehicle) so a kept driver/gunner is never told to leave.
         {
             if (_x isEqualTo _gDrv) then { continue; };
             if (_keepCrew && { _x isEqualTo (gunner _v) }) then { continue; };
             if (_keepCrew && { _x isEqualTo (commander _v) }) then { continue; };
             if (vehicle _x != _v) then { continue; };
             unassignVehicle _x;
+            _x leaveVehicle _v;
             [_x] orderGetIn false;
             _x action ["getOut", _v];
         } forEach (crew _v);

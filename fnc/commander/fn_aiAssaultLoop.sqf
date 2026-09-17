@@ -188,9 +188,18 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                 MISSION_CORE_TANK_REQUESTED set [_locName, true];
                 diag_log format ["AI ASSAULT: %1 requested %2 factory tanks for the push on %3", _locName, _assaultTanks, _targetName];
 
+                // STAGED ASSAULT: committed groups hold at the source edge until the target is
+                // contested, the player releases them from the recruit menu, or the auto-wait
+                // expires (leaders then activate the marker themselves). Reset the staging state
+                // for this assault before the join sweep stages any group.
+                call MISSION_CORE_fnc_resetStagedAssault;
+
                 // Every spawned foot patrol drops patrol and joins the assault, regardless of distance.
                 // Groups way too far from the target (beyond 6000m) are despawned instead.
                 private _despawnTooFar = [];
+                // Live contested zones for the attacking side - used to judge whether an existing
+                // one-way order is still "live" (actively defending a fought-over marker) or stale.
+                private _contestedList = [EAST] call MISSION_CORE_fnc_getContestedMarkers;
                 {
                     if (!(_x getVariable ["MISSION_CORE_REDFOR", false])) then {
                         if ((leader _x) distance _locPos < 3000) then { diag_log format ["AI ASSAULT: %1 skip (not redfor)", groupId _x]; };
@@ -211,7 +220,35 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                             private _ry = (_dx * sin _tD) + (_dy * cos _tD);
                             if ((_rx * _rx) / (_tA * _tA) + (_ry * _ry) / (_tB * _tB) <= 1) then { _skip = "home is target area"; };
                         };
-                        if (_skip == "" && { (_x getVariable ["MISSION_CORE_ORDER", ""]) != "" }) then { _skip = format ["order=%1", _x getVariable ["MISSION_CORE_ORDER", ""]]; }
+                        if (_skip == "" && { (_x getVariable ["MISSION_CORE_ORDER", ""]) != "" }) then {
+                            // PERMANENT RULE (STALE-ORDER RELEASE): a one-way order
+                            // ("attack"/"counterattack"/"reinforce") is only a bar to joining a NEW
+                            // assault while its target is still LIVE: either this assault itself
+                            // (already committed to it) or one of the side's currently contested
+                            // zones. A group still carrying such an order from a PREVIOUS engagement
+                            // whose target marker flipped / is no longer contested is parked on a dead
+                            // task - clear the stale order and let it rejoin the assault instead of
+                            // sitting idle forever.
+                            private _ord = _x getVariable ["MISSION_CORE_ORDER", ""];
+                            private _stale = false;
+                            if (_ord in ["attack", "counterattack", "reinforce", "staging"]) then {
+                                private _at = _x getVariable ["MISSION_CORE_ATTACK_TARGET", [0, 0, 0]];
+                                if (count _at == 0) then {
+                                    _stale = true;
+                                } else {
+                                    private _onThisAssault = (_at distance2D _targetPos) <= 300;
+                                    private _onLiveZone = (_contestedList findIf { (_x select 1) distance2D _at <= 250 }) != -1;
+                                    _stale = !_onThisAssault && { !_onLiveZone };
+                                };
+                            };
+                            if (_stale) then {
+                                diag_log format ["AI ASSAULT: %1 releasing stale %2 order (target no longer contested) to rejoin", groupId _x, _ord];
+                                _x setVariable ["MISSION_CORE_ORDER", ""];
+                                _x setVariable ["MISSION_CORE_ASSAULT_GROUP", false];
+                            } else {
+                                _skip = format ["order=%1", _ord];
+                            };
+                        }
                         else {
                             if ((_x getVariable ["MISSION_CORE_ARMOR_SLOT", ""]) != "") then { _skip = "armor slot"; }
                             else {
@@ -231,11 +268,15 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                             };
                         };
                         if (_skip == "") then {
-                            diag_log format ["AI ASSAULT: marker patrol %1 joins assault", groupId _x];
+                            diag_log format ["AI ASSAULT: marker patrol %1 stages to assault %2", groupId _x, _targetName];
                             // Committed to the assault - the "target no longer contested" neighbor
                             // cleanup must never retreat/despawn these groups mid-assault.
                             _x setVariable ["MISSION_CORE_ASSAULT_GROUP", true];
-                            [_x, _targetPos, _targetSize] call MISSION_CORE_fnc_sendCounterAttack;
+                            // STAGED ASSAULT: the group moves to the EDGE of its own (source) marker
+                            // on the compass bearing toward the target and HOLDS there. The whole
+                            // force advances only once the target is contested / released / the
+                            // auto-activate wait expires - never before.
+                            [_x, _locPos, (_loc select 1) select 1, _targetPos, _targetSize, _targetName] call MISSION_CORE_fnc_stageAssaultGroup;
                         } else {
                             diag_log format ["AI ASSAULT: %1 skip (%2)", groupId _x, _skip];
                         };
@@ -256,9 +297,9 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                 private _tgtLabel = [_targetName] call MISSION_CORE_fnc_getLocationLabel;
                 diag_log format ["AI ASSAULT CALLED: %1 (lvl%2) -> %3 (%4m)", _srcLabel, _importance, _tgtLabel, round(_locPos distance _targetPos)];
                 ["DynOps_Assault",
-                    ["ENEMY ASSAULT", format ["%1 is launching an attack on %2!\nETA 10 minutes", _srcLabel, _tgtLabel]]
+                    ["ENEMY ASSAULT", format ["%1 is staging an attack on %2!\nForces hold at the edge awaiting tank support before the push.", _srcLabel, _tgtLabel]]
                 ] remoteExec ["BIS_fnc_showNotification", 0];
-                ["Enemy assault detected at %1! ETA 10 minutes!", _tgtLabel] remoteExec ["systemChat", 0];
+                ["Enemy assault staging at %1! They wait at the edge for armor before pushing.", _tgtLabel] remoteExec ["systemChat", 0];
 
                 if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
                 // PERMANENT RULE: never spawn BLUFOR defenses inside a marker the player JUST
@@ -274,8 +315,8 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                     diag_log format ["AI ASSAULT: %1 target %2 still occupied - no BLUFOR defenses spawned", _locName, _targetName];
                 };
 
-                [_targetPos, _locPos, _locName, _targetName, _importance, _defGrp, _targetSize, _assaultTanks] spawn {
-                    params ["_targetPos", "_sourcePos", "_sourceName", "_targetName", "_importance", "_defGrp", "_targetSize", "_assaultTanks"];
+                [_targetPos, _locPos, _locName, _targetName, _importance, _defGrp, _targetSize, _assaultTanks, (_loc select 1) select 1] spawn {
+                    params ["_targetPos", "_sourcePos", "_sourceName", "_targetName", "_importance", "_defGrp", "_targetSize", "_assaultTanks", "_srcSize"];
                     // Assault waves use proper CfgGroups infantry squad templates (real combat
                     // riflemen); all-men combat groups only as a last resort.
                     private _infPool = [(MISSION_CORE_REDFOR_DATA select 17)] call MISSION_CORE_fnc_getInfTemplates;
@@ -283,14 +324,24 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                     // delivered to the marker before launching. The wait scales with the request so
                     // the tank economy (tankBuildInterval seconds per tank) actually has time to
                     // produce them all; a 2-tank request waits ~2 build-cycles, 3 ~3, 4 ~4. If the
-                    // tanks still never materialize the all-out waves roll in regardless.
+                    // tanks still never materialize the all-out waves roll in regardless. The
+                    // deadline is anchored to ASSAULT START and the tanks build DURING the staged
+                    // edge wait, so columns materialize around the moment the force is released.
                     private _buildPeriod = ["tankBuildInterval", 600] call MISSION_CORE_fnc_tune;
                     private _tankDeadline = time + (_assaultTanks * _buildPeriod) + 60;
+                    // REDFOR GATE: the force holds at its source edge ONLY until the requested
+                    // factory tanks are built and delivered (delivery ledger hits the request) or
+                    // the deadline passes and the waves roll in regardless. No contested check and
+                    // no player release - the AI commander presses the attack itself the moment its
+                    // armor is on the ground. Tanks build DURING this edge wait, so their columns
+                    // materialize around the exact moment the force is released.
                     private _tanksArrived = false;
                     while { time < _tankDeadline } do {
                         if ((MISSION_CORE_TANK_DELIVERED getOrDefault [_sourceName, 0]) >= _assaultTanks) exitWith { _tanksArrived = true; };
                         sleep 10;
                     };
+                    [_targetPos, _targetSize, _targetName] call MISSION_CORE_fnc_releaseStagedAssault;
+                    diag_log format ["AI ASSAULT STAGING: %1 released toward %2 (tanksArrived=%3)", _sourceName, _targetName, _tanksArrived];
                     if (_tanksArrived) then {
                         private _held = MISSION_CORE_TANK_DELIVERED_GROUPS getOrDefault [_sourceName, []];
                         private _delivered = MISSION_CORE_TANK_DELIVERED getOrDefault [_sourceName, 0];
@@ -347,6 +398,11 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                                 // contested" neighbor cleanup (same rule as joined foot patrols).
                                 _x setVariable ["MISSION_CORE_ASSAULT_GROUP", true];
                                 [_x, _targetPos, _targetSize, "YELLOW", "counterattack"] call MISSION_CORE_fnc_sendCounterAttack;
+                                // PERMANENT RULE (ARMOR FORMATION): every column committed to the
+                                // assault drives in formation behind its lead tank (doFollow), not
+                                // each tank free-driving to the target. The leader himself is skipped.
+                                private _fLdr = leader _x;
+                                { if (_x != _fLdr) then { _x doFollow _fLdr; }; } forEach units _x;
                             };
                         } forEach _tankGroups;
                         MISSION_CORE_TANK_DELIVERED_GROUPS set [_sourceName, []];
@@ -356,7 +412,7 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                     };
                     private _srcLbl2 = [_sourceName] call MISSION_CORE_fnc_getLocationLabel;
                     private _tgtLbl2 = [_targetName] call MISSION_CORE_fnc_getLocationLabel;
-                    diag_log format ["AI ASSAULT WAVE: %1 -> %2 arriving now", _srcLbl2, _tgtLbl2];
+                    diag_log format ["AI ASSAULT WAVE: %1 -> %2 arriving now (release: %3)", _srcLbl2, _tgtLbl2, _releaseReason];
                     ["DynOps_AssaultWarn",
                         ["ASSAULT UNDERWAY", format ["Enemy forces from %1 are attacking %2!\nDefend the position!", _srcLbl2, _tgtLbl2]]
                     ] remoteExec ["BIS_fnc_showNotification", 0];

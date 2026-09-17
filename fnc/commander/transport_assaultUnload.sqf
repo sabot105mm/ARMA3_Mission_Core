@@ -33,20 +33,16 @@ private _drv = driver _veh;
 // Unlock so moveOut/getOut can force riders out, then re-lock so the on-foot squad can never
 // climb back aboard while the fight is on. Bring the truck to a FULL STOP first: the unload ring
 // completes while the truck can still be moving, and ejecting from a moving vehicle kills the men.
-// New waypoints assigned after the drop cancel the doStop so the truck can drive on.
+// New waypoints assigned after the drop cancel the doStop so the truck can drive on. Shared stop
+// routine (see fn_stopForDismount.sqf).
 _veh lock false;
-if (alive _veh) then {
-    _veh setSpeedMode "LIMITED";
-    private _drvStop = driver _veh;
-    if (!isNull _drvStop) then { doStop _drvStop; };
-    private _stopBy = time + 6;
-    waitUntil { sleep 0.2; isNull _veh || { !(alive _veh) } || { speed _veh < 2 } || { time > _stopBy } };
-};
+[_veh] call MISSION_CORE_fnc_stopForDismount;
 private _riders = crew _veh;
 {
     if (_x isEqualTo _drv) then { continue; };
     if (vehicle _x != _veh) then { continue; };
     unassignVehicle _x;
+    _x leaveVehicle _veh;
     [_x] orderGetIn false;
     _x action ["getOut", _veh];
 } forEach _riders;
