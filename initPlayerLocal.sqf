@@ -26,16 +26,17 @@ MISSION_CORE_DEFENSE_POINTS_CAPTURE_REWARD = getNumber (missionConfigFile >> "DE
 };
 
 // Recruitment system (tabbed menu: Player / Garrison / Attack)
-// Road-column spawn helper for client-side recruit ATTACK deploys (BIS_fnc_spawnGroup paths
-// reposition their vehicles onto a road through this file).
-call compile preprocessFileLineNumbers "fnc\spawn\fn_findVehicleColumnPos.sqf";
+// Road-column alignment (fn_findVehicleColumnPos.sqf) is server-only now - the recruit/assault
+// groups are spawned there. stopForDismount stays client-side because the transport waypoint
+// scripts (transport_unload.sqf) can run on a player-owned group's client.
 call compile preprocessFileLineNumbers "fnc\commander\fn_stopForDismount.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_playNoteSound.sqf";
 call compile preprocessFileLineNumbers "fnc\fn_recruit.sqf";
 call compile preprocessFileLineNumbers "fnc\fn_manpower.sqf";
 [] call MISSION_CORE_fnc_initRecruitment;
-[] spawn MISSION_CORE_fnc_monitorAttackGroups;
-[] spawn MISSION_CORE_fnc_monitorBluforStaging;
+// ATTACK lifecycle is server-authoritative now (fnc\fn_assaultServer.sqf owns the groups and
+// broadcasts a netId mirror). Clients just keep their menu map in step with that broadcast.
+[] spawn MISSION_CORE_fnc_assaultMirrorLoop;
 // Actions on the unit are lost on respawn (new unit object), so (re)attach them via a wrapper
 // callable from init AND from the Respawn event handler below.
 MISSION_CORE_fnc_setupPlayerActions = {

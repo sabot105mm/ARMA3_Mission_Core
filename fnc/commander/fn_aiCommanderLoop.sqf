@@ -10,6 +10,15 @@ MISSION_CORE_fnc_aiCommanderLoop = {
         // between frames, not while this loop-body runs.
         private _snapUnits = allUnits;
         private _snapGroups = allGroups;
+        // Refresh the assault-contest map once per tick (throttled to 1/s inside) and snapshot it.
+        if (!isNil "MISSION_CORE_fnc_refreshAssaultContest") then { call MISSION_CORE_fnc_refreshAssaultContest; };
+        // SINGLE SOURCE OF TRUTH: the side's contested zone list, computed ONCE per tick. This is the
+        // exact list the replenish gate, capture and status log use, so the commander's go-ahead
+        // cannot disagree with what the player sees as "contested". (Previously the go-ahead read
+        // MISSION_CORE_ASSAULT_CONTEST, whose presence radius is ellipse+250m, while this list
+        // includes an assault squad at marker-radius+1000m - so a marker read contested for minutes
+        // before the commander would act on it.)
+        private _eastZonesTick = [EAST] call MISSION_CORE_fnc_getContestedMarkers;
 
         {
             private _loc = _x;
@@ -69,28 +78,63 @@ MISSION_CORE_fnc_aiCommanderLoop = {
             if (count _defenders == 0) then {};
 
             private _nearestEnemy = objNull;
-            // The units a player would be ENGAGING at this EAST marker are the EAST garrison, not
-            // their own WEST side - so player knowsAbout of these is the real "player is attacking"
-            // signal. (Previously this selected WEST units, which a WEST player knows about at ~0,
-            // so the proximity fallback below was doing all the work and firing battles constantly.)
+            // The EAST garrison at this marker is the "enemy", but the direction of knowledge is
+            // INVERTED: we ask the garrison (each group's ALIVE LEADER) how much IT knows about the
+            // player - NOT how much the player knows about it. (Previously this selected WEST units,
+            // which a WEST player knows about at ~0, so the proximity fallback below was doing all
+            // the work and firing battles constantly.)
             private _enemies = _snapUnits select { side _x == EAST && { _x distance _locPos < _detectRadius } };
             if (count _enemies > 0) then { _nearestEnemy = _enemies select 0; };
 
             private _detected = false;
             private _nearestPlayer = objNull;
             private _maxKnows = 0;
-            // PERMANENT RULE: a battle only starts when a player has ACTUALLY engaged the garrison
-            // (knowsAbout above the tune contact threshold of any enemy unit near the marker).
-            // Proximity alone must never
-            // count: a player standing near a spawned marker without attacking must not make the
-            // AI counter-attack, truck reinforcements across the map, or build defenses there.
+            // PERMANENT RULE: a battle only starts when the EAST garrison has ACTUALLY seen the
+            // player. Knowledge is sampled from each EAST group's ALIVE LEADER ONLY (never from
+            // every unit) - the leader's knowsAbout OF the player replaces the player's knowsAbout
+            // of the garrison. Proximity alone must never count: a player standing near a spawned
+            // marker without being seen must not make the AI counter-attack, truck reinforcements
+            // across the map, or build defenses there.
+            private _enemyLeaders = [];
+            {
+                private _g = group _x;
+                if (isNull _g) then { continue; };
+                private _ldr = leader _g;
+                if (isNull _ldr) then { continue; };
+                if !(alive _ldr) then { continue; };
+                if (_enemyLeaders findIf { _x == _ldr } == -1) then { _enemyLeaders pushBack _ldr; };
+            } forEach _enemies;
             {
                 private _p = _x;
                 private _knows = 0;
-                { private _k = _p knowsAbout _x; if (_k > _knows) then { _knows = _k; }; } forEach _enemies;
+                { private _k = _x knowsAbout _p; if (_k > _knows) then { _knows = _k; }; } forEach _enemyLeaders;
                 if (_knows > _maxKnows) then { _maxKnows = _knows; _nearestPlayer = _p; };
                 if (_knows > (["quadrantEngageKnows", 1.2] call MISSION_CORE_fnc_tune)) then { _detected = true; };
             } forEach _players;
+
+            // USER RULE (simple): a marker on the side's CONTESTED ZONE LIST is the go-ahead for the
+            // neighbors' counter-attack - no separate contact/knowsAbout requirement. This is the
+            // same list the player sees as contested, so the commander acts the instant it is flagged.
+            if (_locOwner == EAST && { _eastZonesTick findIf { (_x select 0) == _markerName } != -1 }) then {
+                _detected = true;
+                if (isNull _nearestPlayer) then {
+                    private _maps = [];
+                    if (!isNil "MISSION_CORE_ATTACK_GROUPS") then { _maps pushBack MISSION_CORE_ATTACK_GROUPS; };
+                    if (!isNil "MISSION_CORE_ATTACK_GROUPS_RELAY") then { _maps pushBack MISSION_CORE_ATTACK_GROUPS_RELAY; };
+                    {
+                        private _findIn = _x;
+                        {
+                            private _data = _y;
+                            if ((_data select 5) != "active") then { continue; };
+                            if ((_data select 1) != _markerName) then { continue; };
+                            private _ag = _data select 0;
+                            if (isNull _ag) then { continue; };
+                            private _u = (units _ag select { alive _x }) param [0, objNull];
+                            if (!isNull _u) then { _nearestPlayer = _u; _maxKnows = _maxKnows max 1.5; };
+                        } forEach _findIn;
+                    } forEach _maps;
+                };
+            };
 
             // ASSAULT LEADER TARGETING: released/active BLUFOR attack-group leaders within the
             // engage radius also trigger the engagement gate and become the nearest target for
@@ -101,12 +145,35 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                     if ((_data select 5) != "active") then { continue; };
                     private _ag = _data select 0;
                     if (isNull _ag) then { continue; };
-                    private _ldr = leader _ag;
-                    if (isNull _ldr || { !alive _ldr } || { _ldr distance _locPos > _engageRadius }) then { continue; };
-                    private _k = 0;
-                    { private _kk = _ldr knowsAbout _x; if (_kk > _k) then { _k = _kk; }; } forEach _enemies;
-                    if (_k > (["quadrantEngageKnows", 1.2] call MISSION_CORE_fnc_tune)) then { _detected = true; };
-                    if (_k > _maxKnows) then { _maxKnows = _k; _nearestPlayer = _ldr; };
+                    // Presence is evaluated over the group's LIVING members, never just its leader:
+                    // an assault squad whose leader was killed keeps fighting and must keep
+                    // triggering the response for its target.
+                    private _units = units _ag select { !isNull _x && { alive _x } && { _x distance _locPos <= _engageRadius } };
+                    if (count _units == 0) then { continue; };
+                    private _best = _units select 0;
+                    // USER RULE (simple): an active assault squad sitting on ITS ASSIGNED target is
+                    // the go-ahead. The enemy at that marker seeing the squad is what flags the zone
+                    // contested, and a contested zone is what authorizes the neighbors' counter-attack
+                    // - so presence on the assigned target replaces the old contact threshold. The
+                    // squad does not need to personally have contact; the defenders do the "seeing".
+                    if ((_data select 1) == _markerName) then {
+                        _detected = true;
+                        if (isNull _nearestPlayer) then { _nearestPlayer = _best; };
+                        _maxKnows = _maxKnows max 1.5;
+                    } else {
+                        // Off-target (pass-through only): fall back to real contact so a squad
+                        // merely marching near an unrelated marker does not trip the response.
+                        private _k = 0;
+                        private _kb = _best;
+                        {
+                            private _u = _x;
+                            private _kk = 0;
+                            { private _k2 = _x knowsAbout _u; if (_k2 > _kk) then { _kk = _k2; }; } forEach _enemyLeaders;
+                            if (_kk > _k) then { _k = _kk; _kb = _u; };
+                        } forEach _units;
+                        if (_k > (["quadrantEngageKnows", 1.2] call MISSION_CORE_fnc_tune)) then { _detected = true; };
+                        if (_k > _maxKnows) then { _maxKnows = _k; _nearestPlayer = _kb; };
+                    };
                 } forEach MISSION_CORE_ATTACK_GROUPS;
             };
 
@@ -122,10 +189,10 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                     if ((_data select 1) != _markerName) then { continue; };
                     private _ag = _data select 0;
                     if (isNull _ag) then { continue; };
-                    private _ldr = leader _ag;
-                    if (isNull _ldr || { !alive _ldr } || { _ldr distance _locPos > _engageRadius }) then { continue; };
+                    private _units = units _ag select { !isNull _x && { alive _x } && { _x distance _locPos <= _engageRadius } };
+                    if (count _units == 0) then { continue; };
                     _detected = true;
-                    _nearestPlayer = _ldr;
+                    _nearestPlayer = _units select 0;
                     _maxKnows = _maxKnows max 1.5;
                 } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
             };
@@ -151,7 +218,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                 {
                     private _p = _x;
                     private _k = 0;
-                    { private _kk = _p knowsAbout _x; if (_kk > _k) then { _k = _kk; }; } forEach _enemies;
+                    { private _kk = _x knowsAbout _p; if (_kk > _k) then { _k = _kk; }; } forEach _enemyLeaders;
                     if (_k > (["quadrantEngageKnows", 1.2] call MISSION_CORE_fnc_tune)) then { _engagedPlayers pushBack _p; };
                 } forEach _players;
                 // Include assault leaders in the engaged quadrant list so foot force is spread
@@ -162,9 +229,10 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                         if ((_data select 5) != "active") then { continue; };
                         private _ag = _data select 0;
                         if (isNull _ag) then { continue; };
-                        private _ldr = leader _ag;
-                        if (!alive _ldr || { _ldr distance _locPos > _engageRadius }) then { continue; };
-                        if (_engagedPlayers findIf { _x == _ldr } == -1) then { _engagedPlayers pushBack _ldr; };
+                        private _units = units _ag select { !isNull _x && { alive _x } && { _x distance _locPos <= _engageRadius } };
+                        if (count _units == 0) then { continue; };
+                        private _rep = _units select 0;
+                        if (_engagedPlayers findIf { _x == _rep } == -1) then { _engagedPlayers pushBack _rep; };
                     } forEach MISSION_CORE_ATTACK_GROUPS;
                 };
                 // MULTIPLAYER RELAY: spread the engaged-quadrant foot force across remote assault
@@ -176,9 +244,10 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                         if ((_data select 1) != _markerName) then { continue; };
                         private _ag = _data select 0;
                         if (isNull _ag) then { continue; };
-                        private _ldr = leader _ag;
-                        if (!alive _ldr || { _ldr distance _locPos > _engageRadius }) then { continue; };
-                        if (_engagedPlayers findIf { _x == _ldr } == -1) then { _engagedPlayers pushBack _ldr; };
+                        private _units = units _ag select { !isNull _x && { alive _x } && { _x distance _locPos <= _engageRadius } };
+                        if (count _units == 0) then { continue; };
+                        private _rep = _units select 0;
+                        if (_engagedPlayers findIf { _x == _rep } == -1) then { _engagedPlayers pushBack _rep; };
                     } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
                 };
 
@@ -205,8 +274,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                 // PERMANENT RULE: every contested zone gets its OWN support force (one zone per
                 // attacking player). A player's knowsAbout can leak to nearby non-zone markers,
                 // so support is gated on zone membership, not "closest target".
-                private _eastZones = [EAST] call MISSION_CORE_fnc_getContestedMarkers;
-                private _isZone = (_eastZones findIf { (_x select 0) == _markerName } != -1);
+                private _isZone = (_eastZonesTick findIf { (_x select 0) == _markerName } != -1);
                 private _bluforAutoAttack = ["bluforAutoAttack", 0] call MISSION_CORE_fnc_tune;
                 if (_bluforAutoAttack > 0 && { _locOwner == EAST && { _isZone } }) then {
                     if (isNil "MISSION_CORE_BLUFOR_SUPPORT_COOLDOWN") then { MISSION_CORE_BLUFOR_SUPPORT_COOLDOWN = createHashMap; };
@@ -322,8 +390,9 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                             if ((_data select 5) != "active") then { continue; };
                             private _ag = _data select 0;
                             if (isNull _ag) then { continue; };
-                            private _ldr = leader _ag;
-                            if (alive _ldr && { _ldr distance _locPos < _engageRadius } && { _gracePlayers findIf { _x == _ldr } == -1 }) then { _gracePlayers pushBack _ldr; };
+                            private _rep = (units _ag select { !isNull _x && { alive _x } && { _x distance _locPos < _engageRadius } }) param [0, objNull];
+                            if (isNull _rep) then { continue; };
+                            if (_gracePlayers findIf { _x == _rep } == -1) then { _gracePlayers pushBack _rep; };
                         } forEach MISSION_CORE_ATTACK_GROUPS;
                     };
                     // MULTIPLAYER RELAY (fn_assaultRelay.sqf): same grace participation for
@@ -334,8 +403,9 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                             if ((_data select 5) != "active") then { continue; };
                             private _ag = _data select 0;
                             if (isNull _ag) then { continue; };
-                            private _ldr = leader _ag;
-                            if (alive _ldr && { _ldr distance _locPos < _engageRadius } && { _gracePlayers findIf { _x == _ldr } == -1 }) then { _gracePlayers pushBack _ldr; };
+                            private _rep = (units _ag select { !isNull _x && { alive _x } && { _x distance _locPos < _engageRadius } }) param [0, objNull];
+                            if (isNull _rep) then { continue; };
+                            if (_gracePlayers findIf { _x == _rep } == -1) then { _gracePlayers pushBack _rep; };
                         } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
                     };
                     if (count _gracePlayers > 0) then {

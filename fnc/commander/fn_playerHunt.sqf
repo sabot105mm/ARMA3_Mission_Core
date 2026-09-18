@@ -17,8 +17,9 @@
 // player was last moving - from the time it ARRIVES at the LKP - for 10 minutes.
 //
 // INFORMATION MODEL (no god-view):
+//   - Knowledge is sampled from each REDFOR group's ALIVE LEADER ONLY - never from every unit.
 //   - Contact requires REAL line of sight (terrain/building LOS check) AND knowsAbout > 0.7.
-//   - Shared garrison intel: any spawned REDFOR unit with an actual sighting reports
+//   - Shared garrison intel: any REDFOR group LEADER with an actual sighting reports
 //     [pos, heading, time] into MISSION_CORE_HUNT_INTEL; it decays after ~60s.
 //   - While sweeping, groups steer ONLY toward a <60s-old shared sighting; otherwise they walk
 //     the original extrapolated line blind. They NEVER steer toward the player's live position.
@@ -73,8 +74,8 @@ MISSION_CORE_fnc_playerHunt = {
                 if ((_data select 5) != "active") then { continue; };
                 private _ag = _data select 0;
                 if (isNull _ag) then { continue; };
-                private _ldr = leader _ag;
-                if (alive _ldr && { side _ldr == _enemySide }) then { _players pushBack _ldr; };
+                private _rep = (units _ag select { alive _x }) param [0, objNull];
+                if (!isNull _rep && { side _rep == _enemySide }) then { _players pushBack _rep; };
             } forEach MISSION_CORE_ATTACK_GROUPS;
         };
         // MULTIPLAYER RELAY: client-spawned assault leaders are hunted too (fn_assaultRelay.sqf).
@@ -84,14 +85,26 @@ MISSION_CORE_fnc_playerHunt = {
                 if ((_data select 5) != "active") then { continue; };
                 private _ag = _data select 0;
                 if (isNull _ag) then { continue; };
-                private _ldr = leader _ag;
-                if (alive _ldr && { side _ldr == _enemySide }) then { _players pushBack _ldr; };
+                private _rep = (units _ag select { alive _x }) param [0, objNull];
+                if (!isNull _rep && { side _rep == _enemySide }) then { _players pushBack _rep; };
             } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
         };
         if (count _players == 0) then { continue; };
         // Snapshot this side's units once per tick and reuse for all players. Avoids an allUnits
         // refetch per player (the list only changes between frames, not mid-loop-body).
         private _snapUnits = allUnits select { side _x == _side };
+        // Knowledge of the player is sampled from each REDFOR group's ALIVE LEADER ONLY - never from
+        // every unit. The group commander's own sighting is what counts as command-level contact, so
+        // a grunt's faint curiosity can no longer drag a whole contingent across the map.
+        private _snapLeaders = [];
+        {
+            private _g = group _x;
+            if (isNull _g) then { continue; };
+            private _ldr = leader _g;
+            if (isNull _ldr) then { continue; };
+            if !(alive _ldr) then { continue; };
+            if (_snapLeaders findIf { _x == _ldr } == -1) then { _snapLeaders pushBack _ldr; };
+        } forEach _snapUnits;
 
         // Spawned REDFOR markers = the "eyes" that eventually spot a player loitering nearby.
         private _redSpawned = MISSION_CORE_CACHED_POSITIONS select {
@@ -109,10 +122,11 @@ MISSION_CORE_fnc_playerHunt = {
             // A player counts as "seen" when inside _detectRange of any spawned REDFOR marker.
             private _near = (_redSpawned findIf { (_x select 1) distance2D _pPos < _detectRange }) != -1;
 
-            // A CURRENT live sighting: any REDFOR unit with a real LOS + knowsAbout saw the player
-            // this tick. This is a genuine "we know where he is right now" - enough to hunt even when
-            // the player is not near a spawned marker (e.g. a field patrol or convoy spotted him).
-            private _liveSight = (_snapUnits findIf {
+            // A CURRENT live sighting: a REDFOR group LEADER with a real LOS + knowsAbout saw the
+            // player this tick. This is a genuine "we know where he is right now" - enough to hunt
+            // even when the player is not near a spawned marker (e.g. a patrol or convoy leader
+            // spotted him).
+            private _liveSight = (_snapLeaders findIf {
                 [_x, _p] call MISSION_CORE_fnc_huntSeesPlayer
             }) != -1;
 
@@ -142,14 +156,15 @@ MISSION_CORE_fnc_playerHunt = {
             // still fresh (<60s). No real contact = no hunt.
             private _intel = MISSION_CORE_HUNT_INTEL getOrDefault [_pKey, []];
             private _intelFresh = count _intel >= 3 && { (time - (_intel select 2)) <= (["huntIntelDecay", 60] call MISSION_CORE_fnc_tune) };
-            // Strongest current awareness of the player - drives how precise the reported position
-            // is. Full contact = exact spot, faint 0.1 = a wide drift, never a god-view pin.
+            // Strongest current awareness of the player - sampled from group leaders only. Drives how
+            // precise the reported position is. Full contact = exact spot, faint 0.1 = a wide drift,
+            // never a god-view pin.
             private _maxKnows = 0;
             {
                 if (alive _x && { _x distance2D _pPos < (_detectRange + 300) }) then {
                     _maxKnows = _maxKnows max (_x knowsAbout _p);
                 };
-            } forEach _snapUnits;
+            } forEach _snapLeaders;
             if (!_intelFresh && { !_liveSight }) then { continue; };
 
             // Already hunting this player - living contingents are on the way / sweeping.
@@ -510,11 +525,12 @@ MISSION_CORE_fnc_huntSweep = {
         if (isNull _player) then { continue; };
 
         // ---- Re-spot (REAL contact only) ----
-        // A group member is considered to have "seen" the player when they have actual line of
-        // sight AND knowsAbout > 0.7. Raw distance is NEVER sight (no wallhacking through a house
+        // The group's ALIVE LEADER is considered to have "seen" the player when it has actual line
+        // of sight AND knowsAbout > 0.7. Raw distance is NEVER sight (no wallhacking through a house
         // or a hill). A tiny 30m bump-in radius is the only non-LOS trigger (they practically
         // stepped on him).
-        private _sight = (units _grp findIf { [_x, _player] call MISSION_CORE_fnc_huntSeesPlayer }) != -1;
+        private _ldrS = leader _grp;
+        private _sight = !isNull _ldrS && { [_ldrS, _player] call MISSION_CORE_fnc_huntSeesPlayer };
         private _close = (leader _grp) distance2D _player < (["huntReSpotRadius", 30] call MISSION_CORE_fnc_tune);
         if (_sight || _close) then {
             // PUBLISH the real sighting as shared intel immediately. Until this moment no group
@@ -548,7 +564,8 @@ MISSION_CORE_fnc_huntSweep = {
             while { time < _escAt && { !isNull _grp } && { alive _player } && { !isNull _player } } do {
                 sleep 5;
                 if (isNull _grp) exitWith {};
-                private _still = (units _grp findIf { [_x, _player] call MISSION_CORE_fnc_huntSeesPlayer }) != -1;
+                private _ldrS2 = leader _grp;
+                private _still = !isNull _ldrS2 && { [_ldrS2, _player] call MISSION_CORE_fnc_huntSeesPlayer };
                 if (_still || { (leader _grp) distance2D _player < (["huntReSpotRadius", 30] call MISSION_CORE_fnc_tune) }) then {
                     _lastSeen = getPos _player;
                     _escAt = time + 30;

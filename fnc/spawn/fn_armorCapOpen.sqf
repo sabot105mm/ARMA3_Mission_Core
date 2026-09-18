@@ -29,8 +29,22 @@ MISSION_CORE_fnc_armorCapOpen = {
         MISSION_CORE_MBT_RESERVE set [_side, _holds];
         true
     };
-    // Mech/motorized infantry: max 1 per marker locally AND only 1 town per side may field it at once
+    // Mech infantry: max 1 per marker locally AND only 1 town per side may field it at once
     if ((_local select 1) >= 1) exitWith { false };
     if ([_side, "mech"] call MISSION_CORE_fnc_countTownCategory >= 1) exitWith { false };
     true
+};
+
+// Drop one MBT reservation hold for a side. armorCapOpen takes an atomic hold so concurrent
+// spawn loops cannot both pass the cap; a caller that then decides NOT to spawn (tank-pool full,
+// spawn failed) must give that hold back, otherwise the slot stays "reserved" for 20s and blocks
+// a legitimate spawn. mech/other slots take no hold, so this is a no-op for them.
+MISSION_CORE_fnc_armorCapRelease = {
+    params ["_side", "_slot"];
+    if (_slot != "mbt") exitWith {};
+    if (isNil "MISSION_CORE_MBT_RESERVE") exitWith {};
+    private _holds = MISSION_CORE_MBT_RESERVE getOrDefault [_side, []];
+    _holds = _holds select { _x > time };
+    if (count _holds > 0) then { _holds deleteAt (count _holds - 1); };
+    MISSION_CORE_MBT_RESERVE set [_side, _holds];
 };

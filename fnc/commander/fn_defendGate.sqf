@@ -103,10 +103,11 @@ MISSION_CORE_fnc_defendGate = {
         if (count units _grp == 0) then { continue; };
         if (side _grp getFriend _ownerSide >= 0.6) then { continue; };
         if !([_grp] call MISSION_CORE_fnc_isAssaultClassified) then { continue; };
-        private _ldr = leader _grp;
-        if (isNull _ldr) then { continue; };
-        if !(alive _ldr) then { continue; };
-        if ([getPos _ldr, _geom, 2] call MISSION_CORE_fnc_pointInGeometry) exitWith { _hit = true; };
+        // Any LIVING member inside the marker trips the gate, not just the leader - a squad whose
+        // leader was killed keeps attacking, so the defender reaction must still fire.
+        private _units = units _grp select { alive _x };
+        if (count _units == 0) then { continue; };
+        if (_units findIf { [getPos _x, _geom, 2] call MISSION_CORE_fnc_pointInGeometry } != -1) exitWith { _hit = true; };
     } forEach _pool;
     _hit
 };

@@ -6,7 +6,6 @@ MISSION_CORE_fnc_despawnOverwatchTanks = {
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith {};
     private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
     private _players = allPlayers select { alive _x };
-    private _removed = [];
     // PERMANENT RULE (BLUFOR GARRISONS): player-recruited garrison tanks are never despawned or
     // re-tasked to attack to free an armor cap - the player owns them and expects them to hold
     // their marker. Config "garrisonStaysHome" (default 1): set 0 to let AI pull them again.
@@ -23,12 +22,11 @@ MISSION_CORE_fnc_despawnOverwatchTanks = {
                     private _holdTarget = _players findIf { _x distance _targetPos < _holdDist } > -1;
                     if (!_holdTank && !_holdTarget) then {
                         diag_log format ["AI COMMANDER: despawning idle armor %1 at %2 to free cap", groupId _x, _gPos];
-                        _removed pushBack _x;
-                        private _vehs = [];
-                        { private _v = vehicle _x; if (_v != _x && { alive _v } && { !(_v in _vehs) }) then { _vehs pushBack _v; }; } forEach units _x;
-                        { deleteVehicle _x; } forEach units _x;
-                        { deleteVehicle _x; } forEach _vehs;
-                        deleteGroup _x;
+                        // Deletion delegated to deleteGroupCompletely - it also deletes the dedicated
+                        // foot-transport DRIVER groups (MISSION_CORE_DRIVER_GROUP) for this tank's
+                        // truck, which are NOT in SPAWNED_GROUPS. A manual units+vehs loop here
+                        // would leave that driver standing next to the deleted truck.
+                        [_x] call MISSION_CORE_fnc_deleteGroupCompletely;
                     } else {
                         // slipped through the check: join the attack move as well
                         if (_order != "attack") then {
@@ -48,7 +46,4 @@ MISSION_CORE_fnc_despawnOverwatchTanks = {
             };
         };
     } forEach +MISSION_CORE_SPAWNED_GROUPS;
-    if (count _removed > 0) then {
-        MISSION_CORE_SPAWNED_GROUPS = MISSION_CORE_SPAWNED_GROUPS - _removed;
-    };
 };

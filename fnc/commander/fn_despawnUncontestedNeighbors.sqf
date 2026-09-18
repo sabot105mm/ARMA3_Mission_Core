@@ -23,7 +23,7 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
         {
             MISSION_CORE_CONTESTED_LAST set [_x select 0, time];
         } forEach _contested;
-        private _removed = [];
+        
         {
             private _grp = _x;
             if (isNull _grp || { count units _grp == 0 }) then { continue; };
@@ -63,7 +63,6 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
         if (_dest distance [0, 0, 0] < 1) then {
                 diag_log format ["AI COMMANDER: despawning neighbor %1 (from %2) - target %3 no longer contested", groupId _grp, _origin, _tgtName];
                 [_grp] call MISSION_CORE_fnc_deleteGroupCompletely;
-                _removed pushBack _grp;
                 continue;
         };
         diag_log format ["AI COMMANDER: neighbor %1 (from %2) retreating to closest %3 - target %4 no longer contested", groupId _grp, _origin, _dest, _tgtName];
@@ -96,12 +95,8 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
             if ((leader _grp) distance2D _dest < 150 || { time > _deadline } || { { alive _x } count units _grp == 0 }) then {
                 diag_log format ["AI COMMANDER: despawning neighbor %1 after retreat", groupId _grp];
                 [_grp] call MISSION_CORE_fnc_deleteGroupCompletely;
-                _removed pushBack _grp;
             };
         } forEach +MISSION_CORE_SPAWNED_GROUPS;
-        if (count _removed > 0) then {
-            MISSION_CORE_SPAWNED_GROUPS = MISSION_CORE_SPAWNED_GROUPS - _removed;
-        };
         // PERMANENT RULE: when a player DIES or WALKS AWAY, the marker stops being contested
         // (isMarkerContested deletes the flag) - and its whole supporting neighborhood must go
         // dormant with it. Same 45s grace as the squad retreat, so a brief step-out-and-back

@@ -9,10 +9,9 @@
 // >= 20m apart). Callers fall back to findVehiclePos / findSafePos when 0
 // are found (no roads nearby).
 //
-// Self-contained (only core commands + guarded mission helpers) so it is
-// safe to compile on BOTH server (fn_spawn.sqf) and client (initPlayerLocal.sqf)
-// - the recruit ATTACK deploy runs on the client and repositions its spawned
-// BIS groups onto a road through this file.
+// Self-contained (only core commands + guarded mission helpers) and compiled
+// server-side only (fn_spawn.sqf), where the recruit and assault groups are
+// spawned and repositioned onto a road through this file.
 // =====================================================================
 
 MISSION_CORE_fnc_findVehicleColumnPos = {
@@ -75,8 +74,8 @@ MISSION_CORE_fnc_findVehicleColumnPos = {
     _spots apply { [(_x select 0), (_x select 1), 0] }
 };
 
-// Road-align a freshly placed vehicle (client-safe copy of the default helper, kept local to
-// this file so the client-side recruit paths can align vehicles without fn_spawn.sqf).
+// Road-align a freshly placed vehicle (guard keeps whichever copy was compiled first; kept local
+// to this file so the helper stays self-contained).
 if (isNil "MISSION_CORE_fnc_alignVehicleToRoad") then {
     MISSION_CORE_fnc_alignVehicleToRoad = {
         params ["_veh"];

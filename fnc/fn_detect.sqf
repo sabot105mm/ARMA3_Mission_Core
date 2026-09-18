@@ -383,14 +383,16 @@ MISSION_CORE_fnc_detectFactions = {
 
             // Step 0: base type comes from the parent CfgGroups category - matched by word, not an
             // exact name, so addon categories that are not literally "Infantry"/"Armored"/etc still
-            // classify correctly (e.g. "Motorized_Infantry", "Panzergrenadier", "Recon_Infantry").
+            // classify correctly (e.g. "Panzergrenadier", "Recon_Infantry"). Only true mechanized
+            // categories map to mech - "Motorized" is infantry in trucks and must NOT consume a mech
+            // armour slot, so it maps to foot infantry below.
             private _base = "squad";
             private _lcCat = toLower _catName;
-            if (_lcCat find "mechan" > -1 || _lcCat find "motor" > -1 || _lcCat find "panzergren" > -1 || _lcCat find "grenadier" > -1) then { _base = "mech"; }
+            if (_lcCat find "mechan" > -1 || _lcCat find "panzergren" > -1 || _lcCat find "grenadier" > -1) then { _base = "mech"; }
             else {
                 if (_lcCat find "armor" > -1 || _lcCat find "panzer" > -1 || _lcCat find "tank" > -1) then { _base = "tank"; }
                 else {
-                    if (_lcCat find "infantry" > -1 || _lcCat find "infanterie" > -1 || _lcCat find "schuetzen" > -1 || _lcCat find "rifle" > -1) then { _base = "inf"; }
+                    if (_lcCat find "infantry" > -1 || _lcCat find "infanterie" > -1 || _lcCat find "schuetzen" > -1 || _lcCat find "motor" > -1 || _lcCat find "rifle" > -1) then { _base = "inf"; }
                     else {
                         if (_lcCat find "air" > -1 || _lcCat find "helicopter" > -1 || _lcCat find "helikopter" > -1 || _lcCat find "luft" > -1) then { _base = "air"; }
                         else {

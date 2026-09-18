@@ -1,8 +1,9 @@
 // transport_unload.sqf
 // Fired by setWaypointScript when a recruited transport reaches its UNLOAD waypoint.
 // _this = [groupLeader, waypointPos, targetObject, ...userArgs]
-// Runs on the machine that owns the group (the client that spawned the transport), where the
-// recruitment functions are compiled, so MISSION_CORE_fnc_applyAssaultWaypoints is available.
+// Runs on the machine that owns the group - now the server, which spawns the transport. The group
+// is resolved by netId and the server-side applyAssaultWaypointsNet is used (the client-only
+// applyAssaultWaypoints is not compiled on the server).
 params ["_leader", "_wpPos", "_target"];
 
 private _grp = group _leader;
@@ -58,6 +59,6 @@ _veh lockCargo true;
 // behaviour from the first waypoint's saved state).
 private _wps = _grp getVariable ["MISSION_CORE_TRANSPORT_WPS", []];
 private _targetPos = _grp getVariable ["MISSION_CORE_TRANSPORT_TARGET", _wpPos];
-[_grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
+[netId _grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypointsNet;
 
 diag_log format ["DYNOPS TRANSPORT: %1 squad dismounted at UNLOAD waypoint", groupId _grp];

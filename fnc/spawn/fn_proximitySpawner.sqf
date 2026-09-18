@@ -125,9 +125,9 @@ MISSION_CORE_fnc_proximitySpawner = {
                 if ((_adata select 5) != "active") then { continue; };
                 private _ag = _adata select 0;
                 if (isNull _ag) then { continue; };
-                private _ldr = leader _ag;
-                if (isNull _ldr || { !alive _ldr }) then { continue; };
-                _actors pushBack _ldr;
+                private _rep = (units _ag select { alive _x }) param [0, objNull];
+                if (isNull _rep) then { continue; };
+                _actors pushBack _rep;
             } forEach MISSION_CORE_ATTACK_GROUPS;
         };
         // MULTIPLAYER RELAY: client-spawned assault groups also act as spawn actors (see
@@ -139,9 +139,9 @@ MISSION_CORE_fnc_proximitySpawner = {
                 if ((_adata select 5) != "active") then { continue; };
                 private _ag = _adata select 0;
                 if (isNull _ag) then { continue; };
-                private _ldr = leader _ag;
-                if (isNull _ldr || { !alive _ldr }) then { continue; };
-                _actors pushBack _ldr;
+                private _rep = (units _ag select { alive _x }) param [0, objNull];
+                if (isNull _rep) then { continue; };
+                _actors pushBack _rep;
             } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
         };
         // Snapshot allUnits once per tick and reuse for every marker below, instead of re-fetching

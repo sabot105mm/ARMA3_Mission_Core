@@ -10,7 +10,9 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     if (isNil "MISSION_CORE_REINF_COOLDOWN") then { MISSION_CORE_REINF_COOLDOWN = createHashMap; };
     private _last = MISSION_CORE_REINF_COOLDOWN getOrDefault [_locName, -99999];
     if (time - _last < 300) exitWith {};
-    MISSION_CORE_REINF_COOLDOWN set [_locName, time];
+    // NOTE: the cooldown is stamped only AFTER the full-gate below, once we commit to dispatching.
+    // Stamping here would let a full-and-not-contested marker silently burn the 300s window, so a
+    // marker that becomes contested moments later would be ignored until the window expired.
     // PERMANENT RULE: the contested marker's OWN garrison must be fully spawned before any
     // neighbor dispatches reinforcements. The proximity spawner spawns it on its own async
     // cycle, so a battle can start before the garrison exists. Force it now so the contested
@@ -26,15 +28,20 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     };
     // The contested marker itself claims the first of the 4 spawn slots (contested + 3 neighbors)
     [_locName] call MISSION_CORE_fnc_spawnerSlotFree;
-    // PERMANENT RULE: a marker that is already FULL (garrison at/above its baseline) never receives
-    // neighbor reinforcements or manpower credit - there is nothing to top up. Only a marker that
-    // has actually lost men gets reinforced.
+    // PERMANENT RULE: NO full-garrison suppression. A marker being on the side's contested zone
+    // list (checked at the top) IS the go-ahead - the exact flag the player sees - so a contested
+    // marker ALWAYS draws its neighbors, whether it is fresh, full or depleted. The goal at a
+    // contested marker is to overwhelm the attacker, not to top up losses. (The old full-exit let
+    // a freshly spawned, full-strength target - precisely what the proximity spawner creates the
+    // moment an assault arrives - skip its neighbors entirely.)
     if (isNil "MISSION_CORE_GARRISON_BASELINE") then { MISSION_CORE_GARRISON_BASELINE = createHashMap; };
     private _baseline = MISSION_CORE_GARRISON_BASELINE getOrDefault [_locName, [_importance] call MISSION_CORE_fnc_markerCapacity];
     private _aliveNow = [_locName, _side] call MISSION_CORE_fnc_countMarkerGarrison;
-    if (_aliveNow >= _baseline) exitWith {
-        diag_log format ["DYNAMIC REINF: %1 full (%2/%3) - no neighbors needed", _locName, _aliveNow, _baseline];
+    if (_aliveNow >= _baseline) then {
+        diag_log format ["DYNAMIC REINF: %1 full (%2/%3) but contested - calling neighbors anyway", _locName, _aliveNow, _baseline];
     };
+    // Committed to dispatching neighbors: stamp the 300s window now.
+    MISSION_CORE_REINF_COOLDOWN set [_locName, time];
     private _factionData = if (_side == WEST) then { MISSION_CORE_BLUFOR_DATA } else { MISSION_CORE_REDFOR_DATA };
     // PERMANENT RULE: a contested marker NEVER counter-attacks another contested marker. A zone's
     // own garrison must stay and defend its own fight - so contested markers are excluded from the

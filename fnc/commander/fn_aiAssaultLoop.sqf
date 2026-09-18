@@ -285,12 +285,7 @@ MISSION_CORE_fnc_aiAssaultLoop = {
 
                 {
                     diag_log format ["AI ASSAULT: despawning %1 (way too far from target)", groupId _x];
-                    private _vehs = [];
-                    { private _v = vehicle _x; if (_v != _x && { alive _v } && { !(_v in _vehs) }) then { _vehs pushBack _v; }; } forEach units _x;
-                    { deleteVehicle _x; } forEach units _x;
-                    { deleteVehicle _x; } forEach _vehs;
-                    deleteGroup _x;
-                    if (!isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = MISSION_CORE_SPAWNED_GROUPS - [_x]; };
+                    [_x] call MISSION_CORE_fnc_deleteGroupCompletely;
                 } forEach _despawnTooFar;
 
                 private _srcLabel = [_locName] call MISSION_CORE_fnc_getLocationLabel;
