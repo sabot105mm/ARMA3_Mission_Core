@@ -16,6 +16,7 @@ MISSION_CORE_RECRUIT_ATTACK_TARGET_POS = [0,0,0];
 MISSION_CORE_RECRUIT_ATTACK_SQUAD_IDX = -1;
 MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = [];
 MISSION_CORE_RECRUIT_WAYPOINT_MARKERS = [];
+MISSION_CORE_RECRUIT_CURRENT_MARKERS = [];
 MISSION_CORE_RECRUIT_WPS_PER_MARKER = createHashMap;
 MISSION_CORE_RECRUIT_NEXT_GRP_ID = 0;
 MISSION_CORE_RECRUIT_WP_SPEED = "FULL";
@@ -265,6 +266,8 @@ MISSION_CORE_fnc_attackGroupTryRefill = {
 
     private _spawnPos = getPosATL (leader _grp);
     if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
+    _spawnPos = [_spawnPos, _spawnPos, [60, 60]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
 
     // Pre-check both resources BEFORE consuming anything so a short pool/manpower never strands a
     // consumed pool point. Both helpers live on the server (fn_tankDepot.sqf); in hosted SP the
@@ -352,6 +355,19 @@ MISSION_CORE_fnc_recruitMenuLoad = {
     disableSerialization;
     private _disp = uiNamespace getVariable "DYNOPS_RecruitMenu";
     _disp displaySetEventHandler ["KeyDown", "if (_this select 1 == 0x2D) then { closeDialog 0; };"];
+    // Track SHIFT for the commander list's shift-click multi-select. keysDown/inputAction are
+    // unreliable on this build, so the dialog's own key events record the state instead.
+    missionNamespace setVariable ["MISSION_CORE_COMMAND_SHIFT", false];
+    _disp displayAddEventHandler ["KeyDown", {
+        _this params ["_d", "_key"];
+        if (_key == 42 || { _key == 54 }) then { missionNamespace setVariable ["MISSION_CORE_COMMAND_SHIFT", true]; };
+        false
+    }];
+    _disp displayAddEventHandler ["KeyUp", {
+        _this params ["_d", "_key"];
+        if (_key == 42 || { _key == 54 }) then { missionNamespace setVariable ["MISSION_CORE_COMMAND_SHIFT", false]; };
+        false
+    }];
 
     // Populate player tab
     call MISSION_CORE_fnc_recruitMenuPopulatePlayer;
@@ -1143,7 +1159,8 @@ MISSION_CORE_fnc_applyAssaultWaypoints = {
 // NetId variant of applyAssaultWaypoints for remote groups (applies where the group is local).
 MISSION_CORE_fnc_applyAssaultWaypointsNet = {
     params ["_netId", "_wps", "_targetPos"];
-    private _grp = objectFromNetId _netId;
+    // Callers always pass a GROUP netId (netId _grp); objectFromNetId returns objNull for groups.
+    private _grp = groupFromNetId _netId;
     if (isNull _grp) exitWith {};
     if !(local _grp) exitWith {};
     [_grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
@@ -1153,28 +1170,66 @@ MISSION_CORE_fnc_applyAssaultWaypointsNet = {
 
 // Multi-select group list: click marks [X] (single), shift-click toggles extra groups on/off.
 // Listboxes are single-select by design, so selection is tracked here as a persistent membership
-// set of group objects. netIds are read back via groupFromNetId (objectFromNetId is objects only).
+// set of group objects. Rows are resolved from the cached MISSION_CORE_COMMAND_ROWS array - netId
+// round-trips (netId/groupFromNetId) can return "" for groups in single-player, which made every
+// click exit silently with lbSetCurSel -1 (rows visible but unclickable).
 MISSION_CORE_fnc_recruitCommanderSelect = {
     params ["_ctrl", "_idx"];
+    diag_log format ["[CMD DBG] click idx=%1", _idx];
     if (_idx < 0) exitWith {};
-    private _netId = _ctrl lbData _idx;
-    if (_netId == "") exitWith { _ctrl lbSetCurSel -1; };
-    private _grp = groupFromNetId _netId;
-    if (isNull _grp) then {
-        private _obj = objectFromNetId _netId;
-        if (!isNull _obj) then { _grp = group _obj; };
-    };
-    if (isNull _grp) exitWith { _ctrl lbSetCurSel -1; };
-    private _sel = missionNamespace getVariable ["MISSION_CORE_COMMAND_SELECTED", []];
-    private _shift = (keysDown find 42 != -1) || { (keysDown find 54 != -1) }; // L/R shift
-    if (_shift) then {
-        if (_grp in _sel) then { _sel = _sel - [_grp]; } else { _sel = _sel + [_grp]; };
+    // Re-entry guard: the re-fire cycle below (lbSetCurSel -1 then back to _idx) triggers
+    // onLBSelChanged again with the same index - that call must be swallowed, not re-toggled.
+    if (uiNamespace getVariable ["MISSION_CORE_COMMAND_BUSY", false]) exitWith { uiNamespace setVariable ["MISSION_CORE_COMMAND_BUSY", false]; };
+    // Resolve the group straight from the cached row list (same pattern as the attack/deploy tabs)
+    // instead of round-tripping through netId - netId can return "" for some groups on this build,
+    // which used to make every click silently exit with lbSetCurSel -1 (rows visible but unclickable).
+    private _rows = uiNamespace getVariable ["MISSION_CORE_COMMAND_ROWS", []];
+    if (_idx >= count _rows) exitWith {};
+    private _grp = (_rows select _idx) select 0;
+    if (isNull _grp) exitWith {};
+    // Plain click = select just this group. SHIFT+click = toggle that group in/out of the existing
+    // selection so several rows can carry an X. Shift state comes from the dialog KeyDown/KeyUp
+    // tracker (MISSION_CORE_COMMAND_SHIFT) - keysDown/inputAction are unreliable on this build.
+    if (missionNamespace getVariable ["MISSION_CORE_COMMAND_SHIFT", false]) then {
+        private _cur = missionNamespace getVariable ["MISSION_CORE_COMMAND_SELECTED", []];
+        if (_grp in _cur) then {
+            _cur = _cur - [_grp];
+        } else {
+            _cur pushBack _grp;
+        };
+        missionNamespace setVariable ["MISSION_CORE_COMMAND_SELECTED", _cur];
+        uiNamespace setVariable ["MISSION_CORE_COMMAND_SELECTED", _cur];
+        MISSION_CORE_COMMAND_SELECTED = _cur;
     } else {
-        _sel = if (_grp in _sel && { count _sel == 1 }) then { [] } else { [_grp] };
+        private _one = [_grp];
+        missionNamespace setVariable ["MISSION_CORE_COMMAND_SELECTED", _one];
+        uiNamespace setVariable ["MISSION_CORE_COMMAND_SELECTED", _one];
+        MISSION_CORE_COMMAND_SELECTED = _one;
     };
-    missionNamespace setVariable ["MISSION_CORE_COMMAND_SELECTED", _sel];
+    diag_log format ["[CMD DBG] sel gid=%1 count=%2", groupID _grp, count MISSION_CORE_COMMAND_SELECTED];
+    // Refresh the [X]/[ ] markers in place (no lbClear) so the native row highlight survives.
+    call MISSION_CORE_fnc_recruitCommanderRedraw;
+    // Re-fire a selection change so clicking the SAME row again still toggles it,
+    // while leaving the just-clicked row highlighted. The guard swallows the echoes.
+    uiNamespace setVariable ["MISSION_CORE_COMMAND_BUSY", true];
     _ctrl lbSetCurSel -1;
-    call MISSION_CORE_fnc_recruitMenuPopulateCommander;
+    _ctrl lbSetCurSel _idx;
+};
+
+// Rewrites the [X]/[ ] marker prefix of every commander row without clearing the listbox,
+// so the row the user clicked keeps its native highlight while the selection set updates.
+MISSION_CORE_fnc_recruitCommanderRedraw = {
+    private _rows = uiNamespace getVariable ["MISSION_CORE_COMMAND_ROWS", []];
+    private _sel = missionNamespace getVariable ["MISSION_CORE_COMMAND_SELECTED", []];
+    if (count _rows == 0) exitWith {};
+    private _disp = uiNamespace getVariable "DYNOPS_RecruitMenu";
+    if (isNull _disp) exitWith {};
+    private _list = _disp displayCtrl 1616;
+    if (lbSize _list != count _rows) exitWith {};
+    for "_i" from 0 to (count _rows - 1) do {
+        private _mark = if (((_rows select _i) select 0) in _sel) then { "[X] " } else { "[ ] " };
+        _list lbSetText [_i, _mark + ((_rows select _i) select 1)];
+    };
 };
 
 // Commander list contents: every tracked assault group (MISSION_CORE_ATTACK_GROUPS) plus the group
@@ -1193,8 +1248,18 @@ MISSION_CORE_fnc_recruitMenuPopulateCommander = {
             if (count _data < 7) then { continue; };
             private _ag = _data select 0;
             if (isNull _ag) then { continue; };
-            private _mark = if (_ag in _sel) then { "[X] " } else { "[ ] " };
-            private _label = format ["%1#%2 ASLT -> %3 (%4)", _mark, _x, _data select 1, _data select 5];
+            private _tmpl = _data select 3;
+            private _catCode = if (count _tmpl > 4) then {
+                private _t = _tmpl select 4;
+                if (_t find "Armor" > -1) then { "TNK" } else {
+                    if (_t find "Mech" > -1) then { "MECH" } else {
+                        if (_t find "Motor" > -1) then { "MOT" } else { "INF" };
+                    };
+                };
+            } else { "INF" };
+            private _gname = groupId _ag;
+            if (_gname == "") then { _gname = name (leader _ag); };
+            private _label = format ["%1 %2 (#%3) -> %4 (%5)", _catCode, _gname, _x, _data select 1, _data select 5];
             _rows pushBack [_ag, _label];
         } forEach MISSION_CORE_ATTACK_GROUPS;
     };
@@ -1203,39 +1268,104 @@ MISSION_CORE_fnc_recruitMenuPopulateCommander = {
             private _g = group _x;
             if (isNull _g) then { continue; };
             if (_rows findIf { (_x select 0) == _g } == -1) then {
-                private _mark = if (_g in _sel) then { "[X] " } else { "[ ] " };
-                private _label = format ["%1LEADER %2 (%3 men)", _mark, name _x, count units _g];
+                private _label = format ["LEADER %1 (%2 men)", name _x, count units _g];
                 _rows pushBack [_g, _label];
             };
         };
     } forEach allPlayers;
     {
         private _row = _x;
-        private _lb = _list lbAdd (_row select 1);
+        private _mark = if ((_row select 0) in _sel) then { "[X] " } else { "[ ] " };
+        private _lb = _list lbAdd (_mark + (_row select 1));
         _list lbSetData [_lb, netId (_row select 0)];
     } forEach _rows;
     _list lbSetCurSel -1;
     uiNamespace setVariable ["MISSION_CORE_COMMAND_ROWS", _rows];
 };
 
-// Open the WP editor in COMMANDER mode: drawn waypoints are later applied to every selected group.
+// Build a plain data list of a group's currently set waypoints: [pos, type, roe, speed, behaviour].
+// Drops the automatic trailing HOLD waypoint every group carries so only real tasking is returned.
+MISSION_CORE_fnc_groupCurrentWaypoints = {
+    params ["_grp"];
+    private _out = [];
+    if (isNull _grp) exitWith { _out };
+    private _arr = waypoints _grp;
+    if (count _arr > 0) then {
+        private _last = _arr select (count _arr - 1);
+        if (waypointType _last == "HOLD") then { _arr deleteAt (count _arr - 1); };
+    };
+    {
+        _out pushBack [
+            waypointPosition _x,
+            waypointType _x,
+            waypointCombatMode _x,
+            waypointSpeed _x,
+            waypointBehaviour _x
+        ];
+    } forEach _arr;
+    _out
+};
+
+// Draw the selected commander group's current route on the map as distinct "CUR" markers so the
+// user can see what exists before editing. In NEW mode (or no group) the markers are removed.
+MISSION_CORE_fnc_wpEditorSyncCurrentMarkers = {
+    if (isNil "MISSION_CORE_RECRUIT_CURRENT_MARKERS") then { MISSION_CORE_RECRUIT_CURRENT_MARKERS = []; };
+    { deleteMarkerLocal _x } forEach MISSION_CORE_RECRUIT_CURRENT_MARKERS;
+    MISSION_CORE_RECRUIT_CURRENT_MARKERS = [];
+    if (missionNamespace getVariable ["MISSION_CORE_COMMAND_WP_MODE", "NEW"] != "APPEND") exitWith {};
+    private _grp = missionNamespace getVariable ["MISSION_CORE_COMMAND_WP_GROUP", grpNull];
+    if (isNull _grp) exitWith {};
+    private _wps = [_grp] call MISSION_CORE_fnc_groupCurrentWaypoints;
+    missionNamespace setVariable ["MISSION_CORE_COMMAND_WP_CURRENT_COUNT", count _wps];
+    {
+        private _pos = _x select 0;
+        private _type = _x select 1;
+        private _mkr = createMarkerLocal [format ["DynOps_Cur_%1", _forEachIndex], _pos];
+        _mkr setMarkerShapeLocal "ICON";
+        _mkr setMarkerTypeLocal "mil_dot_noShadow";
+        _mkr setMarkerColorLocal "ColorCIV";
+        _mkr setMarkerTextLocal format ["CUR %1 %2", _forEachIndex + 1, _type];
+        _mkr setMarkerSizeLocal [0.7, 0.7];
+        MISSION_CORE_RECRUIT_CURRENT_MARKERS pushBack _mkr;
+    } forEach _wps;
+};
+
+// Open the WP editor in COMMANDER mode: current route is shown, drawn waypoints are later applied
+// to the selected groups (APPEND keeps the current route, NEW replaces it entirely - toggle with V).
 MISSION_CORE_fnc_recruitCommanderOpenWP = {
-    if (count (missionNamespace getVariable ["MISSION_CORE_COMMAND_SELECTED", []]) == 0) exitWith { hint "Select at least one group first."; };
+    private _sel = missionNamespace getVariable ["MISSION_CORE_COMMAND_SELECTED", []];
+    if (count _sel == 0) exitWith { hint "Select at least one group first."; };
     MISSION_CORE_WP_DONE_TARGET = "COMMANDER";
+    private _grp = _sel select 0;
+    if (isNull _grp) exitWith { hint "Selected group no longer exists."; };
+    missionNamespace setVariable ["MISSION_CORE_COMMAND_WP_GROUP", _grp];
+    private _cur = [_grp] call MISSION_CORE_fnc_groupCurrentWaypoints;
+    missionNamespace setVariable ["MISSION_CORE_COMMAND_WP_CURRENT_COUNT", count _cur];
+    missionNamespace setVariable ["MISSION_CORE_COMMAND_WP_MODE", if (count _cur > 0) then { "APPEND" } else { "NEW" }];
     [] spawn MISSION_CORE_fnc_recruitAttackOpenWP;
 };
 
-// Called when the WP editor closes in commander mode: apply the drawn route to every selected group.
+// Called when the WP editor closes in commander mode: APPEND keeps each group's current route and
+// adds the drawn waypoints on the end; NEW replaces the group's entire route with the drawn list.
+// The drawn list is combined with the group's LIVE waypoints at apply time (not the stale ones that
+// were shown as CUR markers on entry), so a squad that kept patrolling while its route was edited
+// still ends up with the new path correctly appended.
 MISSION_CORE_fnc_commanderApplyWaypoints = {
-    private _wps = +MISSION_CORE_RECRUIT_SAVED_WAYPOINTS;
-    if (count _wps == 0) exitWith { hint "No waypoints drawn - groups keep their current path."; };
+    private _drawn = +MISSION_CORE_RECRUIT_SAVED_WAYPOINTS;
+    private _mode = missionNamespace getVariable ["MISSION_CORE_COMMAND_WP_MODE", "NEW"];
     private _sel = missionNamespace getVariable ["MISSION_CORE_COMMAND_SELECTED", []];
     if (count _sel == 0) exitWith { MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = []; hint "No groups selected - nothing applied."; };
-    private _targetPos = (_wps select (count _wps - 1)) select 0;
+    if (count _drawn == 0 && { _mode == "NEW" }) exitWith { MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = []; hint "No waypoints drawn - groups keep their current path."; };
     private _applied = 0;
     {
         private _grp = _x;
         if (isNull _grp || { count units _grp == 0 }) then { continue; };
+        private _wps = +_drawn;
+        if (_mode == "APPEND") then {
+            _wps = ([_grp] call MISSION_CORE_fnc_groupCurrentWaypoints) + _drawn;
+        };
+        if (count _wps == 0) then { continue; };
+        private _targetPos = (_wps select (count _wps - 1)) select 0;
         if (local _grp) then {
             [_grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
             _grp setVariable ["MISSION_CORE_ORDER", "attack"];
@@ -1246,7 +1376,17 @@ MISSION_CORE_fnc_commanderApplyWaypoints = {
         _applied = _applied + 1;
     } forEach _sel;
     MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = [];
-    hint format ["%1 group(s) routed to %2 waypoints.", _applied, count _wps];
+    { deleteMarkerLocal _x } forEach MISSION_CORE_RECRUIT_CURRENT_MARKERS;
+    MISSION_CORE_RECRUIT_CURRENT_MARKERS = [];
+    if (_applied == 0) exitWith { hint "None of the selected groups were routable - nothing applied."; };
+    private _names = "";
+    {
+        if (isNull _x) then { continue; };
+        private _g = _x;
+        if (count _names > 0) then { _names = _names + ", "; };
+        _names = _names + (groupId _g);
+    } forEach _sel;
+    hint format ["%1 group(s) routed (%2): %3", _applied, if (_mode == "APPEND") then { "appended to current route" } else { "new route" }, _names];
 };
 
 // RemoteExec target on the commander client: pops up the approval dialog when the AI commander
@@ -1763,9 +1903,16 @@ MISSION_CORE_fnc_wpPanelUpdateCount = {
     private _behName = if (_behIdx >= 0) then { _behNames select _behIdx } else { MISSION_CORE_RECRUIT_WP_BEHAVIOUR };
 
     private _wpCount = count MISSION_CORE_RECRUIT_SAVED_WAYPOINTS;
+    private _curCount = missionNamespace getVariable ["MISSION_CORE_COMMAND_WP_CURRENT_COUNT", 0];
+    private _mode = missionNamespace getVariable ["MISSION_CORE_COMMAND_WP_MODE", "NEW"];
+    private _modeTxt = if (_mode == "APPEND") then {
+        format ["APPEND (+%1 existing)", _curCount]
+    } else {
+        "NEW (replace)"
+    };
 
     titleText [
-        format ["<t size='1.2' color='#99CCFF'>WAYPOINT EDITOR</t><br/><br/><t size='1.0' color='#FFFFFF'>Type: %1  ROE: %2</t><br/><t size='1.0' color='#FFFFFF'>Speed: %3  Behaviour: %4</t><br/><t size='1.0' color='#80FF80'>Waypoints: %5</t><br/><br/><t size='0.8' color='#CCCCCC'>[ ] Cycle type | Q W Cycle ROE | E R Speed | T Y Behaviour | Z Undo | X Clear | Esc Done</t>", _typeName, _roeName, _speedName, _behName, _wpCount],
+        format ["<t size='1.2' color='#99CCFF'>WAYPOINT EDITOR</t><br/><br/><t size='1.0' color='#FFFFFF'>Type: %1  ROE: %2</t><br/><t size='1.0' color='#FFFFFF'>Speed: %3  Behaviour: %4</t><br/><t size='1.0' color='#80FF80'>Waypoints: %5  Mode: %6</t><br/><br/><t size='0.8' color='#CCCCCC'>[ ] Cycle type | Q W Cycle ROE | E R Speed | T Y Behaviour | V APPEND/NEW | Z Undo | X Clear | Esc Done</t>", _typeName, _roeName, _speedName, _behName, _wpCount, _modeTxt],
         "PLAIN", -1, true, true
     ];
 };
@@ -1805,6 +1952,9 @@ MISSION_CORE_fnc_recruitAttackOpenWP = {
 
     openMap true;
     waitUntil { sleep 0.1; visibleMap };
+
+    // Commander mode: show the selected group's current route as CUR markers on the map.
+    if (MISSION_CORE_WP_DONE_TARGET == "COMMANDER") then { call MISSION_CORE_fnc_wpEditorSyncCurrentMarkers; };
 
     // Build HUD
     call MISSION_CORE_fnc_wpPanelUpdateCount;
@@ -1877,6 +2027,13 @@ MISSION_CORE_fnc_recruitAttackOpenWP = {
             };
             case 21: { call MISSION_CORE_fnc_wpEditorRemoveLast; _handled = true; }; // Z
             case 45: { call MISSION_CORE_fnc_wpEditorClear; _handled = true; }; // X
+            case 47: { // V = toggle APPEND (keep current route) / NEW (replace route)
+                private _mode = missionNamespace getVariable ["MISSION_CORE_COMMAND_WP_MODE", "NEW"];
+                missionNamespace setVariable ["MISSION_CORE_COMMAND_WP_MODE", if (_mode == "APPEND") then { "NEW" } else { "APPEND" }];
+                call MISSION_CORE_fnc_wpEditorSyncCurrentMarkers;
+                hint format ["Mode: %1", if (_mode == "APPEND") then { "NEW (replace route)" } else { "APPEND (keep current route)" }];
+                _handled = true;
+            };
         };
         if (_handled) then { call MISSION_CORE_fnc_wpPanelUpdateCount; };
         _handled
@@ -1892,6 +2049,8 @@ MISSION_CORE_fnc_recruitAttackOpenWP = {
         call MISSION_CORE_fnc_wpEditorDestroyHUD;
         { deleteMarkerLocal _x } forEach MISSION_CORE_RECRUIT_WAYPOINT_MARKERS;
         MISSION_CORE_RECRUIT_WAYPOINT_MARKERS = [];
+        { deleteMarkerLocal _x } forEach MISSION_CORE_RECRUIT_CURRENT_MARKERS;
+        MISSION_CORE_RECRUIT_CURRENT_MARKERS = [];
         // Commander mode: apply the drawn route to every selected group instead of deploying a
         // fresh squad, then reopen on the COMMANDER (3) tab.
         if (MISSION_CORE_WP_DONE_TARGET == "COMMANDER") then {

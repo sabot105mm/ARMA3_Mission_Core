@@ -54,6 +54,7 @@ MISSION_CORE_fnc_spawnLocation = {
                 // AA overwatch tanks (slot "" + AA flag) never draw from the pool.
                 if (_cSlot == "mbt" && _tankPool > 0 && { ([_loc] call MISSION_CORE_fnc_countMBTByMarker) >= _tankPool }) then {
                     diag_log format ["DYNAMIC SPAWN: %1 cache restore blocked - tank pool full (%2)", _locName, _tankPool];
+                    [_owner, "mbt"] call MISSION_CORE_fnc_armorCapRelease;
                     private _vehs = [];
                     { private _v = vehicle _x; if (_v != _x && { alive _v } && { !(_v in _vehs) }) then { _vehs pushBack _v; }; } forEach units _grp;
                     { deleteVehicle _x; } forEach units _grp;
@@ -88,15 +89,18 @@ MISSION_CORE_fnc_spawnLocation = {
         private _defenseCandidates = [];
         private _gName = "";
 
-        // Weighted infantry defender pools: AA 10% / AT 40% / inf squad 40% / weapons squad 10%
-        private _aaPool = _allGroups select { (_x select 3) find "_aa" > -1 || (_x select 3) == "tank_aa" };
-        private _atPool = _allGroups select { (_x select 3) find "_at" > -1 };
+        // Weighted infantry defender pools: AA 10% / AT 40% / inf squad 40% / weapons squad 10%.
+        // Motorized (truck) groups classify as foot infantry now, but a garrison must NOT field
+        // them: they neither take a mech armour slot nor stand in as foot defenders, so drop any
+        // Motorized-category group from every defender pool.
+        private _aaPool = _allGroups select { ((_x select 3) find "_aa" > -1 || (_x select 3) == "tank_aa") && { ((toLower (_x select 4)) find "motor") == -1 } };
+        private _atPool = _allGroups select { (_x select 3) find "_at" > -1 && { ((toLower (_x select 4)) find "motor") == -1 } };
         private _infPool = [_allGroups] call MISSION_CORE_fnc_getInfTemplates;
-        // Mech/motorized infantry (a couple of vehicles) also feed the defender pool
+        // Mech (APC) infantry (a couple of vehicles) also feed the defender pool
         {
             if ((_x select 3) == "mech" && { ({ !(_x isKindOf "Man") } count (_x select 1)) <= 2 }) then { _infPool pushBack _x; };
         } forEach _allGroups;
-        private _weaponsPool = _allGroups select { (_x select 3) == "inf_weapons" };
+        private _weaponsPool = _allGroups select { (_x select 3) == "inf_weapons" && { ((toLower (_x select 4)) find "motor") == -1 } };
 
         private _pickWeighted = {
             params ["_pools", "_weights"];
@@ -235,6 +239,7 @@ MISSION_CORE_fnc_spawnLocation = {
             private _subCat = _x select 3;
             private _isAAVehicle = _subCat == "tank_aa" || (_subCat find "_aa" > -1 && { _subCat find "inf" == -1 });
             private _isArty = _subCat == "artillery";
+            private _slotClaimed = "";
 
             // Artillery (SPG/MLRS/self-propelled guns) only ever spawns on overwatch markers -
             // the high-ground Hill/Mount/RockArea positions where a piece can lob shells over
@@ -293,11 +298,13 @@ MISSION_CORE_fnc_spawnLocation = {
                         diag_log format ["DYNAMIC SPAWN: skipping %1 at %2 - %3 cap full", _grpType, _locName, _slot];
                         continue;
                     };
+                    _slotClaimed = _slot;
                     // Pooled marker: never spawn more MBTs than its tank pool allows, even if
                     // the global cap is open - the pool is the marker's own local allowance.
                     // AA overwatch tanks (tank_aa) never draw from the pool.
                     if (_slot == "mbt" && _subCat != "tank_aa" && _tankPool > 0 && { ([_loc] call MISSION_CORE_fnc_countMBTByMarker) >= _tankPool }) then {
                         diag_log format ["DYNAMIC SPAWN: skipping %1 at %2 - tank pool full (%3)", _grpType, _locName, _tankPool];
+                        [_owner, "mbt"] call MISSION_CORE_fnc_armorCapRelease;
                         continue;
                     };
                 };
@@ -307,6 +314,7 @@ MISSION_CORE_fnc_spawnLocation = {
                     diag_log format ["DYNAMIC SPAWN: %1 spawned at %2 imp=%3 (group %4, wps=%5)", _grpType, _loc select 0, _importance, groupId _grp, count (waypoints _grp)];
                 } else {
                     diag_log format ["DYNAMIC SPAWN: %1 at %2 FAILED to spawn", _grpType, _loc select 0];
+                    if (_slotClaimed == "mbt") then { [_owner, "mbt"] call MISSION_CORE_fnc_armorCapRelease; };
                 };
                 if (_isArmorSpawn) then {
                     private _slot = if (_subCat find "tank" > -1) then { "mbt" } else { "mech" };

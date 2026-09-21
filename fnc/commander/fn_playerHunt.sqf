@@ -17,8 +17,9 @@
 // player was last moving - from the time it ARRIVES at the LKP - for 10 minutes.
 //
 // INFORMATION MODEL (no god-view):
+//   - Knowledge is sampled from each REDFOR group's ALIVE LEADER ONLY - never from every unit.
 //   - Contact requires REAL line of sight (terrain/building LOS check) AND knowsAbout > 0.7.
-//   - Shared garrison intel: any spawned REDFOR unit with an actual sighting reports
+//   - Shared garrison intel: any REDFOR group LEADER with an actual sighting reports
 //     [pos, heading, time] into MISSION_CORE_HUNT_INTEL; it decays after ~60s.
 //   - While sweeping, groups steer ONLY toward a <60s-old shared sighting; otherwise they walk
 //     the original extrapolated line blind. They NEVER steer toward the player's live position.
@@ -73,8 +74,8 @@ MISSION_CORE_fnc_playerHunt = {
                 if ((_data select 5) != "active") then { continue; };
                 private _ag = _data select 0;
                 if (isNull _ag) then { continue; };
-                private _ldr = leader _ag;
-                if (alive _ldr && { side _ldr == _enemySide }) then { _players pushBack _ldr; };
+                private _rep = (units _ag select { alive _x }) param [0, objNull];
+                if (!isNull _rep && { side _rep == _enemySide }) then { _players pushBack _rep; };
             } forEach MISSION_CORE_ATTACK_GROUPS;
         };
         // MULTIPLAYER RELAY: client-spawned assault leaders are hunted too (fn_assaultRelay.sqf).
@@ -84,14 +85,26 @@ MISSION_CORE_fnc_playerHunt = {
                 if ((_data select 5) != "active") then { continue; };
                 private _ag = _data select 0;
                 if (isNull _ag) then { continue; };
-                private _ldr = leader _ag;
-                if (alive _ldr && { side _ldr == _enemySide }) then { _players pushBack _ldr; };
+                private _rep = (units _ag select { alive _x }) param [0, objNull];
+                if (!isNull _rep && { side _rep == _enemySide }) then { _players pushBack _rep; };
             } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
         };
         if (count _players == 0) then { continue; };
         // Snapshot this side's units once per tick and reuse for all players. Avoids an allUnits
         // refetch per player (the list only changes between frames, not mid-loop-body).
         private _snapUnits = allUnits select { side _x == _side };
+        // Knowledge of the player is sampled from each REDFOR group's ALIVE LEADER ONLY - never from
+        // every unit. The group commander's own sighting is what counts as command-level contact, so
+        // a grunt's faint curiosity can no longer drag a whole contingent across the map.
+        private _snapLeaders = [];
+        {
+            private _g = group _x;
+            if (isNull _g) then { continue; };
+            private _ldr = leader _g;
+            if (isNull _ldr) then { continue; };
+            if !(alive _ldr) then { continue; };
+            if (_snapLeaders findIf { _x == _ldr } == -1) then { _snapLeaders pushBack _ldr; };
+        } forEach _snapUnits;
 
         // Spawned REDFOR markers = the "eyes" that eventually spot a player loitering nearby.
         private _redSpawned = MISSION_CORE_CACHED_POSITIONS select {
@@ -109,10 +122,11 @@ MISSION_CORE_fnc_playerHunt = {
             // A player counts as "seen" when inside _detectRange of any spawned REDFOR marker.
             private _near = (_redSpawned findIf { (_x select 1) distance2D _pPos < _detectRange }) != -1;
 
-            // A CURRENT live sighting: any REDFOR unit with a real LOS + knowsAbout saw the player
-            // this tick. This is a genuine "we know where he is right now" - enough to hunt even when
-            // the player is not near a spawned marker (e.g. a field patrol or convoy spotted him).
-            private _liveSight = (_snapUnits findIf {
+            // A CURRENT live sighting: a REDFOR group LEADER with a real LOS + knowsAbout saw the
+            // player this tick. This is a genuine "we know where he is right now" - enough to hunt
+            // even when the player is not near a spawned marker (e.g. a patrol or convoy leader
+            // spotted him).
+            private _liveSight = (_snapLeaders findIf {
                 [_x, _p] call MISSION_CORE_fnc_huntSeesPlayer
             }) != -1;
 
@@ -142,14 +156,15 @@ MISSION_CORE_fnc_playerHunt = {
             // still fresh (<60s). No real contact = no hunt.
             private _intel = MISSION_CORE_HUNT_INTEL getOrDefault [_pKey, []];
             private _intelFresh = count _intel >= 3 && { (time - (_intel select 2)) <= (["huntIntelDecay", 60] call MISSION_CORE_fnc_tune) };
-            // Strongest current awareness of the player - drives how precise the reported position
-            // is. Full contact = exact spot, faint 0.1 = a wide drift, never a god-view pin.
+            // Strongest current awareness of the player - sampled from group leaders only. Drives how
+            // precise the reported position is. Full contact = exact spot, faint 0.1 = a wide drift,
+            // never a god-view pin.
             private _maxKnows = 0;
             {
                 if (alive _x && { _x distance2D _pPos < (_detectRange + 300) }) then {
                     _maxKnows = _maxKnows max (_x knowsAbout _p);
                 };
-            } forEach _snapUnits;
+            } forEach _snapLeaders;
             if (!_intelFresh && { !_liveSight }) then { continue; };
 
             // Already hunting this player - living contingents are on the way / sweeping.
@@ -252,15 +267,24 @@ MISSION_CORE_fnc_huntSpawnContingent = {
     private _spawnPos = [_srcPos, _srcSize, 30, random 360] call MISSION_CORE_fnc_findVehiclePos;
     _spawnPos = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos;
 
+    // SPAWN SAFETY: a hunt contingent is never CONJURED inside a player's sight bubble. Re-used
+    // garrison groups already exist on the field (nothing new pops in), but every FRESH spawn
+    // below - fallback foot squad, MBT, APC - must materialize at least huntSpawnMinPlayerDist
+    // from any alive player. If this source sits too close to a player, the contingent is simply
+    // not fielded here rather than popping into view at their feet.
+    private _pNear = 1e10;
+    { _pNear = _pNear min (_spawnPos distance2D _x); } forEach (allPlayers select { alive _x });
+    private _spawnSafe = _pNear >= (["huntSpawnMinPlayerDist", 500] call MISSION_CORE_fnc_tune);
+
     private _grp = grpNull;
 
     // 1) Tank threat - field an MBT (respects the armor cap), else a bigger AT-capable squad.
-    if (_inTank && { count _mbtClasses > 0 && { [_side, "mbt", _lkp, _srcImp] call MISSION_CORE_fnc_armorCapOpen } }) then {
+    if (_inTank && { _spawnSafe } && { count _mbtClasses > 0 && { [_side, "mbt", _lkp, _srcImp] call MISSION_CORE_fnc_armorCapOpen } }) then {
         _grp = [_side, selectRandom _mbtClasses, "mbt", _spawnPos, 0, _srcImp, _lkp] call MISSION_CORE_fnc_spawnDefenseVehicle;
     };
 
     // 2) Vehicle threat - gun-capable vehicle (APC, else MBT).
-    if (isNull _grp && { _inVeh }) then {
+    if (isNull _grp && { _spawnSafe && { _inVeh } }) then {
         private _vehClass = "";
         if (count _apcClasses > 0 && { [_side, "mech", _lkp, _srcImp] call MISSION_CORE_fnc_armorCapOpen }) then { _vehClass = selectRandom _apcClasses; };
         if (_vehClass == "" && { count _mbtClasses > 0 && { [_side, "mbt", _lkp, _srcImp] call MISSION_CORE_fnc_armorCapOpen } }) then { _vehClass = selectRandom _mbtClasses; };
@@ -294,16 +318,22 @@ MISSION_CORE_fnc_huntSpawnContingent = {
         if (count _idleAtSrc > 0) then {
             _grp = selectRandom _idleAtSrc;
         } else {
-            // Fallback: no eligible spawned garrison at this source - spawn one.
-            private _infPool = [(_factionData select 17)] call MISSION_CORE_fnc_getInfTemplates;
-            if (count _infPool > 0) then {
-                private _template = selectRandom _infPool;
-                _grp = [_template select 0, _spawnPos, _side, _factionData select 3, "AWARE", "NORMAL", _srcImp, _srcPos, _srcSize] call MISSION_CORE_fnc_spawnGroup;
-                if (!isNull _grp) then {
-                    _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _srcName];
-                    if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
-                    MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
+            // Fallback: no eligible spawned garrison at this source - spawn one (respecting the
+            // spawn-safety distance already checked above; a source hugging the player fields no
+            // CONJURED contingent - the squad would materialize in his face).
+            if (_spawnSafe) then {
+                private _infPool = [(_factionData select 17)] call MISSION_CORE_fnc_getInfTemplates;
+                if (count _infPool > 0) then {
+                    private _template = selectRandom _infPool;
+                    _grp = [_template select 0, _spawnPos, _side, _factionData select 3, "AWARE", "NORMAL", _srcImp, _srcPos, _srcSize] call MISSION_CORE_fnc_spawnGroup;
+                    if (!isNull _grp) then {
+                        _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _srcName];
+                        if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+                        MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
+                    };
                 };
+            } else {
+                diag_log format ["PLAYER HUNT: %1 source %2 skipped - spawn safety (%3m < %4m)", _side, _srcName, round _pNear, round (["huntSpawnMinPlayerDist", 500] call MISSION_CORE_fnc_tune)];
             };
         };
     };
@@ -350,12 +380,34 @@ MISSION_CORE_fnc_huntClearBuildings = {
     diag_log format ["PLAYER HUNT: %1 clearing %2 houses (%3 spots) at %4", groupId _grp, count _houses, _cleared, _center];
 };
 
+// Hunt leader Killed EH (the "torch"): the sweep samples contact from the group's LIVING LEADER
+// ONLY (see huntSeesPlayer), so when the leader goes down the torch must pass to the next alive
+// member. The engine auto-promotes a leader on death, but we still switch explicitly (selectLeader
+// when the leader slot is dead) and re-arm the EH on the new leader so a chain of leader deaths
+// never leaves the sweep reading a dead unit / without the hunt leader state.
+MISSION_CORE_fnc_huntLeaderTorch = {
+    params ["_dead", "_killer"];
+    private _g = group _dead;
+    if (isNull _g) exitWith {};
+    if ((_g getVariable ["MISSION_CORE_HUNT_KEY", ""]) == "") exitWith {};
+    private _alive = units _g select { alive _x };
+    if (count _alive == 0) exitWith {};
+    if (isNull (leader _g) || { !(alive (leader _g)) }) then { _g selectLeader (_alive select 0); };
+    private _new = leader _g;
+    if (isNull _new) exitWith {};
+    _new setVariable ["MISSION_CORE_PATROLLING", false];
+    _new addEventHandler ["Killed", { _this call MISSION_CORE_fnc_huntLeaderTorch; }];
+    diag_log format ["PLAYER HUNT: %1 leader down - %2 takes over", groupId _g, name _new];
+};
+
 // Sweep controller for one hunt contingent.
 MISSION_CORE_fnc_huntSweep = {
     params ["_grp", "_lkp", "_heading", "_side", "_player", "_playerKey", "_srcName", "_srcPos", "_srcD"];
     if (isNull _grp) exitWith {};
     _grp setVariable ["MISSION_CORE_PATROLLING", false];
     leader _grp setVariable ["MISSION_CORE_PATROLLING", false];
+    // Arm the leader torch (passes to the next alive member on leader death).
+    (leader _grp) addEventHandler ["Killed", { _this call MISSION_CORE_fnc_huntLeaderTorch; }];
 
     // Transport rule for the hunt:
     //   - Player FAR away     -> mount a transport to close the distance (even a footman far out
@@ -367,18 +419,17 @@ MISSION_CORE_fnc_huntSweep = {
     private _playerDist = if (isNull _player) then { _ldr distance2D _lkp } else { _ldr distance2D _player };
     private _targetInVeh = !isNull _player && { vehicle _player != _player };
     private _mounted = vehicle _ldr != _ldr;
-    private _truck = objNull;
     if (!_mounted && { _targetInVeh || { _playerDist >= (["huntMountDist", 700] call MISSION_CORE_fnc_tune) } }) then {
-        _truck = [_grp, _side, getPos _ldr] call MISSION_CORE_fnc_mountInfantry;
+        // Self-drive: the contingent crews its own truck (no spawned driver / dedicated driver group).
+        [_grp, _side, getPos _ldr, true] call MISSION_CORE_fnc_mountInfantry;
     };
     _mounted = vehicle _ldr != _ldr;
-    private _isGun = _mounted && { [vehicle _ldr] call MISSION_CORE_fnc_hasMountedGun };
-    if (_isGun) then { _truck = objNull; };
 
     // HUNT CONTACT RULE: fight on foot, never from the truck.
-    //   - Plain cargo truck           -> everyone out (the dedicated driver group keeps the truck).
-    //   - Gun truck (gun MRAP)        -> the DRIVER and GUNNER stay mounted as mobile fire support,
-    //                                   the CARGO dismounts. Re-embarking is locked out.
+    //   - Plain cargo truck (self-driven) -> EVERYONE out, the driver included. The empty truck is
+    //                                       left parked + cargo-locked where it stopped.
+    //   - Gun truck (gun MRAP)            -> the DRIVER and GUNNER stay mounted as mobile fire
+    //                                       support, the CARGO dismounts. Re-embarking is locked out.
     // After the unload the step behaves COMBAT + combat mode RED.
     private _disembark = {
         params ["_g"];
@@ -396,8 +447,9 @@ MISSION_CORE_fnc_huntSweep = {
         // Per-unit leaveVehicle is what actually stops the AI re-boarding loop - orderGetIn false
         // and lockCargo alone just make the men yell "get back in" while being refused. It is
         // applied per rider (not _g leaveVehicle) so a kept driver/gunner is never told to leave.
+        // A plain truck keeps NO crew - only a gun truck retains its driver+gunner.
         {
-            if (_x isEqualTo _gDrv) then { continue; };
+            if (_keepCrew && { _x isEqualTo _gDrv }) then { continue; };
             if (_keepCrew && { _x isEqualTo (gunner _v) }) then { continue; };
             if (_keepCrew && { _x isEqualTo (commander _v) }) then { continue; };
             if (vehicle _x != _v) then { continue; };
@@ -410,71 +462,35 @@ MISSION_CORE_fnc_huntSweep = {
         _v lockCargo true;
         _g setCombatMode "RED";
         _g setBehaviour "COMBAT";
-        diag_log format ["PLAYER HUNT: %1 dismounted (%2 stayed mounted, cargo unloaded)", groupId _g, if (_keepCrew) then { "driver+gunner" } else { "driver only" }];
+        diag_log format ["PLAYER HUNT: %1 dismounted (%2 stayed mounted)", groupId _g, if (_keepCrew) then { "driver+gunner" } else { "nobody" }];
     };
 
-    if (_mounted && { !_isGun }) then {
-        // Cargo truck - add GETOUT at the LKP (driven by a waypoint script so the dismount is
-        // precision-timed to arrival); the driver group gets a TR UNLOAD ring at the LKP.
-        [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-        private _wpG = _grp addWaypoint [_lkp, 60];
-        _wpG setWaypointType "GETOUT";
-        _wpG setWaypointSpeed "FULL";
-        _wpG setWaypointScript "fnc\commander\transport_assaultUnload.sqf";
-        private _drvGrp = _truck getVariable ["MISSION_CORE_DRIVER_GROUP", grpNull];
-        if (!isNull _drvGrp) then {
-            [_drvGrp] call MISSION_CORE_fnc_clearGroupWaypoints;
-            _drvGrp setBehaviour "CARELESS";
-            private _wpU = _drvGrp addWaypoint [_lkp, 60];
-            _wpU setWaypointType "TR UNLOAD";
-            _wpU setWaypointSpeed "FULL";
-            _drvGrp setCurrentWaypoint _wpU;
-        };
-        _grp setCurrentWaypoint _wpG;
-    } else {
-        [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-        private _wp = _grp addWaypoint [_lkp, 50];
-        _wp setWaypointType "MOVE";
-        _wp setWaypointSpeed "FULL";
-        _grp setCurrentWaypoint _wp;
-        _grp setBehaviour "AWARE";
-        _grp setCombatMode "RED";
-    };
+    // Advance to the LKP. The contingent drives its OWN truck now (no dedicated driver group), so
+    // this is a plain MOVE for both mounted and on-foot - at arrival _disembark does the unload: a
+    // plain truck empties completely (driver included), a gun truck keeps its driver+gunner. No
+    // waypoint script is needed and no separate driver group exists to receive a TR UNLOAD.
+    [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
+    private _wp = _grp addWaypoint [_lkp, 50];
+    _wp setWaypointType "MOVE";
+    _wp setWaypointSpeed "FULL";
+    _grp setCurrentWaypoint _wp;
+    _grp setBehaviour "AWARE";
+    _grp setCombatMode "RED";
 
-    // Arrive: wait until the leader reaches the LKP (or everyone unloaded there / timeout).
+    // Arrive: wait until the leader reaches the LKP (or timeout).
     private _arrival = time + (["huntSweepSeconds", 600] call MISSION_CORE_fnc_tune);
     waitUntil { sleep 2;
         isNull _grp || { count units _grp == 0 } ||
         { (leader _grp) distance2D _lkp < 150 } ||
-        { !(_mounted && { !_isGun }) && { (leader _grp) distance2D _lkp < 300 } } ||
         { time > _arrival }
     };
 
-    // Arrival done - get the squad on the ground. Cargo trucks already unloaded via the GETOUT
-    // waypoint script; a gun truck only now gets its cargo out (driver+gunner stay). No-op when
-    // already on foot.
+    // Arrival done - get the squad on the ground (gun trucks only now eject their cargo; the
+    // driver+gunner stay). No-op when already on foot.
     [_grp] call _disembark;
 
-    // The hunt squad is on the ground now - the support truck's job is done. Turn the driver
-    // group loose to drive it back toward the source marker and despawn there, so an empty truck
-    // never idles at the LKP for the whole sweep.
-    if (!isNull _truck && { alive _truck }) then {
-        private _drvGrp = _truck getVariable ["MISSION_CORE_DRIVER_GROUP", grpNull];
-        if (!isNull _drvGrp) then {
-            private _tHome = if (_srcPos distance [0, 0, 0] > 1) then { _srcPos } else { getPos _truck };
-            // Turn the driver group loose on a MOVE waypoint home; transport_truckArrive.sqf
-            // despawns crew + truck + group on arrival - no 5s polling loop.
-            _drvGrp setBehaviour "CARELESS";
-            _drvGrp setSpeedMode "FULL";
-            [_drvGrp] call MISSION_CORE_fnc_clearGroupWaypoints;
-            private _wpHome = _drvGrp addWaypoint [_tHome, 30];
-            _wpHome setWaypointType "MOVE";
-            _wpHome setWaypointSpeed "FULL";
-            _wpHome setWaypointBehaviour "CARELESS";
-            _wpHome setWaypointScript "fnc\commander\transport_truckArrive.sqf";
-            _drvGrp setCurrentWaypoint _wpHome;
-        };
-    };
+    // The self-driven truck is left parked + cargo-locked where it stopped - no driver group to
+    // send it home (a gun truck keeps its own driver+gunner aboard as fire support).
 
     // The 10-minute sweep clock starts when the contingent REACHES the player's last known pos.
     private _sweepEnd = time + (["huntSweepSeconds", 600] call MISSION_CORE_fnc_tune);
@@ -510,11 +526,12 @@ MISSION_CORE_fnc_huntSweep = {
         if (isNull _player) then { continue; };
 
         // ---- Re-spot (REAL contact only) ----
-        // A group member is considered to have "seen" the player when they have actual line of
-        // sight AND knowsAbout > 0.7. Raw distance is NEVER sight (no wallhacking through a house
+        // The group's ALIVE LEADER is considered to have "seen" the player when it has actual line
+        // of sight AND knowsAbout > 0.7. Raw distance is NEVER sight (no wallhacking through a house
         // or a hill). A tiny 30m bump-in radius is the only non-LOS trigger (they practically
         // stepped on him).
-        private _sight = (units _grp findIf { [_x, _player] call MISSION_CORE_fnc_huntSeesPlayer }) != -1;
+        private _ldrS = leader _grp;
+        private _sight = !isNull _ldrS && { [_ldrS, _player] call MISSION_CORE_fnc_huntSeesPlayer };
         private _close = (leader _grp) distance2D _player < (["huntReSpotRadius", 30] call MISSION_CORE_fnc_tune);
         if (_sight || _close) then {
             // PUBLISH the real sighting as shared intel immediately. Until this moment no group
@@ -548,7 +565,8 @@ MISSION_CORE_fnc_huntSweep = {
             while { time < _escAt && { !isNull _grp } && { alive _player } && { !isNull _player } } do {
                 sleep 5;
                 if (isNull _grp) exitWith {};
-                private _still = (units _grp findIf { [_x, _player] call MISSION_CORE_fnc_huntSeesPlayer }) != -1;
+                private _ldrS2 = leader _grp;
+                private _still = !isNull _ldrS2 && { [_ldrS2, _player] call MISSION_CORE_fnc_huntSeesPlayer };
                 if (_still || { (leader _grp) distance2D _player < (["huntReSpotRadius", 30] call MISSION_CORE_fnc_tune) }) then {
                     _lastSeen = getPos _player;
                     _escAt = time + 30;

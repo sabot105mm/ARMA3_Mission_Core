@@ -8,6 +8,7 @@ call compile preprocessFileLineNumbers "fnc\spawn\fn_findVehiclePos.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_findFlatSpawns.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_buildSafeVehicleSpawns.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_getSafeVehicleSpawns.sqf";
+call compile preprocessFileLineNumbers "fnc\spawn\fn_isSafeVehicleSpawnPos.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_isDryPos.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_ensureLandPos.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_safeWaypointPos.sqf";

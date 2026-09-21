@@ -321,6 +321,8 @@ MISSION_CORE_fnc_serverGroupTryRefill = {
 
     private _spawnPos = getPosATL (leader _grp);
     if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
+    _spawnPos = [_spawnPos, _spawnPos, [60, 60]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
 
     if (isNil "MISSION_CORE_fnc_poolTanksForSide" || { isNil "MISSION_CORE_fnc_consumePoolTankForSide" }) exitWith {
         [_grp, _target, _wps, _tmpl, _side, _status, _targetPos]

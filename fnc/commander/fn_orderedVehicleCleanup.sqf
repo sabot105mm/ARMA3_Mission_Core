@@ -89,7 +89,7 @@ MISSION_CORE_fnc_refundOrderedVehContents = {
         } else {
         private _s = side _veh;
         private _depots = MISSION_CORE_CACHED_POSITIONS select {
-            (_x select 4) == _s && { [(_x select 0)] call MISSION_CORE_fnc_tankDepotIsDepot }
+            (_x select 4) == _s && { [_x] call MISSION_CORE_fnc_tankDepotIsDepot }
         };
         private _dn = "";
         if (count _depots > 0) then {

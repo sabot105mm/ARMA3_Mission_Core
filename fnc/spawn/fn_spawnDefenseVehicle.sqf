@@ -3,7 +3,9 @@ MISSION_CORE_fnc_spawnDefenseVehicle = {
     params ["_side", "_vehClass", "_vehSlot", "_pos", "_angle", "_importance", "_targetPos"];
     if (_vehClass == "") exitWith { grpNull };
     if !([_side, _vehSlot, _targetPos, _importance] call MISSION_CORE_fnc_armorCapOpen) exitWith { grpNull };
-    _pos = [_pos, 0, 100, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
+    // Full safe-spawn check (dry, not flagged-unsafe, no parked vehicle within 40m, clear of
+    // geometry AND terrain objects): re-roll through findVehiclePos when the caller's spot fails.
+    _pos = [_pos, _targetPos, [200, 200]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
     if (count _pos < 2) then { _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos; };
     if (count _pos == 2) then { _pos pushBack 0; };
     private _crewClass = if (_side == WEST) then { "B_crew_F" } else { "O_crew_F" };

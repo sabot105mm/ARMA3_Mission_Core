@@ -32,6 +32,10 @@ MISSION_CORE_fnc_spawnHQForce = {
             if (count _vehPos < 2) then { _vehPos = [_targetPos, _markerSize, 20, _dir] call MISSION_CORE_fnc_findVehiclePos; };
             if (count _vehPos < 2) then { _vehPos = [_targetPos] call MISSION_CORE_fnc_ensureLandPos; };
             if (count _vehPos == 2) then { _vehPos pushBack 0; };
+            // Full safe-spawn check on the spot before the tank materializes (see
+            // fn_isSafeVehicleSpawnPos): re-roll to a safe road/flat spot if the chosen one fails.
+            _vehPos = [_vehPos, _targetPos, _markerSize] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+            if (count _vehPos == 2) then { _vehPos pushBack 0; };
             private _tank = createVehicle [selectRandom _mbtClasses, [_vehPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
             private _grp = createGroup _side;
             _grp addVehicle _tank;
@@ -68,6 +72,8 @@ MISSION_CORE_fnc_spawnHQForce = {
     if ([_side, "mech", _targetPos, _importance] call MISSION_CORE_fnc_armorCapOpen && count _apcClasses > 0) then {
         private _apcPos = [_targetPos, _markerSize, 20, _dir] call MISSION_CORE_fnc_findVehiclePos;
         if (count _apcPos < 2) then { _apcPos = [_targetPos] call MISSION_CORE_fnc_ensureLandPos; };
+        if (count _apcPos == 2) then { _apcPos pushBack 0; };
+        _apcPos = [_apcPos, _targetPos, _markerSize] call MISSION_CORE_fnc_safeVehicleSpawnPos;
         if (count _apcPos == 2) then { _apcPos pushBack 0; };
         private _apc = createVehicle [selectRandom _apcClasses, [_apcPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
         private _grp = createGroup _side;

@@ -7,7 +7,7 @@ MISSION_CORE_fnc_countArmorByHome = {
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith { [0, 0] };
     {
         private _grp = _x;
-        if (!isNull _grp && { count units _grp > 0 }) then {
+        if (!isNull _grp && { { alive _x } count units _grp > 0 }) then {
             private _slot = _grp getVariable ["MISSION_CORE_ARMOR_SLOT", ""];
             if (_slot != "") then {
                 private _home = _grp getVariable ["MISSION_CORE_MARKER_CENTER", [0, 0, 0]];
@@ -17,7 +17,9 @@ MISSION_CORE_fnc_countArmorByHome = {
                         private _v = vehicle _x;
                         if (_v != _x && { alive _v } && { !(_v in _vehs) }) then { _vehs pushBack _v; };
                     } forEach units _grp;
-                    if (_slot == "mbt") then { _mbt = _mbt + count _vehs; } else { _mech = _mech + count _vehs; };
+                    // Only real fielded armour counts - "arty" groups take their own slot and must
+                    // never masquerade as a mech/APC and falsely fill the mech cap.
+                    if (_slot == "mbt") then { _mbt = _mbt + count _vehs; } else { if (_slot == "mech") then { _mech = _mech + count _vehs; }; };
                 };
             };
         };

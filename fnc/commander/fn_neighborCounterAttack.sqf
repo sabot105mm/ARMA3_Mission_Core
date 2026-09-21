@@ -1,4 +1,36 @@
 
+// Chosen neighbors of a contested marker: the exact filtered, distance-sorted set the
+// counter-attack dispatcher uses. A marker is a neighbor when ALL of these hold:
+//   - same side as the contested marker,
+//   - not the contested marker itself,
+//   - not another currently-contested zone (a zone never counter-attacks another zone),
+//   - not light infrastructure (power/solar never send troops),
+//   - within neighborRange (4000m) of the contested marker,
+//   - when the contested marker is overwatch, only other overwatch markers qualify.
+// Returns CACHED_POSITIONS loc entries, sorted ascending by distance. Pass _zoneNames to reuse an
+// already-computed contested-zone name list (avoids a second getContestedMarkers pass per tick).
+MISSION_CORE_fnc_getMarkerNeighbors = {
+    params ["_locName", "_locPos", "_side", ["_zoneNames", []]];
+    if (isNil "MISSION_CORE_CACHED_POSITIONS") exitWith { [] };
+    if (count _zoneNames == 0) then {
+        _zoneNames = ([_side] call MISSION_CORE_fnc_getContestedMarkers) apply { _x select 0 };
+    };
+    private _neighbors = MISSION_CORE_CACHED_POSITIONS select {
+        (_x select 4) == _side &&
+        { (_x select 0) != _locName } &&
+        { !((_x select 0) in _zoneNames) } &&
+        { !([_x] call MISSION_CORE_fnc_isLightInfrastructure) } &&
+        { ((_x select 1) distance _locPos) < (["neighborRange", 4000] call MISSION_CORE_fnc_tune) }
+    };
+    _neighbors = [_neighbors, [], { (_x select 1) distance _locPos }, "ASCEND"] call BIS_fnc_sortBy;
+    // Overwatch rule: a contested overwatch (high-ground) marker may only be reinforced /
+    // counter-attacked by OTHER overwatch markers - no other marker can help it.
+    if ([_locName] call MISSION_CORE_fnc_isOverwatchMarker) then {
+        _neighbors = _neighbors select { [(_x select 0)] call MISSION_CORE_fnc_isOverwatchMarker };
+    };
+    _neighbors
+};
+
 MISSION_CORE_fnc_neighborCounterAttack = {
     params ["_locName", "_locPos", "_side", "_importance"];
     // PERMANENT RULE: one contested zone PER PLAYER. Only a marker that is one of the side's
@@ -10,7 +42,9 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     if (isNil "MISSION_CORE_REINF_COOLDOWN") then { MISSION_CORE_REINF_COOLDOWN = createHashMap; };
     private _last = MISSION_CORE_REINF_COOLDOWN getOrDefault [_locName, -99999];
     if (time - _last < 300) exitWith {};
-    MISSION_CORE_REINF_COOLDOWN set [_locName, time];
+    // NOTE: the cooldown is stamped only AFTER the full-gate below, once we commit to dispatching.
+    // Stamping here would let a full-and-not-contested marker silently burn the 300s window, so a
+    // marker that becomes contested moments later would be ignored until the window expired.
     // PERMANENT RULE: the contested marker's OWN garrison must be fully spawned before any
     // neighbor dispatches reinforcements. The proximity spawner spawns it on its own async
     // cycle, so a battle can start before the garrison exists. Force it now so the contested
@@ -26,15 +60,20 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     };
     // The contested marker itself claims the first of the 4 spawn slots (contested + 3 neighbors)
     [_locName] call MISSION_CORE_fnc_spawnerSlotFree;
-    // PERMANENT RULE: a marker that is already FULL (garrison at/above its baseline) never receives
-    // neighbor reinforcements or manpower credit - there is nothing to top up. Only a marker that
-    // has actually lost men gets reinforced.
+    // PERMANENT RULE: NO full-garrison suppression. A marker being on the side's contested zone
+    // list (checked at the top) IS the go-ahead - the exact flag the player sees - so a contested
+    // marker ALWAYS draws its neighbors, whether it is fresh, full or depleted. The goal at a
+    // contested marker is to overwhelm the attacker, not to top up losses. (The old full-exit let
+    // a freshly spawned, full-strength target - precisely what the proximity spawner creates the
+    // moment an assault arrives - skip its neighbors entirely.)
     if (isNil "MISSION_CORE_GARRISON_BASELINE") then { MISSION_CORE_GARRISON_BASELINE = createHashMap; };
     private _baseline = MISSION_CORE_GARRISON_BASELINE getOrDefault [_locName, [_importance] call MISSION_CORE_fnc_markerCapacity];
     private _aliveNow = [_locName, _side] call MISSION_CORE_fnc_countMarkerGarrison;
-    if (_aliveNow >= _baseline) exitWith {
-        diag_log format ["DYNAMIC REINF: %1 full (%2/%3) - no neighbors needed", _locName, _aliveNow, _baseline];
+    if (_aliveNow >= _baseline) then {
+        diag_log format ["DYNAMIC REINF: %1 full (%2/%3) but contested - calling neighbors anyway", _locName, _aliveNow, _baseline];
     };
+    // Committed to dispatching neighbors: stamp the 300s window now.
+    MISSION_CORE_REINF_COOLDOWN set [_locName, time];
     private _factionData = if (_side == WEST) then { MISSION_CORE_BLUFOR_DATA } else { MISSION_CORE_REDFOR_DATA };
     // PERMANENT RULE: a contested marker NEVER counter-attacks another contested marker. A zone's
     // own garrison must stay and defend its own fight - so contested markers are excluded from the
@@ -42,20 +81,10 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     private _zoneNames = _zoneList apply { _x select 0 };
     // PERMANENT RULE: powerplants / solar are static tiny garrisons - they never
     // send counter-attacks to a neighbor marker (no troops dispatched, no manpower credit).
-    private _neighbors = MISSION_CORE_CACHED_POSITIONS select {
-        (_x select 4) == _side &&
-        { (_x select 0) != _locName } &&
-        { !((_x select 0) in _zoneNames) } &&
-        { !([_x] call MISSION_CORE_fnc_isLightInfrastructure) } &&
-        { ((_x select 1) distance _locPos) < (["neighborRange", 4000] call MISSION_CORE_fnc_tune) }
-    };
-    _neighbors = [_neighbors, [], { (_x select 1) distance _locPos }, "ASCEND"] call BIS_fnc_sortBy;
+    // The chosen-neighbor set (same filters + overwatch rule) is shared with the zone-handoff
+    // re-evaluation so both paths always agree on who "normally" supports a marker.
+    private _neighbors = [_locName, _locPos, _side, _zoneNames] call MISSION_CORE_fnc_getMarkerNeighbors;
     if (count _neighbors == 0) exitWith {};
-    // Overwatch rule: a contested overwatch (high-ground) marker may only be reinforced /
-    // counter-attacked by OTHER overwatch markers - no other marker can help it.
-    if ([_locName] call MISSION_CORE_fnc_isOverwatchMarker) then {
-        _neighbors = _neighbors select { [(_x select 0)] call MISSION_CORE_fnc_isOverwatchMarker };
-    };
     private _contestedIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _locName };
     private _targetSize = if (_contestedIdx >= 0) then { (MISSION_CORE_CACHED_POSITIONS select _contestedIdx) select 8 } else { [_importance, _importance] };
     private _totalSent = 0;

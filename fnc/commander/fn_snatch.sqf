@@ -101,7 +101,9 @@ MISSION_CORE_fnc_canSnatchGroup = {
 // only compiled on players and this file only on the server, so no machine ever defines it twice.
 MISSION_CORE_fnc_applyAssaultWaypointsNet = {
     params ["_netId", "_wps", "_targetPos"];
-    private _grp = objectFromNetId _netId;
+    // Callers always pass a GROUP netId (netId _grp); objectFromNetId returns objNull for groups,
+    // so groupFromNetId is required here or the whole function exits before applying waypoints.
+    private _grp = groupFromNetId _netId;
     if (isNull _grp) exitWith {};
     if !(local _grp) exitWith {};
     [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;

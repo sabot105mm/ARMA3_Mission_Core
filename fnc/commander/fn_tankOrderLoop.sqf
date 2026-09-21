@@ -114,6 +114,8 @@ MISSION_CORE_fnc_tankDeployAbstract = {
     private _spawn = [_spawnPos, 0, 100, 15, 0, 0.5, 0] call BIS_fnc_findSafePos;
     if (count _spawn < 2) then { _spawn = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
     if (count _spawn == 2) then { _spawn pushBack 0; };
+    _spawn = [_spawn, _spawnPos, [150, 150]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    if (count _spawn == 2) then { _spawn pushBack 0; };
     // Column the tanks: an abstract arrival delivers _count tanks in a line on the road rather
     // than stacking them all on the single safe spot.
     private _colSpots = [_spawn, [150, 150], _count, 20] call MISSION_CORE_fnc_findVehicleColumnPos;
@@ -480,6 +482,8 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     private _crewClass = if (_sSide == WEST) then { "B_crew_F" } else { "O_crew_F" };
                     private _spawn = [_curPos, 0, 100, 15, 0, 0.5, 0] call BIS_fnc_findSafePos;
                     if (count _spawn < 2) then { _spawn = [_curPos] call MISSION_CORE_fnc_ensureLandPos; };
+                    if (count _spawn == 2) then { _spawn pushBack 0; };
+                    _spawn = [_spawn, _curPos, [150, 150]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
                     if (count _spawn == 2) then { _spawn pushBack 0; };
                     // Column the tanks: the materialized convoy spawns as a road line instead of all
                     // tanks stacked on one spot (convoy driving style, closely spaced).

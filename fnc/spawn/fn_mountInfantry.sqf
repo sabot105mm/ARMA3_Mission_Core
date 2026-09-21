@@ -1,8 +1,11 @@
 
 // Mount a foot infantry group into a transport that fits - armored 4x4 (prefer gun mount) for
 // small squads, a cargo truck with enough space for larger ones. Never an APC.
+// _selfDrive (opt, default false): the squad crews its own truck instead of a spawned driver /
+// dedicated driver group. Used by the player hunt, where the contingent drives itself and the
+// leader must stay on foot after dismount (see fn_playerHunt).
 MISSION_CORE_fnc_mountInfantry = {
-    params ["_grp", "_side", "_pos"];
+    params ["_grp", "_side", "_pos", ["_selfDrive", false]];
     if (isNull _grp || { count units _grp == 0 }) exitWith { objNull };
     private _passCount = { vehicle _x == _x } count units _grp;
     if (_passCount == 0) exitWith { objNull };
@@ -58,35 +61,92 @@ MISSION_CORE_fnc_mountInfantry = {
             };
         };
     };
-    // Pick a spread-out mount point: away from any flagged-unsafe spawn and at least 35m from the
-    // last truck(s) mounted at this location, so a wave of trucks never clusters into one pocket.
-    if (isNil "MISSION_CORE_TRUCK_LAST_POS") then { MISSION_CORE_TRUCK_LAST_POS = createHashMap; };
     // PERMANENT RULE: no cap on concurrent foot-transport trucks. Every committed squad that is
     // far enough out mounts a truck and rides to the battle - never forced to advance on foot.
+    // PERMANENT RULE: transports mount ON the nearest road when one is available (a truck rolls
+    // out along the road, facing it); fall back to the nearest flat clear spot otherwise. Every
+    // candidate must pass the same safe-spawn check as normal vehicles: dry ground, not a
+    // flagged-unsafe spawn, free of any vehicle still parked at the spot, and clear of hard
+    // geometry AND terrain objects (trees, rocks, forest) within 8m - so a truck never
+    // materializes on a mountain slope or in a treeline it physically can't cross.
+    //
+    // SAVED SPOTS: confirmed-clear mount points are cached per side and re-used for further
+    // spawns, so a wave of trucks keeps rolling out of the same proven road pockets instead of
+    // scattering into fresh random spots. Every spawn quick-checks each saved spot ("is anything
+    // still parked here?"); any that has a vehicle on it is dropped from the cache, and a fresh
+    // safe location is found and saved in its place.
+    if (isNil "MISSION_CORE_TRUCK_SAFE_SPOTS") then { MISSION_CORE_TRUCK_SAFE_SPOTS = createHashMap; };
+    if (isNil "MISSION_CORE_TRUCK_LAST_POS") then { MISSION_CORE_TRUCK_LAST_POS = createHashMap; };
     _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos;
+    private _existingVehs = vehicles select { alive _x && { _x isKindOf "LandVehicle" } };
+    private _spotFree = {
+        params ["_p"];
+        _existingVehs findIf { _p distance _x < 40 } == -1
+    };
+    // The regular "safe-to-spawn" check used everywhere else, extended for trucks: isDryPos, not
+    // a spawn-kill flagged spot, no vehicle parked on it, and clear of geometry. findVehiclePos
+    // only excluded config-class objects; the nearestTerrainObjects filter here also clears
+    // terrain-placed trees/rocks/forest so a road pocket in a treeline or on a slope is rejected.
+    private _spotSafe = {
+        params ["_p"];
+        ([_p] call MISSION_CORE_fnc_isDryPos)
+        && { !([_p] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) }
+        && { [_p] call _spotFree }
+        && { count (nearestObjects [_p, ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"], 8]) == 0 }
+        && { count (nearestTerrainObjects [_p, ["TREE", "FOREST", "BUSH", "FENCE", "WALL", "HEDGE", "ROCK", "ROCKS", "SMALL TREE", "FOREST BORDER", "FOREST SQUARE", "FOREST TRIANGLE"], 8]) == 0 }
+    };
     private _lastTruckPos = MISSION_CORE_TRUCK_LAST_POS getOrDefault [str _side, [0, 0, 0]];
-    // PERMANENT RULE: transports mount ON the road when one is available (a truck rolls out along
-    // the road, facing it); fall back to a spread-out clear spot otherwise.
+    private _savedKey = str _side;
+    private _savedSpots = MISSION_CORE_TRUCK_SAFE_SPOTS getOrDefault [_savedKey, []];
+    // Drop occluded saved spots (a truck still on them) and keep only ones near this squad, then
+    // reuse the closest. Nearest-first sort: [distance, pos] so sort true does numeric ordering.
+    _savedSpots = _savedSpots select { ([_x] call _spotSafe) && { _x distance2D _pos <= 400 } };
+    private _near = _savedSpots apply { [_x distance2D _pos, _x] };
+    _near sort true;
     private _mount = _pos;
     private _mountOnRoad = false;
-    private _roads = _pos nearRoads 150;
-    if (count _roads > 0) then {
-        private _rMax = ((count _roads) - 1) min 24;
-        for "_r" from 0 to _rMax do {
-            private _cand = getPosATL (_roads select _r);
-            private _tooCloseLast = (count _lastTruckPos > 2) && { _cand distance _lastTruckPos < 35 };
-            if ([_cand] call MISSION_CORE_fnc_isDryPos && { !([_cand] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) } && { !_tooCloseLast }) exitWith { _mount = _cand; _mountOnRoad = true; };
+    private _mountFound = false;
+    if (count _near > 0) then {
+        _mount = (_near select 0) select 1;
+        _mountFound = true;
+    };
+    if (!_mountFound) then {
+        // Nearest usable road within 300m.
+        private _roads = _pos nearRoads 300;
+        if (count _roads > 0) then {
+            private _rMax = ((count _roads) - 1) min 24;
+            for "_r" from 0 to _rMax do {
+                private _cand = getPosATL (_roads select _r);
+                private _tooCloseLast = (count _lastTruckPos > 2) && { _cand distance _lastTruckPos < 35 };
+                if ([_cand] call _spotSafe && { !_tooCloseLast }) exitWith { _mount = _cand; _mountOnRoad = true; _mountFound = true; };
+            };
         };
     };
-    if (!_mountOnRoad) then {
+    if (!_mountFound) then {
+        // No usable road: nearest flat, clear ground. Trucks need level ground a raw clear spot can
+        // still lack, so probe isFlatEmpty for the gradient and prefer a Flat position when one
+        // resolves (count _flat == 3); a clear non-flat spot is the last-ditch fallback.
         for "_i" from 1 to 12 do {
             private _cand = _pos getPos [30 + random 50, random 360];
             private _tooCloseLast = (count _lastTruckPos > 2) && { _cand distance _lastTruckPos < 35 };
-            if ([_cand] call MISSION_CORE_fnc_isDryPos && { !([_cand] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) } && { !_tooCloseLast }) exitWith { _mount = _cand; };
+            if (_tooCloseLast) then { continue; };
+            if ([_cand] call _spotSafe) then {
+                _mount = _cand;
+                _mountFound = true;
+                private _flat = _cand isFlatEmpty [6, -1, 0.25, 16, 0, false, objNull];
+                if (count _flat == 3) then { _mount = [_flat select 0, _flat select 1, 0]; };
+                break;
+            };
         };
     };
     _pos = _mount;
-    MISSION_CORE_TRUCK_LAST_POS set [str _side, _pos];
+    // Save the confirmed mount point for further spawns (cap a few per side; skip duplicates).
+    if (!(_pos in _savedSpots)) then {
+        if (count _savedSpots >= 6) then { _savedSpots = _savedSpots select [count _savedSpots - 5, 5]; };
+        _savedSpots pushBack _pos;
+        MISSION_CORE_TRUCK_SAFE_SPOTS set [_savedKey, _savedSpots];
+    };
+    MISSION_CORE_TRUCK_LAST_POS set [_savedKey, _pos];
     private _truck = createVehicle [_vehClass, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
     _grp addVehicle _truck;
     [_truck] call MISSION_CORE_fnc_alignVehicleToRoad;
@@ -120,29 +180,46 @@ MISSION_CORE_fnc_mountInfantry = {
         default { "I_crew_F" };
     });
     if (isNull (driver _truck)) then {
-        private _drv = grpNull;
-        if (!_hasGun) then {
-            // Foot transport: the driver rides in a dedicated group so the truck can use a
-            // TRANSPORT UNLOAD waypoint - cargo of OTHER groups disembarks at the drop point.
-            // The transported squad never owns the truck, so its leader never tries to drive it.
-            private _drvGrp = createGroup _side;
-            _drvGrp addVehicle _truck;
-            _truck setVariable ["MISSION_CORE_DRIVER_GROUP", _drvGrp];
-            _drv = _drvGrp createUnit [_crewClass, _pos, [], 0, "NONE"];
+        if (_selfDrive) then {
+            // SELF-DRIVE (player hunt): no spawned driver and no dedicated driver group - the squad
+            // crews its own truck. Prefer NON-leader men for the seats that may stay mounted on a gun
+            // truck (driver, gunner) so the group leader still leads the foot sweep after dismount. A
+            // plain truck needs only a driver; on it everyone (driver included) dismounts later.
+            private _ldr = leader _grp;
+            private _men = units _grp select { alive _x && { vehicle _x == _x } };
+            private _pool = _men select { _x != _ldr };
+            if (count _pool == 0) then { _pool = +_men; };
+            if (count _pool > 0) then { (_pool deleteAt 0) moveInDriver _truck; };
+            if (_hasGun && { isNull (gunner _truck) } && { count (fullCrew [_truck, "Gunner", true]) > 0 } && { count _pool > 0 }) then {
+                (_pool deleteAt 0) moveInGunner _truck;
+            };
         } else {
-            _drv = _grp createUnit [_crewClass, _pos, [], 0, "NONE"];
+            private _drv = grpNull;
+            if (!_hasGun) then {
+                // Foot transport: the driver rides in a dedicated group so the truck can use a
+                // TRANSPORT UNLOAD waypoint - cargo of OTHER groups disembarks at the drop point.
+                // The transported squad never owns the truck, so its leader never tries to drive it.
+                private _drvGrp = createGroup _side;
+                _drvGrp addVehicle _truck;
+                _truck setVariable ["MISSION_CORE_DRIVER_GROUP", _drvGrp];
+                _drv = _drvGrp createUnit [_crewClass, _pos, [], 0, "NONE"];
+            } else {
+                _drv = _grp createUnit [_crewClass, _pos, [], 0, "NONE"];
+            };
+            _drv moveInDriver _truck;
         };
-        _drv moveInDriver _truck;
     };
     {
         if (vehicle _x == _x) then {
-            if (isNull (gunner _truck) && { count (fullCrew [_truck, "Gunner", true]) > 0 }) then {
+            // Self-drive fills the gunner seat up front with a non-leader; everyone else (leader
+            // included) rides as cargo so a kept gunner never strands the group leader in the truck.
+            if (!_selfDrive && { isNull (gunner _truck) } && { count (fullCrew [_truck, "Gunner", true]) > 0 }) then {
                 _x moveInGunner _truck;
             } else {
                 _x moveInCargo _truck;
             };
         };
     } forEach units _grp;
-    diag_log format ["DYNAMIC TRANSPORT: mounted %1 foot squad (%2 men) into %3 for %4", groupId _grp, count units _grp, _vehClass, _grp getVariable ["MISSION_CORE_ORIGIN_MARKER", "?"]];
+    diag_log format ["DYNAMIC TRANSPORT: mounted %1 foot squad (%2 men) into %3 for %4%5", groupId _grp, count units _grp, _vehClass, _grp getVariable ["MISSION_CORE_ORIGIN_MARKER", "?"], if (_selfDrive) then { " (self-drive)" } else { "" }];
     _truck
 };

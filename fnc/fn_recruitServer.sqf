@@ -598,7 +598,7 @@ MISSION_CORE_fnc_serverRemoveGroup = {
         MISSION_CORE_RECRUIT_RESULT = "Too far from base.";
         publicVariable "MISSION_CORE_RECRUIT_RESULT";
     };
-    private _grp = objectFromNetId _grpNetId;
+    private _grp = groupFromNetId _grpNetId;
     if (isNull _grp) exitWith {
         MISSION_CORE_RECRUIT_RESULT = "Group already gone.";
         publicVariable "MISSION_CORE_RECRUIT_RESULT";
@@ -1074,13 +1074,17 @@ MISSION_CORE_fnc_serverArtyMinRange = {
     private _ln = toLower (typeOf _veh);
     if (_ln find "mlrs" > -1 || { _ln find "m270" > -1 } || { _ln find "grad" > -1 }) then { 1000 } else { 825 }
 };
-// the nearest enemy unit (man or vehicle) that an ASSAULT GROUP
-// currently marching on the same target marker has spotted (knowsAbout > 0.7) and that is inside
-// the target marker's footprint. Returns a position, or [] when nothing is spotted. An assault
-// piece shells the squads' actual enemy contacts - not the bare marker - so fire support follows
-// the infantry's eyes instead of hammering empty ground.
+// the nearest SPG-eligible enemy target that an ASSAULT GROUP currently marching on the same target
+// marker has spotted (knowsAbout > 0.7) and that is inside the target marker's footprint. Target
+// priority: stationary TANKS before stationary APCs, and infantry ONLY when the enemy is all-moving
+// (so its foot elements are the only reachable targets) or there is no armor at all. MOVING vehicles
+// are never engaged by area fire - a laser-designated target (handled separately) is the only way the
+// piece fires at something that moves. Returns a position, or [] when nothing is spotted. An assault
+// piece shells the squads' actual enemy contacts - not the bare marker - so fire support follows the
+// infantry's eyes instead of hammering empty ground. Optional _minRange (default: the piece's minimum
+// ballistic range) skips targets too close to hit.
 MISSION_CORE_fnc_assaultArtySpotTarget = {
-    params ["_veh", "_aimAt"];
+    params ["_veh", "_aimAt", ["_minRange", -1]];
     private _enemy = if (side _veh == WEST) then { EAST } else { WEST };
     // Resolve which target marker this aim point belongs to (assigned target).
     private _aimName = "";
@@ -1128,8 +1132,14 @@ MISSION_CORE_fnc_assaultArtySpotTarget = {
         };
     };
     private _rangeCap = if (_veh isKindOf "StaticMortar") then { 1700 } else { 10000 };
-    private _best = [];
-    private _bestD = 1e10;
+    if (_minRange <= 0) then { _minRange = _veh call MISSION_CORE_fnc_serverArtyMinRange; };
+    // SPG target priority buckets. Moving vehicles are EXCLUDED entirely: area fire can't track them
+    // (only a laser-designated dot - handled separately - ever engages something in motion). Stationary
+    // TANKS before stationary APCs; infantry is last resort, valid when the enemy has only moving
+    // armor (no parked armor to hit) or no armor at all.
+    private _tanks = [];
+    private _apcs = [];
+    private _infantry = [];
     {
         private _u = _x;
         if (!(alive _u) || { side _u != _enemy }) then { continue; };
@@ -1137,9 +1147,76 @@ MISSION_CORE_fnc_assaultArtySpotTarget = {
         private _spotted = _spotters findIf { _x knowsAbout _u > 0.7 } != -1;
         if (!_spotted) then { continue; };
         private _d = _u distance2D _veh;
-        if (_d < _rangeCap && { _d < _bestD }) then { _bestD = _d; _best = getPos _u; };
+        if (_d >= _rangeCap || { _d < _minRange }) then { continue; };
+        if (_u isKindOf "Man") then { _infantry pushBack _u; continue; };
+        if (_u isKindOf "LandVehicle") then {
+            if (speed _u > 2) then { continue; };
+            if (_u isKindOf "Wheeled_APC" || { _u isKindOf "Tracked_APC" }) then { _apcs pushBack _u; }
+            else {
+                if (_u isKindOf "Tank" || { _u isKindOf "Tank_F" }) then { _tanks pushBack _u; };
+            };
+        };
     } forEach (allUnits + vehicles);
+    // Pick the nearest eligible target: armor is resolved back to the exact vehicle's position so each
+    // volley lands on the enemy's armor, not on the centroid of a unit's feet.
+    private _pickNearest = {
+        params ["_list"];
+        if (count _list == 0) exitWith { [] };
+        private _best = _list select 0;
+        private _bestD = _best distance2D _veh;
+        {
+            private _d = _x distance2D _veh;
+            if (_d < _bestD) then { _bestD = _d; _best = _x; };
+        } forEach _list;
+        getPos _best
+    };
+    private _best = [_tanks] call _pickNearest;
+    if (count _best == 0) then { _best = [_apcs] call _pickNearest; };
+    if (count _best == 0) then { _best = [_infantry] call _pickNearest; };
     _best
+};
+
+// True only when the assigned AIM marker may be used as a last-resort barrage target. The piece may
+// shell the bare marker ONLY when it is still an ENEMY objective (owner is not our side) AND still
+// ACTIVE - an alive assault squad is still pressing this exact marker (or a player relay patrol is),
+// or the player themself is fighting there. A captured or fully-fallen marker never draws indirect
+// fire: it would only shell ground we own.
+MISSION_CORE_fnc_assaultArtyMarkerFireable = {
+    params ["_veh", "_aimAt"];
+    if (isNil "MISSION_CORE_LOCATIONS") exitWith { false };
+    private _aimLoc = MISSION_CORE_LOCATIONS findIf { ((_x select 1) select 0) distance2D _aimAt < 150 };
+    if (_aimLoc < 0) exitWith { false };
+    private _mPos = ((MISSION_CORE_LOCATIONS select _aimLoc) select 1) select 0;
+    private _aimName = (MISSION_CORE_LOCATIONS select _aimLoc) select 0;
+    private _owner = (MISSION_CORE_LOCATIONS select _aimLoc) select 5;
+    if (_owner == side _veh) exitWith { false };
+    private _pressing = false;
+    if (!(isNil "MISSION_CORE_ATTACK_GROUPS")) then {
+        {
+            private _adata = _y;
+            if (count _adata < 7) then { continue; };
+            if ((_adata select 1) != _aimName) then { continue; };
+            private _ag = _adata select 0;
+            if (isNull _ag) then { continue; };
+            if ({ alive _x } count units _ag > 0) exitWith { _pressing = true; };
+        } forEach MISSION_CORE_ATTACK_GROUPS;
+    };
+    if (!_pressing && { !(isNil "MISSION_CORE_ATTACK_GROUPS_RELAY") }) then {
+        {
+            private _adata = _y;
+            if (count _adata < 7) then { continue; };
+            if ((_adata select 1) != _aimName) then { continue; };
+            private _ag = _adata select 0;
+            if (isNull _ag) then { continue; };
+            if ({ alive _x } count units _ag > 0) exitWith { _pressing = true; };
+        } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
+    };
+    // A player physically pressing the objective keeps it ACTIVE too, even after the assault squads
+    // are wiped or spent - the fight is still on, so the piece keeps supporting that marker.
+    if (!_pressing) then {
+        _pressing = allPlayers findIf { alive _x && { side _x == side _veh && { _x distance2D _mPos < 1200 } } } != -1;
+    };
+    _pressing
 };
 
 // One loop monitors every player-placed artillery piece and shells the
@@ -1182,18 +1259,18 @@ MISSION_CORE_fnc_playerArtyLoop = {
                     [side _veh, _veh, 10000] call MISSION_CORE_fnc_artilleryLaserTarget;
                 } else { [] };
                 private _preferLaser = count _laserTarget > 0;
-                // Assault-arty: fire at the assigned marker (the fire mission), not whatever threat
-                // happens to be nearest. LASER still wins - an exact dot lands where aimed. If the
-                // assigned marker flips WEST (another squad captured it first) the mission is void -
-                // revert to generic threat fire so we never shell a friendly-held position.
+                // Assault-arty fires at REAL enemy targets, not the bare marker. LASER still wins - an
+                // exact dot lands where aimed (the only case a MOVING target may be engaged). Standoffs
+                // become last-resort fire only when the objective is still ACTIVE (an alive assault squad
+                // still presses it) AND enemy-held - a captured or abandoned marker never draws fire.
                 private _standoffGun = [_aimAt] call MISSION_CORE_fnc_isValidArtyAim;
-                if (_standoffGun && { side _veh == WEST } && { !(isNil "MISSION_CORE_LOCATIONS") }) then {
-                    private _aimLoc = MISSION_CORE_LOCATIONS findIf { ((_x select 1) select 0) distance2D _aimAt < 150 };
-                    if (_aimLoc >= 0 && { ((MISSION_CORE_LOCATIONS select _aimLoc) select 5) == WEST }) then { _standoffGun = false; };
-                };
-                // Assault-arty prefers real contacts: enemies the assault squads on the same marker
-                // have spotted (see fn_assaultArtySpotTarget). No contact -> fall back to the assigned
-                // marker so the piece still suppresses the objective. Plain garrison pieces / mortars
+                private _markerFireable = if (_standoffGun) then {
+                    [_veh, _aimAt] call MISSION_CORE_fnc_assaultArtyMarkerFireable
+                } else { false };
+                // Real contacts win: eligible enemies the assault squads on the same marker have spotted
+                // (see fn_assaultArtySpotTarget - stationary tanks > APCs, no moving vehicles). Only when
+                // no such contact exists does the piece fall back to the assigned marker, and then ONLY
+                // if it is still active + enemy. Plain garrison pieces / mortars (no assigned marker)
                 // keep generic nearest-spotted-target behavior.
                 private _target = [];
                 private _targetFromContact = false;
@@ -1201,14 +1278,14 @@ MISSION_CORE_fnc_playerArtyLoop = {
                     if (_standoffGun) then {
                         _target = [_veh, _aimAt] call MISSION_CORE_fnc_assaultArtySpotTarget;
                         if (count _target > 0) then { _targetFromContact = true; }
-                        else { _target = _aimAt; };
+                        else { if (_markerFireable) then { _target = _aimAt; }; };
                     } else {
                         _target = [_veh, _enemy] call MISSION_CORE_fnc_artilleryTarget;
+                        if (count _target == 0) then {
+                            // No assigned marker (garrison piece): generic nearest-enemy-marker scan.
+                            _target = [side _veh, getPosATL _veh, if (_veh isKindOf "StaticMortar") then { 1700 } else { 10000 }] call MISSION_CORE_fnc_artilleryMarkerTarget;
+                        };
                     };
-                };
-                if (!_preferLaser && { count _target == 0 }) then {
-                    // No assigned marker (garrison piece) or no spot: generic nearest-enemy-marker scan.
-                    _target = [side _veh, getPosATL _veh, if (_veh isKindOf "StaticMortar") then { 1700 } else { 10000 }] call MISSION_CORE_fnc_artilleryMarkerTarget;
                 };
                 if (count _target > 0) then {
                     private _mag = [_veh, _preferLaser] call MISSION_CORE_fnc_pickArtilleryMag;
@@ -1248,6 +1325,13 @@ MISSION_CORE_fnc_playerArtyLoop = {
                                     } forEach [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3];
                                 };
                                 if (!_rangeOK) then {
+                                    // The target/aim point is inside this piece's minimum ballistic range
+                                    // ("Invalid coordinates. Cease fire." - nothing flies). Nothing we pull
+                                    // back along the bearing can help: a too-close target needs FARTHER
+                                    // ground. Flag the piece so the relocation logic below finds a better
+                                    // firing marker even before it has fired once.
+                                    private _minR = _veh call MISSION_CORE_fnc_serverArtyMinRange;
+                                    if (_veh distance2D _target < _minR) then { _veh setVariable ["MISSION_CORE_ARTY_WANT_MOVE", true]; };
                                     diag_log format ["PLAYER ARTY: %1 (%2) mission %3 invalid - no in-range aim point for %4", _veh, typeOf _veh, _target, _magClass];
                                 };
                             };
@@ -1264,13 +1348,15 @@ MISSION_CORE_fnc_playerArtyLoop = {
             };
             // Assault-arty reload: after each barrage the piece relocates to a BLUFOR marker to keep
             // it safe (run-away behavior), exactly like the REDFOR artillery driver. Only relocates
-            // once it has actually fired at least once - a fresh piece never rushes away unseen.
-            if ([_aimAt] call MISSION_CORE_fnc_isValidArtyAim && { _lastFire > 0 }) then {
+            // once it has actually fired at least once - a fresh piece never rushes away unseen -
+            // OR when the current target sits inside the minimum ballistic range (MISSION_CORE_ARTY_WANT_MOVE),
+            // because no in-range aim point exists from here at all; a new firing marker is the fix.
+            if ([_aimAt] call MISSION_CORE_fnc_isValidArtyAim && { _lastFire > 0 || { _veh getVariable ["MISSION_CORE_ARTY_WANT_MOVE", false] } }) then {
                 // A group of SPGs shares waypoints - relocate the whole platoon once per tick so the
                 // commander's standoff move applies to every vehicle together.
                 if (_relocatedGroups findIf { _x == _grp } != -1) then { continue; };
                 private _lastMove = _veh getVariable ["MISSION_CORE_ARTY_LAST_MOVE", 0];
-                if (time - _lastMove > 45 && { _lastFire + 30 < time }) then {
+                if (time - _lastMove > 45 && { (_lastFire + 30 < time) || { _veh getVariable ["MISSION_CORE_ARTY_WANT_MOVE", false] } }) then {
                     // Run to a DIFFERENT BLUFOR marker (>= 800m away) so the shot-down position is
                     // abandoned, mirroring the REDFOR artillery driver's retreat. The new standoff
                     // must also keep this piece's minimum ballistic range from its aim target, or
@@ -1281,6 +1367,7 @@ MISSION_CORE_fnc_playerArtyLoop = {
                     if (_standoff distance [0, 0, 0] > 1) then {
                         _relocatedGroups pushBack _grp;
                         _veh setVariable ["MISSION_CORE_ARTY_LAST_MOVE", time];
+                        _veh setVariable ["MISSION_CORE_ARTY_WANT_MOVE", false];
                         _grp setBehaviour "SAFE";
                         _grp setSpeedMode "LIMITED";
                         [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;

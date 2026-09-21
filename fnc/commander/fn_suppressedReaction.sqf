@@ -21,12 +21,23 @@ MISSION_CORE_fnc_onSuppressed = {
         if (_veh distance2D _at > 700) exitWith { false };
         if (_grp getVariable ["MISSION_CORE_EARLY_UNLOADED", false]) exitWith { false };
         _grp setVariable ["MISSION_CORE_EARLY_UNLOADED", true];
-        private _crew = crew _veh select { alive _x && { vehicle _x == _veh } };
-        _crew = _crew - [driver _veh];
-        { unassignVehicle _x; } forEach _crew;
-        _grp leaveVehicle _veh;
-        { _x action ["getOut", _veh]; } forEach _crew;
-        _veh lockCargo true;
+        // FULL STOP before ejecting: this hit-event path must not throw riders from a still-rolling
+        // truck - same shared stop the normal unload scripts use. MPHit handlers run unscheduled, so
+        // the stop (which waits for speed < 2) and the ejections run in a spawned scope; the handler
+        // itself returns immediately. After the drop the driver gets doFollow to resume formation so
+        // the truck can drive on / withdraw.
+        [_grp, _veh] spawn {
+            params ["_g", "_v"];
+            [_v] call MISSION_CORE_fnc_stopForDismount;
+            private _drv = driver _v;
+            private _crew = crew _v select { alive _x && { vehicle _x == _v } };
+            _crew = _crew - [_drv];
+            { unassignVehicle _x; } forEach _crew;
+            _g leaveVehicle _v;
+            { _x action ["getOut", _v]; } forEach _crew;
+            if (!isNull _drv && { vehicle _drv == _v }) then { _drv doFollow (leader (group _drv)); };
+            _v lockCargo true;
+        };
         diag_log format ["AI DEFENSE: %1 suppressed in truck - unloading early under fire", groupId _grp];
         false
     } else {

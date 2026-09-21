@@ -114,6 +114,7 @@ class MISSION_CORE_TUNE {
     huntRetargetEvery = 45;         // seconds between blind-sweep retargets
     huntClearEvery = 120;           // seconds between house-clears while sweeping
     huntMountDist = 700;            // far target -> squad mounts a transport
+    huntSpawnMinPlayerDist = 500;   // fresh hunt contingents NEVER conjure within this of any alive player
     huntMaxContingents = 3;         // how many nearby markers each dispatch a hunting squad
     huntSourceMaxRange = 2500;      // a marker must be within this of the LKP to join the hunt
 

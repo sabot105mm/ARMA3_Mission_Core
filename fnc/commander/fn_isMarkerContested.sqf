@@ -37,7 +37,12 @@ MISSION_CORE_fnc_assaultGroupEval = {
     params ["_ag", "_mName", "_side", "_map", ["_isMechMotor", false]];
     if (isNull _ag) exitWith {};
     private _present = false;
-    if (!isNull (leader _ag) && { alive (leader _ag) }) then {
+    // Presence is evaluated over the group's LIVING members, never just its leader. Using the
+    // leader alone meant an assault squad whose leader had been killed - but whose men were still
+    // fighting inside the marker - never registered as contesting it, so the target marker went
+    // quiet while the fight continued. This is the common case during a real engagement.
+    private _aliveUnits = units _ag select { !isNull _x && { alive _x } };
+    if (count _aliveUnits > 0) then {
         private _shape = [_mName] call MISSION_CORE_fnc_getMarkerShape;
         private _pos = _shape select 0;
         private _sa = _shape select 1;
@@ -60,21 +65,33 @@ MISSION_CORE_fnc_assaultGroupEval = {
             (_rx*_rx)/((_sa+_ring)*(_sa+_ring)) + (_ry*_ry)/((_sb+_ring)*(_sb+_ring)) <= 1
         };
         // Mech/motorized: mounted men ARE the vehicle, so the transport itself counts as presence;
-        // the real leader never drives the call by himself. The flag is precomputed by the caller
-        // (BLUFOR from the template, REDFOR from simply being a mounted column) and cached.
+        // dismounted men (vehicle _x == _x) are counted by the same expression. The flag is
+        // precomputed by the caller (BLUFOR from the template, REDFOR from simply being a mounted
+        // column) and cached.
         if (_isMechMotor) then {
-            if (units _ag findIf { private _v = vehicle _x; alive _v && { [getPos _v] call _inMarker } } != -1) then { _present = true; };
+            if (_aliveUnits findIf { private _v = vehicle _x; alive _v && { [getPos _v] call _inMarker } } != -1) then { _present = true; };
         } else {
-            if ([getPos (leader _ag)] call _inMarker) then { _present = true; };
+            if (_aliveUnits findIf { [getPos _x] call _inMarker } != -1) then { _present = true; };
         };
-        // PERMANENT RULE: a leader pressing the marker from just OUTSIDE its edge still counts
-        // as present when the garrison has detected him (knowsAbout). Foot squads legitimately
-        // open fire from the standoff line / edge ring instead of walking into the ellipse, so
-        // the old strict "leader inside" test starved assault-targets of their contested state
-        // (and with it the counter-attack/defense flow) for whole engagements.
+        // PERMANENT RULE: a squad pressing the marker from just OUTSIDE its edge still counts
+        // as present when the garrison has detected ANY of its men (knowsAbout). Foot squads
+        // legitimately open fire from the standoff line / edge ring instead of walking into the
+        // ellipse, so the old strict "inside" test starved assault-targets of their contested
+        // state (and with it the counter-attack/defense flow) for whole engagements. The garrison's
+        // knowledge is sampled from each enemy group's ALIVE LEADER ONLY - never from every unit.
         if (!_present) then {
             private _enemies = _pos nearEntities ["Man", 1500] select { alive _x && { side _x getFriend _side < 0.6 } };
-            if (_enemies findIf { _x knowsAbout (leader _ag) > (["assaultContestKnows", 0.7] call MISSION_CORE_fnc_tune) } != -1) then { _present = true; };
+            private _enemyLeaders = [];
+            {
+                private _g = group _x;
+                if (isNull _g) then { continue; };
+                private _ldr = leader _g;
+                if (isNull _ldr) then { continue; };
+                if !(alive _ldr) then { continue; };
+                if (_enemyLeaders findIf { _x == _ldr } == -1) then { _enemyLeaders pushBack _ldr; };
+            } forEach _enemies;
+            private _knows = ["assaultContestKnows", 0.7] call MISSION_CORE_fnc_tune;
+            if (_enemyLeaders findIf { private _e = _x; _aliveUnits findIf { _e knowsAbout _x > _knows } != -1 } != -1) then { _present = true; };
         };
     };
     if (_present) then {
@@ -275,11 +292,24 @@ MISSION_CORE_fnc_isMarkerContested = {
         (_rx*_rx)/(_a*_a) + (_ry*_ry)/(_b*_b) <= 1
     };
     private _enemiesNear = _locPos nearEntities ["Man", 1500] select { side _x == _owner && { alive _x } };
+    // The EAST/owner-side garrison must ACTUALLY see the player. Knowledge is sampled from each
+    // owner-side group's ALIVE LEADER ONLY (never from every unit) - the attacker knowing about the
+    // garrison is not enough; the enemy spotting the player is what keeps the marker contested
+    // (mirrors the zone-list rule for assault squads).
+    private _enemyLeaders = [];
+    {
+        private _g = group _x;
+        if (isNull _g) then { continue; };
+        private _ldr = leader _g;
+        if (isNull _ldr) then { continue; };
+        if !(alive _ldr) then { continue; };
+        if (_enemyLeaders findIf { _x == _ldr } == -1) then { _enemyLeaders pushBack _ldr; };
+    } forEach _enemiesNear;
     private _engaging = _players findIf {
         private _p = _x;
         side _p getFriend _owner < 0.6 &&
         { [getPos _p] call _inside } &&
-        { _enemiesNear findIf { _p knowsAbout _x > 1.2 } != -1 }
+        { _enemyLeaders findIf { _x knowsAbout _p > 1.2 } != -1 }
     } != -1;
     if (_engaging) then {
         MISSION_CORE_CONTESTED set [_markerName, true];

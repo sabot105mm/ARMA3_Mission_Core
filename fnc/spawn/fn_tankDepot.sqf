@@ -173,6 +173,8 @@ MISSION_CORE_fnc_tankReserveSpawn = {
         if (!_foundClear) then { _pos = _bestSpot; };
     };
     _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos;
+    _pos = [_pos, _pos, [100, 100]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    if (count _pos == 2) then { _pos pushBack 0; };
     private _veh = createVehicle [selectRandom _mbtClasses, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 0, "CAN_COLLIDE"];
     _veh setDir random 360;
     _veh lock 0;

@@ -124,7 +124,8 @@ MISSION_CORE_fnc_convoyLoop = {
                             if (_c isKindOf "Truck_F") exitWith { _truckClass = _c; };
                         } forEach ((MISSION_CORE_REDFOR_DATA select 7) getOrDefault ["transport", []]);
                         if (_truckClass == "") then { _truckClass = "O_Truck_02_covered_F"; };
-                        private _spawn = [_curPos] call MISSION_CORE_fnc_ensureLandPos;
+                        private _spawn = [[_curPos] call MISSION_CORE_fnc_ensureLandPos, _curPos, [60, 60]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+                        if (count _spawn == 2) then { _spawn pushBack 0; };
                         private _truck = createVehicle [_truckClass, [_spawn] call MISSION_CORE_fnc_liftSpawn, [], 0, "CAN_COLLIDE"];
                         [_truck] call MISSION_CORE_fnc_alignVehicleToRoad;
                         _truck setVariable ["MISSION_CORE_CONVOY_TRUCK", true];

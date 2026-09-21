@@ -199,6 +199,8 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
     if (_providerName == "") then {
         _spawnPos = [_spawnPos, 0, 100, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
         if (count _spawnPos < 2) then { _spawnPos = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
+        if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
+        _spawnPos = [_spawnPos, _spawnPos, [100, 100]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
     };
     if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
     private _veh = createVehicle [_vehClass, [_spawnPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];

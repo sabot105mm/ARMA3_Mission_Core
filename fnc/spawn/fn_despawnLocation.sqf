@@ -25,7 +25,6 @@ MISSION_CORE_fnc_despawnLocation = {
 
     // Serialize all groups at this location to cache
     private _cacheData = [];
-    private _toDelete = [];
     {
         if (!isNull _x) then {
             // PERMANENT RULE: player-recruited BLUFOR assets (assault squads, garrison squads,
@@ -52,18 +51,15 @@ MISSION_CORE_fnc_despawnLocation = {
                 if (_near && { _x getVariable ["MISSION_CORE_REDFOR", false] } && { !(_x getVariable ["MISSION_CORE_DEFENSE_GROUP", false]) }) then {
                     _cacheData pushBack ([_x, _locPos] call MISSION_CORE_fnc_serializeGroup);
                 };
-                private _vehs = [];
-                { private _v = vehicle _x; if (_v != _x && { alive _v } && { !(_v in _vehs) }) then { _vehs pushBack _v; }; } forEach units _x;
-                { deleteVehicle _x; } forEach units _x;
-                { deleteVehicle _x; } forEach _vehs;
-                deleteGroup _x;
-                _toDelete pushBack _forEachIndex;
+                // Deletion is owned by MISSION_CORE_fnc_deleteGroupCompletely - it also removes the
+                // dedicated foot-transport driver groups (MISSION_CORE_DRIVER_GROUP), which are NOT
+                // in SPAWNED_GROUPS; a manual delete here would leave the driver stranded when the
+                // truck he drives is deleted for the squad riding it.
+                [_x] call MISSION_CORE_fnc_deleteGroupCompletely;
             };
         };
     } forEach MISSION_CORE_SPAWNED_GROUPS;
     MISSION_CORE_SPAWNED_CACHE set [_locName, _cacheData];
-    _toDelete sort false;
-    { MISSION_CORE_SPAWNED_GROUPS deleteAt _x; } forEach _toDelete;
     if (!isNil "MISSION_CORE_DEFENSE_ASSIGN") then { MISSION_CORE_DEFENSE_ASSIGN deleteAt _locName; };
     if (!isNil "MISSION_CORE_DEFENSE_LOCKED") then { MISSION_CORE_DEFENSE_LOCKED deleteAt _locName; };
 
