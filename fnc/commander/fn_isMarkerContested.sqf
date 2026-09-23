@@ -278,7 +278,14 @@ MISSION_CORE_fnc_isMarkerContested = {
         if (_stillHere) exitWith { true };
         MISSION_CORE_CONTESTED deleteAt _markerName;
     };
-    // Otherwise set it when a hostile player is inside + engaging the garrison.
+    // OTHERWISE GARRISON-INDEPENDENT CONTEST: set contested the moment ANY BLUFOR threat is
+    // present - a hostile player physically inside the marker ellipse, OR approaching it
+    // (within the standard approach radius). No knowsAbout / garrison engagement required:
+    // the instant BLUFOR threatens the marker it is contested, whether or not the garrison is
+    // spawned, wiped, or has spotted anyone. This replaces the old "inside + enemy spotted the
+    // player" gate that left markers quietly uncontested (and untereplenished) until a garrison
+    // was already being ground down. Clear is handled by the caller paths (full capture, all
+    // enemies died/walked away).
     private _shape = if (_markerName != "") then { [_markerName] call MISSION_CORE_fnc_getMarkerShape } else { [[0, 0, 0], 200, 200, 0] };
     private _a = _shape select 1;
     private _b = _shape select 2;
@@ -291,27 +298,14 @@ MISSION_CORE_fnc_isMarkerContested = {
         private _ry = _dx * sin _md + _dy * cos _md;
         (_rx*_rx)/(_a*_a) + (_ry*_ry)/(_b*_b) <= 1
     };
-    private _enemiesNear = _locPos nearEntities ["Man", 1500] select { side _x == _owner && { alive _x } };
-    // The EAST/owner-side garrison must ACTUALLY see the player. Knowledge is sampled from each
-    // owner-side group's ALIVE LEADER ONLY (never from every unit) - the attacker knowing about the
-    // garrison is not enough; the enemy spotting the player is what keeps the marker contested
-    // (mirrors the zone-list rule for assault squads).
-    private _enemyLeaders = [];
-    {
-        private _g = group _x;
-        if (isNull _g) then { continue; };
-        private _ldr = leader _g;
-        if (isNull _ldr) then { continue; };
-        if !(alive _ldr) then { continue; };
-        if (_enemyLeaders findIf { _x == _ldr } == -1) then { _enemyLeaders pushBack _ldr; };
-    } forEach _enemiesNear;
-    private _engaging = _players findIf {
+    private _approachR = ["scareApproachRadius", 2500] call MISSION_CORE_fnc_tune;
+    private _inApproach = _markerName != "";
+    private _threatPresent = _players findIf {
         private _p = _x;
         side _p getFriend _owner < 0.6 &&
-        { [getPos _p] call _inside } &&
-        { _enemyLeaders findIf { _x knowsAbout _p > 1.2 } != -1 }
+        { ([getPos _p] call _inside) || { _inApproach && { (_p distance _locPos) <= _approachR } } }
     } != -1;
-    if (_engaging) then {
+    if (_threatPresent) then {
         MISSION_CORE_CONTESTED set [_markerName, true];
         true
     } else {

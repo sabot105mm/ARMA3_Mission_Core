@@ -197,6 +197,7 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
     // findVehiclePos - do NOT re-roll it onto a random field. Only the no-marker fallback (armor
     // spawning 1500m out, no provider at all) needs the safety re-roll.
     if (_providerName == "") then {
+        [_spawnPos, 100] call MISSION_CORE_fnc_clearNearbyWrecks;
         _spawnPos = [_spawnPos, 0, 100, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
         if (count _spawnPos < 2) then { _spawnPos = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
         if (count _spawnPos == 2) then { _spawnPos pushBack 0; };

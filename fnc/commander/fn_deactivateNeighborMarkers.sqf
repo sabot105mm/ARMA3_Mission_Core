@@ -1,9 +1,12 @@
-// When a marker finally gives up - its neighbor reinforcement budget is spent, or its retake
-// window has fully decayed - the whole supporting neighborhood goes dormant with it. Every
-// spawned same-side marker within the 4000m reinforcement radius is fully despawned via
-// MISSION_CORE_fnc_despawnLocation (garrison, defenses, and any counter-attack / reinforce
-// groups still assembling there), so a dead zone never keeps feeding or being fed forever.
-// Reversible: a player walking back in re-spawns a marker on demand.
+// When a marker's supporting neighborhood finally gives up - its neighbor reinforcement budget
+// is spent, or its retake window has fully decayed - the whole supporting neighborhood goes
+// dormant. Every spawned same-side marker within the 4000m reinforcement radius is fully
+// despawned via MISSION_CORE_fnc_despawnLocation (garrison, defenses, and any counter-attack /
+// reinforce groups still assembling there), so a dead zone's support never keeps feeding forever.
+// Reversible: a player marching back in re-spawns a marker on demand.
+// PERMANENT RULE: this is a NEIGHBORHOOD teardown only - the contested marker ITSELF never gives
+// up (contested only clears via capture / all-threats-gone). It keeps self-replenishing with its
+// own garrison; only its support pool stops answering.
 //
 // A neighbor that is its own active battle is left alone - never touch a marker currently
 // contested by a player, or the side's locked zone focus (the fight lives there, and
@@ -51,9 +54,13 @@ MISSION_CORE_fnc_deactivateNeighborMarkers = {
 //   - DROP: every chosen neighbor of a replaced (gone) zone that no live zone chooses is
 //     deactivated (its garrison / in-flight counter-attack groups go dormant).
 //   - ADD: the new zone's closest chosen neighbors that are not already active are brought up
-//     in their place, so the same number of markers support the fight.
-//   - RESET: the replaced marker's reinforcement ledgers go back to 0 - the manpower and tanks
-//     its neighbors were willing to send must NOT carry over from the last contested marker.
+//     in their place, so the same number of markers support the fight. On a TRUE handoff those
+//     new neighbors first get a one-time top-up back to full strength (capped at their own
+//     capacity) before they are manpower-blocked for the continuing fight.
+//   - BUDGET: a TRUE handoff (the new marker SHARES a chosen neighbor with the old one) INHERITS
+//     the old marker's reinforcement ledgers - the neighbors were already investing in that
+//     fight. A replaced marker with NO shared neighbor is reset to zero - a fresh fight draws a
+//     fresh budget, not one carried over from an unrelated battle.
 MISSION_CORE_fnc_reevalZoneNeighbors = {
     params ["_side", "_newZones", "_goneZones"];
     if (isNil "MISSION_CORE_CACHED_POSITIONS") exitWith {};
@@ -68,6 +75,51 @@ MISSION_CORE_fnc_reevalZoneNeighbors = {
             if !((_x select 0) in _keep) then { _keep pushBack (_x select 0); };
         } forEach ([_x select 0, _zPos, _side, _zoneNames] call MISSION_CORE_fnc_getMarkerNeighbors);
     } forEach _zoneList;
+
+    // ZONE HANDOFF: decide which replaced zones are a TRUE handoff into a new zone. A handoff
+    // only exists when the new contested marker SHARES at least one chosen neighbor with the
+    // old one - the fight moved within the same supporting neighborhood. A true handoff INHERITS
+    // the old marker's reinforcement budget (the neighbors were already investing in that fight).
+    // A marker with NO shared neighbor is a fresh fight: it evaluates neighbors normally with a
+    // completely fresh budget.
+    private _goneNeighb = createHashMap;
+    {
+        private _gName = _x;
+        private _gIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _gName };
+        if (_gIdx >= 0) then {
+            private _gPos = (MISSION_CORE_CACHED_POSITIONS select _gIdx) select 1;
+            _goneNeighb set [_gName, ([_gName, _gPos, _side, _zoneNames] call MISSION_CORE_fnc_getMarkerNeighbors) apply { _x select 0 }];
+        };
+    } forEach _goneZones;
+    private _newNeighb = createHashMap;
+    {
+        private _zName = _x;
+        private _zIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _zName };
+        if (_zIdx >= 0) then {
+            private _zPos = (MISSION_CORE_CACHED_POSITIONS select _zIdx) select 1;
+            _newNeighb set [_zName, ([_zName, _zPos, _side, _zoneNames] call MISSION_CORE_fnc_getMarkerNeighbors) apply { _x select 0 }];
+        };
+    } forEach _newZones;
+    // handoffTo[newName] = oldName that it inherited from. Only the first matching old zone per
+    // new zone transfers (a new zone can only inherit one budget).
+    private _handoffTo = createHashMap;
+    private _handoffFrom = createHashMap;
+    {
+        private _nName = _x;
+        private _nSet = _newNeighb getOrDefault [_nName, []];
+        if (count _nSet == 0) then { continue; };
+        {
+            private _gName = _x;
+            private _gSet = _goneNeighb getOrDefault [_gName, []];
+            if (count _gSet == 0) then { continue; };
+            private _shared = false;
+            { if (_x in _gSet) exitWith { _shared = true; }; } forEach _nSet;
+            if (_shared) then {
+                _handoffTo set [_nName, _gName];
+                _handoffFrom set [_gName, _nName];
+            };
+        } forEach _goneZones;
+    } forEach _newZones;
 
     // 1) DROP old-zone neighbors that no live zone chooses anymore.
     {
@@ -85,10 +137,10 @@ MISSION_CORE_fnc_reevalZoneNeighbors = {
                 [_nName, _nPos] call MISSION_CORE_fnc_despawnLocation;
             } forEach ([_goneName, _gPos, _side, _zoneNames] call MISSION_CORE_fnc_getMarkerNeighbors);
         };
-        // RESET the replaced marker's willingness ledger. REINF_SENT is the manpower pool the
-        // neighbors had spent on this marker; REINF_TANK_BUDGET is the tanks committed to it.
-        // Clearing both (plus the exhausted/cooldown flags and in-flight manpower credits) means
-        // a re-contested marker draws a completely fresh budget instead of inheriting the old one.
+        // BUDGET: a TRUE handoff transfers the old marker's ledger to the new contested marker
+        // (the neighbors' pending investment carries into the continued fight). A non-handoff
+        // replaced marker is RESET to zero - a re-contested marker draws a fresh budget instead
+        // of inheriting one from a fight that never shared a neighborhood.
         if (isNil "MISSION_CORE_REINF_SENT") then { MISSION_CORE_REINF_SENT = createHashMap; };
         if (isNil "MISSION_CORE_REINF_TANK_BUDGET") then { MISSION_CORE_REINF_TANK_BUDGET = createHashMap; };
         if (isNil "MISSION_CORE_REINF_COOLDOWN") then { MISSION_CORE_REINF_COOLDOWN = createHashMap; };
@@ -97,27 +149,53 @@ MISSION_CORE_fnc_reevalZoneNeighbors = {
         if (isNil "MISSION_CORE_TANK_DELIVERED") then { MISSION_CORE_TANK_DELIVERED = createHashMap; };
         if (isNil "MISSION_CORE_TANK_DELIVERED_GROUPS") then { MISSION_CORE_TANK_DELIVERED_GROUPS = createHashMap; };
         if (isNil "MISSION_CORE_TANK_REQUESTED") then { MISSION_CORE_TANK_REQUESTED = createHashMap; };
-        MISSION_CORE_REINF_SENT set [_goneName, 0];
-        MISSION_CORE_REINF_TANK_BUDGET set [_goneName, 0];
-        MISSION_CORE_REINF_COOLDOWN deleteAt _goneName;
-        MISSION_CORE_REINF_EXHAUSTED deleteAt _goneName;
-        MISSION_CORE_MANPOWER set [_goneName, []];
-        MISSION_CORE_TANK_DELIVERED set [_goneName, 0];
-        MISSION_CORE_TANK_DELIVERED_GROUPS set [_goneName, []];
-        MISSION_CORE_TANK_REQUESTED deleteAt _goneName;
-        // Clear the give-up latch too, so this marker can still raise its own teardown later.
+        private _newOwner = _handoffFrom getOrDefault [_goneName, ""];
+        if (_newOwner != "") then {
+            private _gSent = MISSION_CORE_REINF_SENT getOrDefault [_goneName, 0];
+            private _gTank = MISSION_CORE_REINF_TANK_BUDGET getOrDefault [_goneName, 0];
+            private _gManpower = + (MISSION_CORE_MANPOWER getOrDefault [_goneName, []]);
+            private _gTankDel = MISSION_CORE_TANK_DELIVERED getOrDefault [_goneName, 0];
+            private _gTankDelGrp = + (MISSION_CORE_TANK_DELIVERED_GROUPS getOrDefault [_goneName, []]);
+            private _gTankReq = MISSION_CORE_TANK_REQUESTED getOrDefault [_goneName, 0];
+            private _gExhausted = MISSION_CORE_REINF_EXHAUSTED getOrDefault [_goneName, false];
+            MISSION_CORE_REINF_SENT set [_newOwner, _gSent];
+            MISSION_CORE_REINF_TANK_BUDGET set [_newOwner, _gTank];
+            MISSION_CORE_MANPOWER set [_newOwner, _gManpower];
+            MISSION_CORE_TANK_DELIVERED set [_newOwner, _gTankDel];
+            MISSION_CORE_TANK_DELIVERED_GROUPS set [_newOwner, _gTankDelGrp];
+            MISSION_CORE_TANK_REQUESTED set [_newOwner, _gTankReq];
+            MISSION_CORE_REINF_EXHAUSTED set [_newOwner, _gExhausted];
+            // No cooldown stamp: the handoff marker is freshly contested and must be able to ask
+            // its neighbors IMMEDIATELY (the inherited budget already caps the spend).
+            diag_log format ["DYNAMIC REINF: zone HANDOFF - inherited budget of %1 into %2 (sent=%3 tank=%4)", _goneName, _newOwner, _gSent, _gTank];
+        } else {
+            MISSION_CORE_REINF_SENT set [_goneName, 0];
+            MISSION_CORE_REINF_TANK_BUDGET set [_goneName, 0];
+            MISSION_CORE_REINF_COOLDOWN deleteAt _goneName;
+            MISSION_CORE_REINF_EXHAUSTED deleteAt _goneName;
+            MISSION_CORE_MANPOWER set [_goneName, []];
+            MISSION_CORE_TANK_DELIVERED set [_goneName, 0];
+            MISSION_CORE_TANK_DELIVERED_GROUPS set [_goneName, []];
+            MISSION_CORE_TANK_REQUESTED deleteAt _goneName;
+        };
+        // Clear the give-up latch either way, so this marker can still raise its own teardown later.
         if (!isNil "MISSION_CORE_NEIGHBOR_GIVEUP") then { MISSION_CORE_NEIGHBOR_GIVEUP deleteAt _goneName; };
-        diag_log format ["DYNAMIC REINF: zone handoff - reset reinforcement budget for old marker %1", _goneName];
+        if (_newOwner == "") then {
+            diag_log format ["DYNAMIC REINF: zone handoff - reset reinforcement budget for old marker %1", _goneName];
+        };
     } forEach _goneZones;
 
     // 2) ADD the new zone's closest chosen neighbors that are not already active. Matches the
     // counter-attack dispatcher's "up to 3 closest neighbors send real troops" rule, so the
-    // active supporting field keeps the same size across the handoff.
+    // active supporting field keeps the same size across the handoff. On a TRUE handoff the new
+    // zone's neighbors first TOP UP back to full strength (one-time, capped at their capacity)
+    // before they are manpower-blocked for the continuing fight.
     {
         private _zName = _x;
         private _zIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _zName };
         if (_zIdx < 0) then { continue; };
         private _zPos = (MISSION_CORE_CACHED_POSITIONS select _zIdx) select 1;
+        private _isHandoff = _zName in _handoffTo;
         private _added = 0;
         {
             if (_added >= 3) exitWith {};
@@ -129,6 +207,13 @@ MISSION_CORE_fnc_reevalZoneNeighbors = {
             MISSION_CORE_SPAWNED_LOCATIONS set [_nName, true];
             [_nLoc] call MISSION_CORE_fnc_spawnLocation;
             _added = _added + 1;
+            // One-time handoff top-up: let this neighbor refill to its own capacity before it gets
+            // manpower-blocked (capped by the amount needed to reach full - replenishLoop caps the
+            // request at the marker's max manpower limit).
+            if (_isHandoff) then {
+                if (isNil "MISSION_CORE_HANDOFF_TOPUP") then { MISSION_CORE_HANDOFF_TOPUP = []; };
+                if !(_nName in MISSION_CORE_HANDOFF_TOPUP) then { MISSION_CORE_HANDOFF_TOPUP pushBack _nName; };
+            };
         } forEach ([_zName, _zPos, _side, _zoneNames] call MISSION_CORE_fnc_getMarkerNeighbors);
     } forEach _newZones;
 };

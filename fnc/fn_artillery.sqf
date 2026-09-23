@@ -154,9 +154,11 @@ MISSION_CORE_fnc_scatterArtilleryPoint = {
     [(_target select 0) + (sin _dir) * _r, (_target select 1) + (cos _dir) * _r, 0]
 };
 
-// Walk a vehicle's turret weapons and return every magazine class belonging to a weapon whose
-// CfgWeapons "weaponLockSystem" (an integer, or a "a + b" expression of flags) includes the
-// LASER-GUIDED flag (4). Used to tell a self-propelled gun it carries a laser-guided round.
+// Walk a vehicle's turret weapons and return every magazine class whose AMMO (CfgAmmo) has
+// laserLock = 1 (the round locks onto a laser designator). The weapon's own weaponLockSystem is
+// NOT a reliable LG marker for vanilla artillery (the Scorcher's cannon doesn't set it), and
+// ammo must be resolved via getText + CfgAmmo - a bare ">> ammo" traversal can fail to resolve
+// and silently read every guidance flag as 0.
 MISSION_CORE_fnc_artilleryLaserMags = {
     params ["_veh"];
     private _cls = typeOf _veh;
@@ -166,13 +168,15 @@ MISSION_CORE_fnc_artilleryLaserMags = {
         {
             private _w = _x;
             private _weap = configFile >> "CfgWeapons" >> _w;
-            private _wls = getText (_weap >> "weaponLockSystem");
-            if (_wls == "") then { _wls = str (getNumber (_weap >> "weaponLockSystem")); };
-            private _flags = 0;
-            { _flags = _flags + (parseNumber _x); } forEach (_wls splitString " +");
-            if (_flags mod 8 >= 4) then {
-                { _laserMags pushBack _x; } forEach (getArray (_weap >> "magazines"));
-            };
+            {
+                private _ammoClass = getText (configFile >> "CfgMagazines" >> _x >> "ammo");
+                if (_ammoClass != "") then {
+                    private _ammo = configFile >> "CfgAmmo" >> _ammoClass;
+                    if (getNumber (_ammo >> "laserLock") == 1) then {
+                        _laserMags pushBack _x;
+                    };
+                };
+            } forEach (getArray (_weap >> "magazines"));
         } forEach (getArray (_turretCfg >> "weapons"));
         {
             [_x] call _scanTurret;
@@ -184,20 +188,61 @@ MISSION_CORE_fnc_artilleryLaserMags = {
     _laserMags
 };
 
+// GPS/precision rounds: magazines that home onto their target WITHOUT needing a laser dot.
+// Classified by the ammo's guidance flags: autoSeekTarget = 1 (round seeks its own target) and
+// laserLock = 0 (round does NOT need a laser designator). We deliberately do NOT use the
+// artilleryLock flag for this (that concerns the AI commander's ArtilleryTarget objects). Walked
+// with the same turret walk as fn_artilleryLaserMags. Returns the deduplicated list of magazine classes.
+MISSION_CORE_fnc_artilleryGpsMags = {
+    params ["_veh"];
+    private _cls = typeOf _veh;
+    private _gpsMags = [];
+    private _scanTurret = {
+        params ["_turretCfg"];
+        {
+            private _w = _x;
+            private _weap = configFile >> "CfgWeapons" >> _w;
+            {
+                // Resolve the ammo class by name: ">> ammo" may not traverse to CfgAmmo and would
+                // read every flag as 0. A missing ammo entry (decoy/empty) simply skips.
+                private _ammoClass = getText (configFile >> "CfgMagazines" >> _x >> "ammo");
+                if (_ammoClass != "") then {
+                    private _ammo = configFile >> "CfgAmmo" >> _ammoClass;
+                    if (getNumber (_ammo >> "autoSeekTarget") > 0) then {
+                        if (getNumber (_ammo >> "laserLock") == 0) then {
+                            _gpsMags pushBack _x;
+                        };
+                    };
+                };
+            } forEach (getArray (_weap >> "magazines"));
+        } forEach (getArray (_turretCfg >> "weapons"));
+        {
+            [_x] call _scanTurret;
+        } forEach ("true" configClasses (_turretCfg >> "turrets"));
+    };
+    {
+        [_x] call _scanTurret;
+    } forEach ("true" configClasses (configFile >> "CfgVehicles" >> _cls >> "turrets"));
+    _gpsMags arrayIntersect _gpsMags
+};
+
 // The laser dot currently being painted by a friendly unit with a laser designator, if it's a
 // ground position within the piece's range. Returns a position (or []).
 MISSION_CORE_fnc_artilleryLaserTarget = {
     params ["_side", "_veh", "_rangeCap"];
     private _best = [];
+    // ANY unit on the friendly side - player or AI, soldier or vehicle gunner - just ask it directly
+    // for its laser target. laserTarget is objNull for anyone not painting, so no weapon-name gate
+    // (designator classes vary and its presence says nothing about an actual painted dot).
     {
-        if (side _x == _side && { alive _x } && { _x hasWeapon "Laserdesignator" }) then {
+        if (side _x == _side && { alive _x }) then {
             private _lt = laserTarget _x;
             if (!isNull _lt) then {
                 private _p = getPosATL _lt;
                 if (_veh distance2D _p < _rangeCap) then { _best = _p; };
             };
         };
-    } forEach allPlayers;
+    } forEach allUnits;
     _best
 };
 

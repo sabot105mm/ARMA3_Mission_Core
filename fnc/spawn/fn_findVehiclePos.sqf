@@ -5,6 +5,10 @@ MISSION_CORE_fnc_findVehiclePos = {
     private _b = _size select 1;
     private _pos = _center;
     private _clear = false;
+    // DEAD-VEHICLE SCAN: sweep wrecks inside the safe spawn area (the marker footprint + 25%
+    // safety net) and delete ONLY those - never every dead vehicle on the map. A fresh vehicle
+    // must never materialize on top of / beside a burned-out hull from an earlier fight.
+    [_center, ((_a max _b) * 1.25)] call MISSION_CORE_fnc_clearNearbyWrecks;
     // PERMANENT RULE: anything spawned inside a marker spawns ON the road, facing along it. Tanks,
     // APCs, trucks and transports roll out of a town along its roads instead of materializing in a
     // field. Prefer the best road segment inside the marker footprint (dry, not a flagged-unsafe

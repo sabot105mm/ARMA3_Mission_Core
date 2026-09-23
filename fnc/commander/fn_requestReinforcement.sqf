@@ -94,7 +94,9 @@ MISSION_CORE_fnc_requestReinforcement = {
         private _mSize = if (count _loc > 8) then { _loc select 8 } else { [250, 250] };
         // Foot infantry cap: max 3 towns per side may field infantry. Queue the rest to spawn
         // when a squad is KIA and frees a slot.
-        if !([EAST, "inf", _locPos] call MISSION_CORE_fnc_townCategoryCanUse) then {
+        // PERMANENT RULE (global foot budget): the sender cap also respects the per-side foot-squad
+        // cap - a reinforcement arm NEVER floats the map over footSquadCapSquads.
+        if !([EAST, "inf", _locPos] call MISSION_CORE_fnc_townCategoryCanUse) || { ([EAST] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) } then {
             ["MISSION_CORE_fnc_queuedReinforce", format ["reinf_%1_%2", _providerName, _locName], [EAST, _x, _spawnPos, _factionData select 3, _importance, _locPos, _mSize, _providerName]] call MISSION_CORE_fnc_enqueueSpawn;
         } else {
             private _grp = [_x select 0, _spawnPos, EAST, _factionData select 3, "AWARE", "LIMITED", _importance, _locPos, _mSize] call MISSION_CORE_fnc_spawnGroup;

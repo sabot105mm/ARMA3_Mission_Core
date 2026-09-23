@@ -268,12 +268,10 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                 [_markerName, _locPos, _locOwner, _importance] call MISSION_CORE_fnc_neighborCounterAttack;
 
                 // BLUFOR SUPPORT: while a player attacks this EAST marker (it is one of the side's contested
-                // zones - one zone per player), BLUFOR AI assembles a support force from the closest
-                // BLUFOR marker (foot + mech + tanks) and SADs that zone via the same
-                // assemble/transport pipeline. 10min cooldown per zone.
-                // PERMANENT RULE: every contested zone gets its OWN support force (one zone per
-                // attacking player). A player's knowsAbout can leak to nearby non-zone markers,
-                // so support is gated on zone membership, not "closest target".
+                // zones), BLUFOR AI assembles a support force from the closest BLUFOR marker (foot +
+                // mech + tanks) and SADs that zone via the same assemble/transport pipeline. 10min
+                // cooldown per zone. PERMANENT RULE: every contested zone - all of them, no per-player
+                // cap - gets its own support force.
                 private _isZone = (_eastZonesTick findIf { (_x select 0) == _markerName } != -1);
                 private _bluforAutoAttack = ["bluforAutoAttack", 0] call MISSION_CORE_fnc_tune;
                 if (_bluforAutoAttack > 0 && { _locOwner == EAST && { _isZone } }) then {

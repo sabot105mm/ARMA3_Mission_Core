@@ -25,7 +25,7 @@ MISSION_CORE_fnc_queuedCounterAttackTank = {
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
     MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
     [_grp, _targetPos, _targetSize, "YELLOW"] call MISSION_CORE_fnc_sendCounterAttack;
-    MISSION_CORE_COMMIT set [_provName, (MISSION_CORE_COMMIT getOrDefault [_provName, 0]) + ceil ((_template select 2) * 0.1)];
+    MISSION_CORE_COMMIT set [_provName, (MISSION_CORE_COMMIT getOrDefault [_provName, 0]) + (_template select 2)];
     diag_log format ["DYNAMIC QUEUE: released queued counter-attack tank %1 from %2", _template select 0, _provName];
     true
 };

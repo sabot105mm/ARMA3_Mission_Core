@@ -33,18 +33,20 @@ MISSION_CORE_fnc_getMarkerNeighbors = {
 
 MISSION_CORE_fnc_neighborCounterAttack = {
     params ["_locName", "_locPos", "_side", "_importance"];
-    // PERMANENT RULE: one contested zone PER PLAYER. Only a marker that is one of the side's
-    // contested zones (a player is actually engaging it) receives neighbor reinforcements -
-    // a secondary marker a player merely brushed past never gets fed. Each zone is handled
-    // independently with its own neighbor pool below.
+    // PERMANENT RULE: every actually-contested marker is a zone (no per-player cap). A marker
+    // must be one of the side's contested zones (a player is actually engaging it) to receive
+    // neighbor reinforcements - a secondary marker a player merely brushed past never gets fed.
+    // Each zone is handled independently with its own neighbor pool below.
     private _zoneList = [_side] call MISSION_CORE_fnc_getContestedMarkers;
     if (_zoneList findIf { (_x select 0) == _locName } == -1) exitWith {};
     if (isNil "MISSION_CORE_REINF_COOLDOWN") then { MISSION_CORE_REINF_COOLDOWN = createHashMap; };
     private _last = MISSION_CORE_REINF_COOLDOWN getOrDefault [_locName, -99999];
-    if (time - _last < 300) exitWith {};
-    // NOTE: the cooldown is stamped only AFTER the full-gate below, once we commit to dispatching.
-    // Stamping here would let a full-and-not-contested marker silently burn the 300s window, so a
-    // marker that becomes contested moments later would be ignored until the window expired.
+    // VERDICT CADENCE: the gate is a SHORT window (a marker may re-evaluate frequently). The
+    // verdict decides what gets stamped below: HOLD stamps a short re-eval window so a quiet
+    // marker keeps re-checking until it climbs to CRITICAL; REINFORCE/CRITICAL stamp the long
+    // 300s dispatch window after actually spending. Keeping the gate short means a HOLD marker
+    // never burns a long cooldown and skips the moment the fight shifts.
+    if (_last != -99999 && { time - _last < 30 }) exitWith {};
     // PERMANENT RULE: the contested marker's OWN garrison must be fully spawned before any
     // neighbor dispatches reinforcements. The proximity spawner spawns it on its own async
     // cycle, so a battle can start before the garrison exists. Force it now so the contested
@@ -60,19 +62,38 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     };
     // The contested marker itself claims the first of the 4 spawn slots (contested + 3 neighbors)
     [_locName] call MISSION_CORE_fnc_spawnerSlotFree;
-    // PERMANENT RULE: NO full-garrison suppression. A marker being on the side's contested zone
-    // list (checked at the top) IS the go-ahead - the exact flag the player sees - so a contested
-    // marker ALWAYS draws its neighbors, whether it is fresh, full or depleted. The goal at a
-    // contested marker is to overwhelm the attacker, not to top up losses. (The old full-exit let
-    // a freshly spawned, full-strength target - precisely what the proximity spawner creates the
-    // moment an assault arrives - skip its neighbors entirely.)
+    // SCARE GATE: the marker only begs for help when its combat assessment says so. The verdict
+    // decides how hard and how often:
+    //   HOLD      - not scared enough - NO neighbor is asked. Marker re-evaluates on a short
+    //               cadence and keeps re-checking until the verdict climbs to CRITICAL.
+    //   REINFORCE - asks a FEW neighbors (the tier-scaled ask-some fraction).
+    //   CRITICAL  - asks ALL neighbors and keeps re-asking; no further re-eval is needed, it is
+    //               already at max distress (factories/power/bases hit this almost instantly).
+    private _locEntry2 = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _locName }) param [0, []];
+    private _assessOut = if (count _locEntry2 > 0) then { [_locEntry2, _side] call MISSION_CORE_fnc_markerCombatAssessment } else { [0, "HOLD", 0] };
+    private _scare = _assessOut select 0;
+    private _verdict = _assessOut select 1;
+    private _useFrac = _assessOut select 2;
+    if (_verdict == "HOLD") then {
+        diag_log format ["DYNAMIC SCARE GATE: %1 verdict HOLD (scare=%2) - no neighbors asked, re-eval later", _locName, round _scare];
+        // Re-eval cadence: stamp time, the 30s gate above blocks re-checks until the window
+        // passes, then this marker re-evaluates and the moment its garrison is beaten down
+        // enough it climbs to REINFORCE/CRITICAL. Once CRITICAL it stays asking all neighbors
+        // on the long 300s dispatch window - no re-eval needed, it is already wide awake.
+        MISSION_CORE_REINF_COOLDOWN set [_locName, time];
+    };
+    // PERMANENT RULE: exitWith is NOT legal inside a then { } block (SQF "Missing ;" parse
+    // quirk - see fn_isMarkerContested) - the HOLD bail-out must sit at function scope.
+    if (_verdict == "HOLD") exitWith {};
     if (isNil "MISSION_CORE_GARRISON_BASELINE") then { MISSION_CORE_GARRISON_BASELINE = createHashMap; };
     private _baseline = MISSION_CORE_GARRISON_BASELINE getOrDefault [_locName, [_importance] call MISSION_CORE_fnc_markerCapacity];
     private _aliveNow = [_locName, _side] call MISSION_CORE_fnc_countMarkerGarrison;
     if (_aliveNow >= _baseline) then {
-        diag_log format ["DYNAMIC REINF: %1 full (%2/%3) but contested - calling neighbors anyway", _locName, _aliveNow, _baseline];
+        diag_log format ["DYNAMIC REINF: %1 full (%2/%3) but %4 - calling neighbors anyway", _locName, _aliveNow, _baseline, _verdict];
     };
-    // Committed to dispatching neighbors: stamp the 300s window now.
+    // Committed to dispatching neighbors: stamp the long 300s window now. REINFORCE is a measured
+    // burst on this cadence; CRITICAL keeps re-asking ALL neighbors on it too - the marker is at
+    // max distress, so it stays wide awake instead of re-evaluating from a cold HOLD.
     MISSION_CORE_REINF_COOLDOWN set [_locName, time];
     private _factionData = if (_side == WEST) then { MISSION_CORE_BLUFOR_DATA } else { MISSION_CORE_REDFOR_DATA };
     // PERMANENT RULE: a contested marker NEVER counter-attacks another contested marker. A zone's
@@ -85,6 +106,15 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     // re-evaluation so both paths always agree on who "normally" supports a marker.
     private _neighbors = [_locName, _locPos, _side, _zoneNames] call MISSION_CORE_fnc_getMarkerNeighbors;
     if (count _neighbors == 0) exitWith {};
+    // SCARE GATE: only the verdict-sanctioned SLICE of the neighbor pool is dispatched. REINFORCE
+    // uses the nearest few (distance-sorted above, so this keeps the CLOSEST providers); CRITICAL
+    // uses all of them. This is the "a FEW" vs "ALL" difference from the assessment.
+    if (_verdict == "REINFORCE" && { _useFrac < 1 }) then {
+        _neighbors = _neighbors select [0, ceil (count _neighbors * _useFrac)];
+        diag_log format ["DYNAMIC SCARE GATE: %1 verdict REINFORCE (useFrac=%2) - asking %3 closest neighbors", _locName, _useFrac, count _neighbors];
+    } else {
+        diag_log format ["DYNAMIC SCARE GATE: %1 verdict CRITICAL - asking ALL %2 neighbors", _locName, count _neighbors];
+    };
     private _contestedIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _locName };
     private _targetSize = if (_contestedIdx >= 0) then { (MISSION_CORE_CACHED_POSITIONS select _contestedIdx) select 8 } else { [_importance, _importance] };
     private _totalSent = 0;
@@ -117,12 +147,15 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     private _ammoFrac = [_locName] call MISSION_CORE_fnc_getAmmoFraction;
     private _ammoFactor = if (_ammoFrac <= 0) then { 0 } else { if (_ammoFrac < 0.3) then { 0.3 } else { [1.0, 0.5] select (_ammoFrac < 0.7) } };
     _pool = _pool * _ammoFactor;
+    private _poolSafe = _pool max 1;
 
     if (_sentTotal >= _pool) exitWith {
         if (isNil "MISSION_CORE_REINF_EXHAUSTED") then { MISSION_CORE_REINF_EXHAUSTED = createHashMap; };
         MISSION_CORE_REINF_EXHAUSTED set [_locName, true];
         diag_log format ["DYNAMIC REINF BUDGET: %1 pool exhausted (%2/%3)", _locName, _sentTotal, _pool];
-        // PERMANENT RULE: the zone gave up - the whole neighborhood goes dormant with it.
+        // PERMANENT RULE: the supporting neighborhood gives up - it goes dormant so it stops
+        // feeding this fight. The contested marker ITSELF stays contested and keeps fighting with
+        // its own self-replenishing garrison (contested never clears on give-up).
         [_locName, _locPos, _side] call MISSION_CORE_fnc_deactivateNeighborMarkers;
     };
     diag_log format ["DYNAMIC REINF BUDGET: %1 pool=%2 budgetFrac=%3 sent=%4", _locName, _pool, _budgetFrac, _sentTotal];
@@ -141,18 +174,14 @@ MISSION_CORE_fnc_neighborCounterAttack = {
         [_side, _locName, _locPos, _thisEvent, true] call MISSION_CORE_fnc_orderTank;
         diag_log format ["DYNAMIC REINF: counter-attack tank order placed for %1 (n=%2, budget %3/%4)", _locName, _thisEvent, _spent + _thisEvent, _tankBudget];
     };
-    private _manpower = 0;
-    if (isNil "MISSION_CORE_COMMIT") then { MISSION_CORE_COMMIT = createHashMap; };
-    if (isNil "MISSION_CORE_MANPOWER") then { MISSION_CORE_MANPOWER = createHashMap; };
-    private _avgSpeed = 8.0;
     private _spawnedProviders = 0;
+    if (isNil "MISSION_CORE_COMMIT") then { MISSION_CORE_COMMIT = createHashMap; };
     {
         private _prov = _x;
         private _provName = _prov select 0;
         private _provImp = _prov select 7;
         private _provPos = _prov select 1;
         private _provSize = if (count _prov > 8) then { _prov select 8 } else { [200, 200] };
-        private _dist = _provPos distance _locPos;
         // Pooled budget: stop every provider once the zone's total reinforcement pool is spent.
         if (_sentTotal >= _pool) exitWith {};
         // The contested marker itself claims the first spawn slot. Up to 3 closest neighbors may
@@ -177,15 +206,23 @@ MISSION_CORE_fnc_neighborCounterAttack = {
             };
             if (_infGroups <= 0) exitWith {
                 if (_side == EAST) then { [_locName] call MISSION_CORE_fnc_disengageToNextMarker; };
-                // PERMANENT RULE: the retake window has run out - the zone gave up and the
-                // whole neighborhood goes dormant with it.
+                // PERMANENT RULE: the retake window has run out - the supporting neighborhood
+                // goes dormant with it (contested itself never clears on give-up).
                 [_locName, _locPos, _side] call MISSION_CORE_fnc_deactivateNeighborMarkers;
             };
             private _infPool = [_groups] call MISSION_CORE_fnc_getInfTemplates;
             private _sentMen = 0;
             for "_i" from 1 to _infGroups do {
                 if (count _infPool == 0) exitWith {};
+                // INTENSITY CURVE + HARD CAP (PERMANENT RULE): never commit a squad once the
+                // running cumulative (sent before this call + this provider's batch so far)
+                // reaches the pool - so a single provider can never overshoot the budget. The
+                // inter-squad gap widens as the pool drains: 0.2s at a fresh pool ramping
+                // exponentially (pow 3) to 5s near exhausted, so the wave visibly loses steam.
+                if ((_sentTotal + _sentMen) >= _pool) exitWith {};
                 private _template = selectRandom _infPool;
+                private _frac = ((_sentTotal + _sentMen) / _poolSafe) min 1;
+                private _gap = 0.2 + ((_frac * _frac * _frac) * 4.8);
                 // Reinforcements assemble INSIDE the provider's marker (the lax scan tolerates a
                 // couple of minor obstacles so a spot in a dense town centre still resolves).
                 private _strikeDir = _provPos getDir _locPos;
@@ -194,7 +231,7 @@ MISSION_CORE_fnc_neighborCounterAttack = {
                 // foot squads alive is hard-capped at 10 (PERMANENT RULE). Queue the squad when
                 // either cap is full and release it when a slot frees.
                 if (!([_side, "inf", _provPos] call MISSION_CORE_fnc_townCategoryCanUse) || { ([_side] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) }) then {
-                    ["MISSION_CORE_fnc_queuedCounterAttackInf", format ["cainf_%1_%2_%3", _provName, _locName, _i], [_side, _template, _spawnPos, _factionData select 3, _provImp, _provPos, _provSize, _provName, _locPos, _targetSize]] call MISSION_CORE_fnc_enqueueSpawn;
+                    ["MISSION_CORE_fnc_queuedCounterAttackInf", format ["cainf_%1_%2_%3", _provName, _locName, _i], [_side, _template, _spawnPos, _factionData select 3, _provImp, _provPos, _provSize, _provName, _locPos, _targetSize, _locName]] call MISSION_CORE_fnc_enqueueSpawn;
                     _sentMen = _sentMen + (_template select 2);
                 } else {
                     private _grp = [_template select 0, _spawnPos, _side, _factionData select 3, "AWARE", "NORMAL", _provImp, _provPos, _provSize] call MISSION_CORE_fnc_spawnGroup;
@@ -206,38 +243,36 @@ MISSION_CORE_fnc_neighborCounterAttack = {
                     [_grp, _locPos, _targetSize] call MISSION_CORE_fnc_sendCounterAttack;
                     _sentMen = _sentMen + (_template select 2);
                 };
-                // 0.4s gap between counter-attack squads so they don't all pop at once
-                sleep 0.4;
+                // Curve-driven gap between counter-attack squads: fast when the pool is fresh,
+                // widening as it drains (computed before each squad, so a mid-batch drain slows
+                // the tail of the same provider).
+                sleep _gap;
             };
-            // 0.4s gap between provider reinforcements so groups don't cluster
-            sleep 0.4;
-            // Giver only commits 0.1x of the men it shuttled to a friendly neighbor
-            MISSION_CORE_COMMIT set [_provName, (MISSION_CORE_COMMIT getOrDefault [_provName, 0]) + ceil (_sentMen * 0.1)];
+            // Curve-driven gap between provider reinforcements so groups don't cluster.
+            // Recomputes the gap at this scope (the squad-level _gap is private to the loop).
+            private _provFrac = (_sentTotal / _poolSafe) min 1;
+            sleep (0.2 + ((_provFrac * _provFrac * _provFrac) * 4.8));
+            // COMMIT 1:1 (PERMANENT RULE): every man a provider marches to a counter-attack is
+            // debited from ITS OWN manpower pool - troops are paid for 1 for 1, never subsidized.
+            MISSION_CORE_COMMIT set [_provName, (MISSION_CORE_COMMIT getOrDefault [_provName, 0]) + _sentMen];
             _sentTotal = _sentTotal + _sentMen;
             MISSION_CORE_REINF_SENT set [_locName, _sentTotal];
             _totalSent = _totalSent + _sentMen;
             _spawnedProviders = _spawnedProviders + 1;
         } else {
-            // Far neighbor: no marching units, just manpower credit that matures on travel time.
-            // PERMANENT RULE: a marker NEVER accumulates more manpower than its initial capacity -
-            // credits are capped so the pending total can never exceed what the marker started with.
-            private _cap = [_importance] call MISSION_CORE_fnc_markerCapacity;
-            private _pendingMen = 0;
-            { _pendingMen = _pendingMen + (_x select 0); } forEach (MISSION_CORE_MANPOWER getOrDefault [_locName, []]);
-            private _room = (_cap - _pendingMen) max 0;
-            private _men = (_provImp * 10) min _room;
-            if (_men > 0) then {
-                private _credit = [_men, time + (_dist / _avgSpeed)];
-                private _pending = MISSION_CORE_MANPOWER getOrDefault [_locName, []];
-                _pending pushBack _credit;
-                MISSION_CORE_MANPOWER set [_locName, _pending];
-                _manpower = _manpower + _men;
-            };
+            // Far neighbor: no marching units, no manpower credit. PERMANENT RULE: a neighbor's
+            // manpower is NEVER credited to another marker - a contested marker cannot request
+            // manpower, so there is no credit path at all.
         };
     } forEach _neighbors;
-    if (_totalSent > 0 || _manpower > 0) then {
-        diag_log format ["DYNAMIC REINF: %1 (%2) reinforced by %3 neighbors (men=%4, manpower=%5, spawners=%6)", _locName, _side, count _neighbors, _totalSent, _manpower, _spawnedProviders];
+    if (_totalSent > 0) then {
+        diag_log format ["DYNAMIC REINF: %1 (%2) reinforced by %3 neighbors (men=%4, spawners=%5)", _locName, _side, count _neighbors, _totalSent, _spawnedProviders];
     };
-    // 5s gap after the contested marker's whole reinforcement set before any other spawn burst
-    if (_totalSent > 0) then { sleep 5; };
+    // Curve-driven gap after the contested marker's whole reinforcement set before any other
+    // spawn burst: 5s at a fresh pool scaling to ~15s when nearly exhausted (matches the
+    // squad/provider slowdown so a drained zone literally stops asking for a while).
+    if (_totalSent > 0) then {
+        private _tailFrac = (_sentTotal / _poolSafe) min 1;
+        sleep (5 + ((_tailFrac * _tailFrac * _tailFrac) * 10));
+    };
 };

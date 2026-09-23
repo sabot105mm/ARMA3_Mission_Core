@@ -164,11 +164,6 @@ MISSION_CORE_fnc_recruitTankManagerLoop = {
         if (count MISSION_CORE_RECRUIT_TANK_ORDERS == 0) then { continue; };
         if (isNil "MISSION_CORE_CACHED_POSITIONS") then { continue; };
 
-        // BLUFOR depots with physical parked stock, sorted by stock desc then nearest to request.
-        private _bluDepots = MISSION_CORE_CACHED_POSITIONS select {
-            (_x select 4) == WEST && { [_x] call MISSION_CORE_fnc_tankDepotIsDepot } && { ([(_x select 0)] call MISSION_CORE_fnc_tankDepotStock) > 0 }
-        };
-
         private _keep = [];
         {
             _x params ["_mName", "_mPos", "_t"];
@@ -192,14 +187,16 @@ MISSION_CORE_fnc_recruitTankManagerLoop = {
             //    point and delivering a PHYSICAL tank that drives in to defend the marker. The old
             //    abstract-convoy path despawned the convoy into the pool on arrival, so a paid
             //    order never left a standing tank - players must SEE the tank they bought.
-            if (count _bluDepots > 0) then {
+            //    The start-pool bonus (startTanks tune key) also fills here, so a fresh mission with
+            //    no depot stock yet still delivers queued orders from the testing pool.
+            if (([WEST] call MISSION_CORE_fnc_poolTanksForSide) >= 1) then {
                 private _src = [WEST, _mPos] call MISSION_CORE_fnc_consumePoolTankForSide;
                 if (_src != "") then {
                     private _spawnPos = _mPos getPos [300, random 360];
                     private _g = [WEST, _mPos, _mName, 1, _spawnPos, _vCls, _cost] call MISSION_CORE_fnc_tankDeployAbstract;
                     if (!isNull _g) then {
                         _filled = true;
-                        diag_log format ["RECRUIT TANK: depot %1 delivered a tank to %2 (armor pool point consumed)", _src, _mName];
+                        diag_log format ["RECRUIT TANK: %1 delivered a tank to %2 (armor pool point consumed)", _src, _mName];
                     };
                 };
             };
@@ -1247,15 +1244,73 @@ MISSION_CORE_fnc_playerArtyLoop = {
                 continue;
             };
             _anyLive = true;
-            // Very light engagement: shell a spotted enemy target within weapon range. An SPG/MLRS
-            // that carries a laser-guided round (weaponLockSystem flag 4) fires it at whatever laser
-            // dot a friendly designator is painting - exact dot, single shot. Mortars never do this.
+            // Very light engagement: shell a spotted enemy target within weapon range. A painted
+            // laser dot ALWAYS wins as a target for a non-mortar piece - but the round depends on
+            // what it carries: the laser-guided round (weaponLockSystem flag 4) if it has one, else
+            // a GPS/precision self-homing round ("guided" magazine), else a bracketed barrage. The
+            // exact dot, or a barrage on that dot, is the only case a MOVING target may be engaged.
             private _lastFire = _veh getVariable ["MISSION_CORE_ARTY_LAST_FIRE", 0];
+            // Assault-arty REARM, two independent triggers (no spawned thread - this 8s tick owns
+            // the deadline via vehicle variable MISSION_CORE_ARTY_REARM_UNTIL):
+            //   1. Any combat (HE) ammo TYPE has run out (0 rounds) -> reload now, regardless of idle.
+            //   2. The piece has done NOTHING for 5 full minutes AND total combat ammo is below max
+            //      -> reload (a shot moving _lastFire forward resets the idle clock for free).
+            // On trigger: "rearming" parked for ~20s (no fire, no relocate), then setVehicleAmmo to
+            // max and "rearmed". An empty LG mag alone doesn't force it - tiering downgrades to
+            // GPS/other and it keeps fighting; the HE-empty rule catches a truly dry piece.
+            private _rearmUntil = _veh getVariable ["MISSION_CORE_ARTY_REARM_UNTIL", 0];
+            if (_rearmUntil > 0) then {
+                if (time >= _rearmUntil) then {
+                    _veh setVariable ["MISSION_CORE_ARTY_REARM_UNTIL", nil];
+                    _veh setVehicleAmmo 1;
+                    _veh setVehicleAmmoDef 1;
+                    [_grp, "Rearmed. All ammunition restored. Resuming fire support."] call MISSION_CORE_fnc_artillerySideChat;
+                    diag_log format ["PLAYER ARTY: %1 (%2) rearm complete - ammo refilled", _veh, typeOf _veh];
+                } else {
+                    continue;
+                };
+            } else {
+                // Aggregate rounds PER combat ammo type (non-smoke): current vs the type's max.
+                // Accumulate into per-type hashmaps, then iterate keys (a plain array) - never
+                // forEach over a HashMap directly (iterator reliability quirk).
+                private _typeCur = createHashMap;
+                private _typeMax = createHashMap;
+                {
+                    private _m = _x select 0;
+                    if (_m find "Smoke" == -1) then {
+                        _typeCur set [_m, (_typeCur getOrDefault [_m, 0]) + (_x select 1)];
+                        _typeMax set [_m, (_typeMax getOrDefault [_m, 0]) + (getNumber (configFile >> "CfgMagazines" >> _m >> "count"))];
+                    };
+                } forEach (magazinesAmmo _veh);
+                private _heOut = false;
+                private _totalCur = 0;
+                private _totalMax = 0;
+                {
+                    private _m = _x;
+                    private _cur = _typeCur getOrDefault [_m, 0];
+                    private _max = _typeMax getOrDefault [_m, 0];
+                    if (_max > 0) then {
+                        if (_cur == 0) then { _heOut = true; };
+                    };
+                    _totalCur = _totalCur + _cur;
+                    _totalMax = _totalMax + _max;
+                } forEach (keys _typeCur);
+                private _needRearm = _heOut;
+                if (!_needRearm) then {
+                    if (time - _lastFire > 300) then {
+                        if (_totalCur < _totalMax) then { _needRearm = true; };
+                    };
+                };
+                if (_needRearm) then {
+                    _veh setVariable ["MISSION_CORE_ARTY_REARM_UNTIL", time + 20];
+                    [_grp, "Rearming. Ordnance depleted or resupply due - weapons offline."] call MISSION_CORE_fnc_artillerySideChat;
+                    diag_log format ["PLAYER ARTY: %1 (%2) rearming - trigger HEempty=%3 idle5mBelowMax=%4", _veh, typeOf _veh, _heOut, (time - _lastFire > 300)];
+                    continue;
+                };
+            };
             if (time - _lastFire > 120) then {
                 private _enemy = if (side _veh == WEST) then { EAST } else { WEST };
-                private _laserMags = [];
-                if (!(_veh isKindOf "StaticMortar")) then { _laserMags = [_veh] call MISSION_CORE_fnc_artilleryLaserMags; };
-                private _laserTarget = if (count _laserMags > 0) then {
+                private _laserTarget = if (!(_veh isKindOf "StaticMortar")) then {
                     [side _veh, _veh, 10000] call MISSION_CORE_fnc_artilleryLaserTarget;
                 } else { [] };
                 private _preferLaser = count _laserTarget > 0;
@@ -1288,7 +1343,36 @@ MISSION_CORE_fnc_playerArtyLoop = {
                     };
                 };
                 if (count _target > 0) then {
-                    private _mag = [_veh, _preferLaser] call MISSION_CORE_fnc_pickArtilleryMag;
+                    // Round tiering for a laser-designated coord: 1) laser-guided round (LGB,
+                    // weaponLockSystem flag 4) hits the exact dot; 2) a GPS/precision self-homing
+                    // round ("guided" magazine) also hits the exact coord; 3) any other live shell
+                    // drops a bracketed barrage onto the coord instead of a single precise hit.
+                    private _roundTier = "other";
+                    private _mag = [];
+                    if (_preferLaser) then {
+                        private _shells = (magazinesAmmo _veh) select { (_x select 1) > 0 && { (_x select 0) find "Smoke" == -1 } };
+                        if (count _shells > 0) then {
+                            private _laserSet = [_veh] call MISSION_CORE_fnc_artilleryLaserMags;
+                            private _gpsSet = [_veh] call MISSION_CORE_fnc_artilleryGpsMags;
+                            diag_log format ["PLAYER ARTY DIAG: %1 loaded=%2 laserSet=%3 gpsSet=%4", typeOf _veh, ((magazinesAmmo _veh) apply { _x select 0 }), _laserSet, _gpsSet];
+                            private _liveLaser = _shells select { (_x select 0) in _laserSet };
+                            if (count _liveLaser > 0) then {
+                                _roundTier = "laser";
+                                _mag = _liveLaser select 0;
+                            } else {
+                                private _liveGps = _shells select { (_x select 0) in _gpsSet && { !((_x select 0) in _laserSet) } };
+                                if (count _liveGps > 0) then {
+                                    _roundTier = "gps";
+                                    _mag = _liveGps select 0;
+                                } else {
+                                    _roundTier = "other";
+                                    _mag = _shells select 0;
+                                };
+                            };
+                        };
+                    } else {
+                        _mag = [_veh, false] call MISSION_CORE_fnc_pickArtilleryMag;
+                    };
                     if (count _mag > 0) then {
                         // Command the shot from a crewmember actually IN the piece. doArtilleryFire
                         // silently does nothing when the caller is a foot soldier (e.g. a CfgGroups
@@ -1298,21 +1382,24 @@ MISSION_CORE_fnc_playerArtyLoop = {
                         if (isNull _cmdr || { !(alive _cmdr) }) then { _cmdr = gunner _veh; };
                         if (isNull _cmdr || { !(alive _cmdr) }) then { _cmdr = leader _grp; };
                         if (!(isNull _cmdr) && { alive _cmdr }) then {
-                            private _salvo = if (_preferLaser) then { 1 } else { 3 };
+                            // LGB and GPS rounds land on the painted coord (single precision shot);
+                            // a plain shell scatters a 3-round bracket over the coord.
+                            private _exact = _roundTier != "other";
+                            private _salvo = if (_exact) then { 1 } else { 3 };
                             private _magClass = _mag select 0;
                             // Standoff barrage is delivered to a scattered point so each volley lands
                             // near the marker rather than on the head of a single soldier/vehicle.
-                            private _firePos = if (_preferLaser) then { _target } else { [_veh, _target, false] call MISSION_CORE_fnc_scatterArtilleryPoint; };
+                            private _firePos = if (_exact) then { _target } else { [_veh, _target, false] call MISSION_CORE_fnc_scatterArtilleryPoint; };
                             // A fire mission outside the round's reach makes the crew radio "Invalid
                             // coordinates. Cease fire." and nothing flies. Pull the aim back along the
                             // bearing to the target (90%..30% of distance) until the point is verifiably
                             // in range, so the piece still delivers a reachable suppression near the
                             // intended marker instead of a dead radio line.
                             private _tp = _firePos;
-                            if (_preferLaser) then {
+                            if (_exact) then {
                                 private _dotRange = _tp inRangeOfArtillery [[_veh], _magClass];
                                 if (!_dotRange) then {
-                                    diag_log format ["PLAYER ARTY: %1 (%2) laser dot %3 out of range for %4", _veh, typeOf _veh, _tp, _magClass];
+                                    diag_log format ["PLAYER ARTY: %1 (%2) laser coord %3 out of range for %4", _veh, typeOf _veh, _tp, _magClass];
                                 };
                             } else {
                                 private _rangeOK = _tp inRangeOfArtillery [[_veh], _magClass];
@@ -1338,7 +1425,7 @@ MISSION_CORE_fnc_playerArtyLoop = {
                             if ((_tp inRangeOfArtillery [[_veh], _magClass])) then {
                                 _cmdr doArtilleryFire [_tp, _magClass, _salvo];
                                 _veh setVariable ["MISSION_CORE_ARTY_LAST_FIRE", time];
-                                diag_log format ["PLAYER ARTY: %1 (%2) fired %3x %4 at %5 -> %6m via %7 (%8)", _veh, typeOf _veh, _salvo, _magClass, _tp, round (_veh distance2D _tp), _cmdr, if (_preferLaser) then { "laser-adjusted" } else { if (_standoffGun) then { if (_targetFromContact) then { "assault-contact" } else { "assault-barrage" } } else { "spot/marker" } }];
+                                diag_log format ["PLAYER ARTY: %1 (%2) fired %3x %4 at %5 -> %6m via %7 (%8)", _veh, typeOf _veh, _salvo, _magClass, _tp, round (_veh distance2D _tp), _cmdr, if (_roundTier == "laser") then { "laser-LGB" } else { if (_roundTier == "gps") then { "laser-GPS" } else { if (_standoffGun) then { if (_targetFromContact) then { "assault-contact" } else { "assault-barrage" } } else { "spot/marker" } } }];
                             } else {
                                 diag_log format ["PLAYER ARTY: %1 (%2) skipped fire mission %3 - out of range / invalid coords", _veh, typeOf _veh, _target];
                             };

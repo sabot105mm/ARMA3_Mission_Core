@@ -19,7 +19,11 @@ MISSION_CORE_MANPOWER_PORT_PER_TICK = ["manpowerPortPlayerIncome", 2] call MISSI
 // Initialize the shared BLUFOR manpower pool and start the port income loop.
 // Runs on the server; publishes to clients via publicVariable.
 MISSION_CORE_fnc_initManpower = {
-    if (isNil "MISSION_CORE_BLUFOR_MANPOWER") then { MISSION_CORE_BLUFOR_MANPOWER = 0; };
+    if (isNil "MISSION_CORE_BLUFOR_MANPOWER") then {
+        // Initial pool from the start-state tune key so the recruit menu can be seeded
+        // with lots of manpower for testing without code edits.
+        MISSION_CORE_BLUFOR_MANPOWER = ["startManpower", 0] call MISSION_CORE_fnc_tune;
+    };
     publicVariable "MISSION_CORE_BLUFOR_MANPOWER";
 
     // Port income: every tick, each BLUFOR port adds manpower to the shared pool.

@@ -2,7 +2,13 @@
 // Queued spawn jobs (called by the queue loop, return true when the spawn actually happened)
 
 MISSION_CORE_fnc_queuedCounterAttackInf = {
-    params ["_side", "_template", "_spawnPos", "_faction", "_importance", "_provPos", "_provSize", "_provName", "_targetPos", "_targetSize"];
+    params ["_side", "_template", "_spawnPos", "_faction", "_importance", "_provPos", "_provSize", "_provName", "_targetPos", "_targetSize", ["_targetName", ""]];
+    // HARD CAP: the zone's pool may have been spent while this sat in the queue - never release
+    // a squad from an exhausted zone (the budget exit stamped MISSION_CORE_REINF_EXHAUSTED for it).
+    if (_targetName != "" && { isNil "MISSION_CORE_REINF_EXHAUSTED" || { MISSION_CORE_REINF_EXHAUSTED getOrDefault [_targetName, false] } }) exitWith {
+        diag_log format ["DYNAMIC QUEUE: dropped queued counter-attack inf %1 from %2 - zone %3 pool exhausted", _template select 0, _provName, _targetName];
+        false
+    };
     // The player may have left the target area while this sat in the queue - a counter-attack to
     // a marker nobody is near just becomes a truck convoy to nowhere. Drop it.
     if (allPlayers findIf { alive _x && { _x distance _targetPos < 2000 } } == -1) exitWith {
@@ -24,7 +30,7 @@ MISSION_CORE_fnc_queuedCounterAttackInf = {
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
     MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
     [_grp, _targetPos, _targetSize] call MISSION_CORE_fnc_sendCounterAttack;
-    MISSION_CORE_COMMIT set [_provName, (MISSION_CORE_COMMIT getOrDefault [_provName, 0]) + ceil ((_template select 2) * 0.1)];
+    MISSION_CORE_COMMIT set [_provName, (MISSION_CORE_COMMIT getOrDefault [_provName, 0]) + (_template select 2)];
     diag_log format ["DYNAMIC QUEUE: released queued counter-attack inf %1 from %2", _template select 0, _provName];
     true
 };

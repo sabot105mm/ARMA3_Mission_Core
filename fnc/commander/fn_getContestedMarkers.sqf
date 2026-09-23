@@ -1,8 +1,9 @@
 
-// There is exactly ONE contested marker PER PLAYER (not per side): each alive player's own
-// nearest enemy-engaged marker is their zone. Two players attacking two different markers create
-// two independent zones (full replenish / reinforce / support for each); two players on the same
-// marker share one zone. Returns [_markerName, _pos, _size, _owner] for each zone.
+// There is NO artificial zone cap: EVERY marker with any BLUFOR threat present (any player
+// approaching/inside, or any assault squad whose assigned target it is) is a contested zone.
+// Fight count is bounded only by the max-spawned-troops caps, so reinforcements/replenish
+// scale with how much the players actually threaten at once. Returns
+// [_markerName, _pos, _size, _owner] for each zone.
 
 // Broadcast the contested marker names for ONE side, then broadcast the UNION across sides so the
 // client recruit menu (friendly markers under attack) and the server assault deploy / staged-squad
@@ -65,11 +66,10 @@ MISSION_CORE_fnc_getContestedMarkers = {
         }
     };
     // ASSAULT-TARGET ZONES: a released assault squad pushing its assigned target marker makes that
-    // marker a contested zone in its own right, independent of the per-player "closest candidate"
-    // rule below. Without this a player-less squad battle (or one where the player happens to be
-    // nearer a different contested marker) is dropped from the zone list, so the replenish gate,
-    // the fresh-garrison commit and the AI counter-attack support all treat the target as quiet
-    // while it is actually under attack.
+    // marker a contested zone in its own right, the same way player presence does. Without this a
+    // player-less squad battle (or one where the player happens to be nearer a different contested
+    // marker) is dropped from the zone list, so the replenish gate, the fresh-garrison commit and
+    // the AI counter-attack support all treat the target as quiet while it is actually under attack.
     //
     // Read the SERVER-SPAWNED tracked assault groups DIRECTLY (the authoritative server map plus
     // the relay map) instead of the derived MISSION_CORE_ASSAULT_CONTEST snapshot: that snapshot
@@ -145,22 +145,17 @@ MISSION_CORE_fnc_getContestedMarkers = {
         [_side, _all apply { _x select 0 }] call MISSION_CORE_fnc_publishContestedMarkers;
         _all
     };
-    // ONE zone per alive player: the candidate CLOSEST to each player. Dedupe by marker name so
-    // two players on the same marker share a single zone.
+    // ALL contested markers are zones (PERMANENT RULE). A marker is contested the moment ANY
+    // BLUFOR threat is present (players + assault squads, garrison-independent - see
+    // fn_isMarkerContested), and the fight count is bounded only by the max-spawned-troops
+    // caps, never by a per-player zone limit. Every candidate from the contested filter above
+    // becomes its own zone with its own neighbor pool / replenish cycle.
     private _zones = [];
     {
-        private _p = _x;
-        private _best = [];
-        private _bestD = 1e10;
-        {
-            private _d = _p distance (_x select 1);
-            if (_d < _bestD) then { _bestD = _d; _best = _x; };
-        } forEach _candidates;
-        if ((_best select 0) in (_zones apply { _x select 0 })) then { continue; };
-        private _sz = if (count _best > 8) then { _best select 8 } else { [50, 50] };
-        _zones pushBack [_best select 0, _best select 1, _sz, _best select 4];
-    } forEach _playersA;
-    // Merge in the assault-target zones (dedupe against the per-player zones).
+        private _sz = if (count _x > 8) then { _x select 8 } else { [50, 50] };
+        _zones pushBack [_x select 0, _x select 1, _sz, _x select 4];
+    } forEach _candidates;
+    // Merge in the assault-target zones (dedupe against the contested candidates).
     {
         if !((_x select 0) in (_zones apply { _x select 0 })) then { _zones pushBack _x; };
     } forEach _assaultZones;

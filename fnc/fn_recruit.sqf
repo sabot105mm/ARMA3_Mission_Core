@@ -1373,6 +1373,7 @@ MISSION_CORE_fnc_commanderApplyWaypoints = {
         } else {
             [netId _grp, _wps, _targetPos] remoteExecCall ["MISSION_CORE_fnc_applyAssaultWaypointsNet", owner (leader _grp), false];
         };
+        _grp setVariable ["MISSION_CORE_RECRUIT_LAST_WPS", +_wps, true];
         _applied = _applied + 1;
     } forEach _sel;
     MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = [];
@@ -1659,10 +1660,13 @@ MISSION_CORE_fnc_releaseBluforStaged = {
         if (isNull _grp || { count units _grp == 0 }) then { continue; };
         if (count _onlyTargets > 0 && { !(_tgtName in _onlyTargets) }) then { _keep pushBack _x; continue; };
         _grp setVariable ["MISSION_CORE_ORDER", "attack"];
-        [_grp, _wps, _tgtPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
+        private _cmdWps = _grp getVariable ["MISSION_CORE_RECRUIT_LAST_WPS", []];
+        private _applyWps = if (count _cmdWps > 0) then { _cmdWps } else { _wps };
+        [_grp, _applyWps, _tgtPos] call MISSION_CORE_fnc_applyAssaultWaypoints;
         if (_grpId >= 0 && { !isNil "MISSION_CORE_ATTACK_GROUPS" }) then {
             private _data = MISSION_CORE_ATTACK_GROUPS getOrDefault [_grpId, []];
             if (count _data > 0) then {
+                _data set [2, _applyWps];
                 _data set [5, "active"];
                 _data set [6, _tgtPos];
                 MISSION_CORE_ATTACK_GROUPS set [_grpId, _data];

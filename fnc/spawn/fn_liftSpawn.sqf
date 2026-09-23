@@ -1,9 +1,11 @@
 
-// Lift a spawn position a few meters above the terrain so a freshly created vehicle drops and
-// settles onto the ground instead of clipping into terrain/bushes or wedging into a shallow dip
-// at the exact spawn point. The drop also nudges the vehicle into the engine's resting pose.
+// Spawn position is used as-is: the vehicle is created at rest on the ground instead of a few
+// meters in the air. Lifting the spawn used to make crew seat on the vehicle's hull - when the
+// vehicle is created airborne and the crew moveIn on the same frame, the seats aren't settled yet,
+// so the crew end up standing on top of the tank. Spawning at the validated ground position (the
+// callers all pass cleared/ATL spots) gives a settled vehicle the crew can board immediately.
 MISSION_CORE_fnc_liftSpawn = {
-    params ["_pos", ["_lift", 3]];
+    params ["_pos"];
     if !(_pos isEqualType []) exitWith { _pos };
-    [_pos param [0, 0, [0]], _pos param [1, 0, [0]], (_pos param [2, 0, [0]]) + _lift]
+    [_pos param [0, 0, [0]], _pos param [1, 0, [0]], _pos param [2, 0, [0]]]
 };

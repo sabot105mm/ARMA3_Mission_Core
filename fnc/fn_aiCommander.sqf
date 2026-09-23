@@ -38,6 +38,7 @@ call compile preprocessFileLineNumbers "fnc\commander\fn_hasCoveredSpawns.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_replenishMarker.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_spawnerSlotFree.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_releaseSpawnerSlot.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_markerCombatAssessment.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_neighborCounterAttack.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_enqueueSpawn.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_spawnQueueLoop.sqf";

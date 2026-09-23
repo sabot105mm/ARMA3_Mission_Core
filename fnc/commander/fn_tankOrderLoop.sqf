@@ -111,6 +111,7 @@ MISSION_CORE_fnc_tankDeployAbstract = {
     // random pick. Fall back to a random MBT only when no specific class was requested.
     if (_vehClass == "" || { !(_vehClass in _mbtClasses) }) then { _vehClass = selectRandom _mbtClasses; };
     private _crewClass = if (_side == WEST) then { "B_crew_F" } else { "O_crew_F" };
+    [_spawnPos, 100] call MISSION_CORE_fnc_clearNearbyWrecks;
     private _spawn = [_spawnPos, 0, 100, 15, 0, 0.5, 0] call BIS_fnc_findSafePos;
     if (count _spawn < 2) then { _spawn = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
     if (count _spawn == 2) then { _spawn pushBack 0; };
@@ -307,7 +308,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
                 private _travelTime = (_path select 2) / (["tankTravelSpeed", 18] call MISSION_CORE_fnc_tune);
                 if (isNil "MISSION_CORE_CONVOY_ID") then { MISSION_CORE_CONVOY_ID = 0; };
                 MISSION_CORE_CONVOY_ID = MISSION_CORE_CONVOY_ID + 1;
-                MISSION_CORE_TANK_SHIPMENTS pushBack [_orderSide, _dName, _tName, _tPos, _take, (_path select 0), (_path select 1), _travelTime, time, 0, [], grpNull, MISSION_CORE_CONVOY_ID, ""];
+                MISSION_CORE_TANK_SHIPMENTS pushBack [_orderSide, _dName, _tName, _tPos, _take, (_path select 0), (_path select 1), _travelTime, time, 0, [], grpNull, MISSION_CORE_CONVOY_ID, "", _isAssault];
                 MISSION_CORE_TANK_DESTROYED set [count MISSION_CORE_TANK_SHIPMENTS - 1, false];
                 diag_log format ["DYNAMIC TANK: dispatched %1 tanks %2 -> %3 (%4m, ETA %5s)", _take, _dName, _tName, round (_path select 2), round _travelTime];
                 _remaining = _remaining - _take;
@@ -323,7 +324,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
         private _players = allPlayers select { alive _x };
         private _keepShip = [];
         {
-            _x params ["_sSide", "_sDepot", "_sTarget", "_sTPos", "_sCount", "_sPath", "_sCum", "_sTravel", "_sDepart", "_sState", "_sVehs", "_sGrp"];
+            _x params ["_sSide", "_sDepot", "_sTarget", "_sTPos", "_sCount", "_sPath", "_sCum", "_sTravel", "_sDepart", "_sState", "_sVehs", "_sGrp", "_sCid", "_sMkr", ["_sAssault", false]];
             // Target was captured while the column was en route - the shipment is lost.
             private _sTL = MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _sTarget };
             if (count _sTL > 0 && { (_sTL select 0) select 4 != _sSide }) then {
@@ -480,6 +481,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     private _mbtClasses = (_factionData select 7) getOrDefault ["mbt", []];
                     if (count _mbtClasses == 0) then { _keepShip pushBack _x; continue; };
                     private _crewClass = if (_sSide == WEST) then { "B_crew_F" } else { "O_crew_F" };
+                    [_curPos, 100] call MISSION_CORE_fnc_clearNearbyWrecks;
                     private _spawn = [_curPos, 0, 100, 15, 0, 0.5, 0] call BIS_fnc_findSafePos;
                     if (count _spawn < 2) then { _spawn = [_curPos] call MISSION_CORE_fnc_ensureLandPos; };
                     if (count _spawn == 2) then { _spawn pushBack 0; };
@@ -507,7 +509,13 @@ MISSION_CORE_fnc_tankOrderLoop = {
                         if (count _crewOf > 1 && { isNull (gunner _x) }) then { (_crewOf select 1) moveInGunner _x; };
                         if (count _crewOf > 2 && { isNull (commander _x) }) then { (_crewOf select 2) moveInCommander _x; };
                     } forEach _vehs;
-                    _grp setBehaviour "CARELESS"; _grp setCombatMode "GREEN"; _grp setSpeedMode "FULL";
+                    // Assault/counter-attack tanks drive in as a fighting column (AWARE/RED/NORMAL)
+                    // so they engage on approach; normal deliveries stay a passive convoy so they only
+                    // drive and never get tangled in a fight before reaching the pool.
+                    private _grpBeh = if (_sAssault) then { "AWARE" } else { "CARELESS" };
+                    private _grpCmbt = if (_sAssault) then { "RED" } else { "GREEN" };
+                    private _grpSpd = if (_sAssault) then { "NORMAL" } else { "FULL" };
+                    _grp setBehaviour _grpBeh; _grp setCombatMode _grpCmbt; _grp setSpeedMode _grpSpd;
                     // Completion radius = half the target marker's size, so the convoy "arrives" as
                     // soon as it enters the marker area instead of driving to the exact path end.
                     private _arrLoc = MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _sTarget };
@@ -515,8 +523,8 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     private _arrRadius = (((_arrSize select 0) max (_arrSize select 1)) / 2) max 30;
                     private _wp = _grp addWaypoint [(_sPath select (count _sPath - 1)), _arrRadius];
                     _wp setWaypointType "MOVE";
-                    _wp setWaypointSpeed "FULL";
-                    _wp setWaypointBehaviour "CARELESS";
+                    _wp setWaypointSpeed _grpSpd;
+                    _wp setWaypointBehaviour _grpBeh;
                     _wp setWaypointScript "fnc\commander\transport_tankArrival.sqf";
                     _grp setCurrentWaypoint _wp;
                     // Destroyed-en-route cleanup: if players kill the WHOLE convoy while it drives, the
@@ -596,8 +604,32 @@ MISSION_CORE_fnc_tankDeliverAccount = {
         MISSION_CORE_TANK_DELIVERED_GROUPS set [_sTarget, (MISSION_CORE_TANK_DELIVERED_GROUPS getOrDefault [_sTarget, []]) + [_grp]];
         diag_log format ["DYNAMIC TANK: %1 -> %2 delivered %3 tanks - held live for assault commit", _sSide, _sTarget, _sCount];
     } else {
-        if (count _sVehs > 0) then { { if (!isNull _x) then { deleteVehicle _x; }; } forEach _sVehs; };
-        if (!isNull _grp) then { { if (!isNull _x) then { deleteVehicle _x; }; } forEach units _grp; deleteGroup _grp; };
-        diag_log format ["DYNAMIC TANK: %1 -> %2 delivered %3 tanks (despawned to pool)", _sSide, _sTarget, _sCount];
+        // CONTESTED DELIVERY: the target marker is an ACTIVE player fight. Do NOT despawn the
+        // column to the pool - the tanks arrived as reinforcements and commit straight into the
+        // battle. They engage (counterattack) until the marker stops being contested or is
+        // captured; the uncontested-neighbor cleanup then retreats them to the nearest friendly
+        // marker. Registered with the standard group globals (ORIGIN/REDFOR/ARMOR_SLOT) so the
+        // foot budget, armor accounting and retreat paths see them like any committed armor.
+        private _contestedZones = [_sSide] call MISSION_CORE_fnc_getContestedMarkers;
+        private _tContested = (_contestedZones findIf { (_x select 0) == _sTarget }) != -1;
+        if (_tContested && { !isNull _grp } && { count units _grp > 0 }) then {
+            private _tl2 = MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _sTarget };
+            private _tPos = if (count _tl2 > 0) then { (_tl2 select 0) select 1 } else { getPosATL (leader _grp) };
+            private _tSize = if (count _tl2 > 0 && { count (_tl2 select 0) > 8 }) then { (_tl2 select 0) select 8 } else { [200, 200, 0] };
+            _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _grp getVariable ["MISSION_CORE_TANK_SHIP_DEPOT", ""]];
+            _grp setVariable ["MISSION_CORE_REDFOR", _sSide == EAST];
+            _grp setVariable ["MISSION_CORE_BLUFOR", _sSide == WEST];
+            _grp setVariable ["MISSION_CORE_ARMOR_SLOT", "mbt"];
+            _grp setVariable ["MISSION_CORE_IDLE", false];
+            _grp setVariable ["MISSION_CORE_PATROLLING", false];
+            if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+            if !(_grp in MISSION_CORE_SPAWNED_GROUPS) then { MISSION_CORE_SPAWNED_GROUPS pushBack _grp; };
+            [_grp, _tPos, _tSize] call MISSION_CORE_fnc_sendCounterAttack;
+            diag_log format ["DYNAMIC TANK: %1 -> %2 delivered %3 tanks - CONTESTED, committed to engage", _sSide, _sTarget, _sCount];
+        } else {
+            if (count _sVehs > 0) then { { if (!isNull _x) then { deleteVehicle _x; }; } forEach _sVehs; };
+            if (!isNull _grp) then { { if (!isNull _x) then { deleteVehicle _x; }; } forEach units _grp; deleteGroup _grp; };
+            diag_log format ["DYNAMIC TANK: %1 -> %2 delivered %3 tanks (despawned to pool)", _sSide, _sTarget, _sCount];
+        };
     };
 };

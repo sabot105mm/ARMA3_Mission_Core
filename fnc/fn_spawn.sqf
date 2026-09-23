@@ -1,5 +1,7 @@
 // Loader: compiles every function from the split fnc\spawn\ folder in source order.
 call compile preprocessFileLineNumbers "fnc\spawn\fn_findDefenseAxis.sqf";
+call compile preprocessFileLineNumbers "fnc\spawn\fn_clearNearbyWrecks.sqf";
+diag_log format ["WRECK SWEEP LOAD: fn_clearNearbyWrecks.sqf compiled, helper defined=%1", !(isNil "MISSION_CORE_fnc_clearNearbyWrecks")];
 call compile preprocessFileLineNumbers "fnc\spawn\fn_ellipseRadius.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_markUnsafeVehicleSpawn.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_isUnsafeVehicleSpawn.sqf";

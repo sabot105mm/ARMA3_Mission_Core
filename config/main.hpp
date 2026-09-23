@@ -143,12 +143,25 @@ class MISSION_CORE_TUNE {
     manpowerPortSmall = 100;         // port full footprint (m) for the 0.3x size multiplier
     manpowerPortLarge = 300;         // port full footprint (m) for the 0.9x size multiplier
 
+    // ----- Start state (recruit testing) -----
+    startManpower = 500;             // initial BLUFOR player-manpower pool on mission start (testing: lots)
+    startTanks = 20;                 // initial BLUFOR armor-pool tank points on mission start (testing: lots)
+
     // ----- Capture / retake / retreat -----
     captureHoldSeconds = 600;        // 10 min hold to secure a captured marker
     retakeWindowSeconds = 1200;      // neighbor retake intensity decay window
     contestedGraceSeconds = 45;      // grace before neighbor squads retreat after contest ends
     neighborRange = 4000;            // neighbor reinforcement / deactivation radius
     retreatDespawnFallback = 300;    // seconds before a retreating squad despawns on its own
+
+    // ----- Scare (threat-weight assessment) -----
+    scareApproachRadius = 2500;      // meters a BLUFOR player/assault group must be within to scare a marker
+    scareApproachFrac = 0.5;         // approaching (not inside) groups' weight counts at this fraction
+    scareGroupMult = 0.15;           // +15% attacker weight per additional attacking group (coordination)
+    scareCasualtyErode = 0.75;       // defender power erodes up to 75% as casualties approach retreatAt
+    scareSizeRef = 400;              // marker radius that halves the scare via square-root size dampen
+    scareAskSomeFrac = 0.4;          // REINFORCE: ask this fraction of the neighbor pool (few, closest)
+    scareAskAllFrac = 1.0;           // CRITICAL: ask this fraction (all) of the neighbor pool
 
     // ----- Assault -----
     assaultCooldown = 2400;          // 40 min global assault cooldown

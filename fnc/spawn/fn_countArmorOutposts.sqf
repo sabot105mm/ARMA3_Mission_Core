@@ -1,10 +1,19 @@
 
 MISSION_CORE_fnc_countArmorOutposts = {
     params ["_side"];
-    // Killed handlers / support callbacks can report sideUnknown - refuse it before the side-variable
-    // lookup so getVariable never receives a non-string name.
-    if !(_side in [WEST, EAST]) exitWith { 0 };
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    // Killed handlers / support callbacks can report sideUnknown (or an exotic side object) - the
+    // side-variable lookup must never receive a non-string name. Derive it via STRING comparison
+    // with a guaranteed "" default, so a non-WEST/EAST value exits BEFORE the loop (and is logged)
+    // instead of ever reaching getVariable with a bad key.
+    private _sideVar = switch (str _side) do {
+        case "WEST": { "MISSION_CORE_BLUFOR" };
+        case "EAST": { "MISSION_CORE_REDFOR" };
+        default { "" };
+    };
+    if (_sideVar == "") exitWith {
+        diag_log format ["ARMOR OUTPOSTS: countArmorOutposts refused side %1 (type %2)", _side, typeName _side];
+        0
+    };
     private _homes = [];
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith { 0 };
     {

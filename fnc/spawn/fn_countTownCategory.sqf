@@ -3,9 +3,16 @@ MISSION_CORE_fnc_countTownCategory = {
     params ["_side", "_kind"];
     // Transport/civilian Killed handlers can report a non-WEST/non-EAST side - refuse those before
     // the side-variable lookup, otherwise getVariable receives a non-string name and spams errors.
-    if !(_side in [WEST, EAST]) exitWith { 0 };
-    private _sideVar = "MISSION_CORE_REDFOR";
-    if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; };
+    // String-compare with a guaranteed "" default (never a nil sideVar key).
+    private _sideVar = switch (str _side) do {
+        case "WEST": { "MISSION_CORE_BLUFOR" };
+        case "EAST": { "MISSION_CORE_REDFOR" };
+        default { "" };
+    };
+    if (_sideVar == "") exitWith {
+        diag_log format ["ARMOR OUTPOSTS: countTownCategory refused side %1 (type %2)", _side, typeName _side];
+        0
+    };
     private _homes = [];
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith { 0 };
     {

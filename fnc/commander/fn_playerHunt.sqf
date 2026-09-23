@@ -321,19 +321,25 @@ MISSION_CORE_fnc_huntSpawnContingent = {
             // Fallback: no eligible spawned garrison at this source - spawn one (respecting the
             // spawn-safety distance already checked above; a source hugging the player fields no
             // CONJURED contingent - the squad would materialize in his face).
-            if (_spawnSafe) then {
-                private _infPool = [(_factionData select 17)] call MISSION_CORE_fnc_getInfTemplates;
-                if (count _infPool > 0) then {
-                    private _template = selectRandom _infPool;
-                    _grp = [_template select 0, _spawnPos, _side, _factionData select 3, "AWARE", "NORMAL", _srcImp, _srcPos, _srcSize] call MISSION_CORE_fnc_spawnGroup;
-                    if (!isNull _grp) then {
-                        _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _srcName];
-                        if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
-                        MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
-                    };
-                };
-            } else {
+            // PERMANENT RULE (global foot budget): the hunt fallback NEVER bypasses the per-side
+            // foot-squad cap - it cannot float the map over budget.
+            if (!_spawnSafe) then {
                 diag_log format ["PLAYER HUNT: %1 source %2 skipped - spawn safety (%3m < %4m)", _side, _srcName, round _pNear, round (["huntSpawnMinPlayerDist", 500] call MISSION_CORE_fnc_tune)];
+            } else {
+                if (([_side] call MISSION_CORE_fnc_countFootSquads) < (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune)) then {
+                    private _infPool = [(_factionData select 17)] call MISSION_CORE_fnc_getInfTemplates;
+                    if (count _infPool > 0) then {
+                        private _template = selectRandom _infPool;
+                        _grp = [_template select 0, _spawnPos, _side, _factionData select 3, "AWARE", "NORMAL", _srcImp, _srcPos, _srcSize] call MISSION_CORE_fnc_spawnGroup;
+                        if (!isNull _grp) then {
+                            _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _srcName];
+                            if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+                            MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
+                        };
+                    };
+                } else {
+                    diag_log format ["PLAYER HUNT: %1 source %2 skipped - global foot squad cap full (%3/%4)", _side, _srcName, round ([_side] call MISSION_CORE_fnc_countFootSquads), ["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune];
+                };
             };
         };
     };

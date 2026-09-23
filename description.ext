@@ -1105,11 +1105,23 @@ class MISSION_CORE_TUNE {
     manpowerCaptureMult = 5;         // importance * this = manpower bonus on capture
     manpowerPortPlayerIncome = 2;    // player pool: manpower per port per tick
 
+    // ----- Start state (recruit testing) -----
+    startManpower = 500;             // initial BLUFOR player-manpower pool on mission start (testing: lots)
+    startTanks = 20;                 // initial BLUFOR armor-pool tank points on mission start (testing: lots)
+
     captureHoldSeconds = 600;
     retakeWindowSeconds = 1200;
     contestedGraceSeconds = 45;
     neighborRange = 4000;
     retreatDespawnFallback = 300;
+
+    scareApproachRadius = 2500;
+    scareApproachFrac = 0.5;
+    scareGroupMult = 0.15;
+    scareCasualtyErode = 0.75;
+    scareSizeRef = 400;
+    scareAskSomeFrac = 0.4;
+    scareAskAllFrac = 1.0;
 
     assaultCooldown = 2400;
     assaultSupportRange = 1500;

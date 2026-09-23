@@ -78,9 +78,11 @@ MISSION_CORE_fnc_replenishLoop = {
                     (_rx*_rx)/(_ma*_ma) + (_ry*_ry)/(_mb*_mb) <= 1
                 }
             } != -1;
-            // ASSAULT SQUAD CAPTURE: released/active BLUFOR assault groups whose units are
-            // physically inside the marker ellipse also count as "enemy inside" - this lets
-            // the squad flip the marker when the garrison is wiped without a player present.
+            // ASSAULT SQUAD THREAT: released/active BLUFOR assault groups whose units are
+            // physically inside the marker ellipse count as "enemy inside" - under the new
+            // contested model they are REAL threats (they scare the marker and keep it contested
+            // even with no player present), and they can walk into an abandoned marker to capture
+            // it just like a player can.
             if (!_enemyInside && { ["assaultSquadCapture", 1] call MISSION_CORE_fnc_tune > 0 } && { !isNil "MISSION_CORE_ATTACK_GROUPS" }) then {
                 {
                     private _data = _y;
@@ -100,7 +102,7 @@ MISSION_CORE_fnc_replenishLoop = {
                     if (_enemyInside) exitWith {};
                 } forEach MISSION_CORE_ATTACK_GROUPS;
             };
-            // MULTIPLAYER RELAY: client-spawned assault groups also capture (same ellipse test).
+            // MULTIPLAYER RELAY: client-spawned assault groups also threaten (same ellipse test).
             if (!_enemyInside && { ["assaultSquadCapture", 1] call MISSION_CORE_fnc_tune > 0 } && { !isNil "MISSION_CORE_ATTACK_GROUPS_RELAY" }) then {
                 {
                     private _data = _y;
@@ -120,15 +122,13 @@ MISSION_CORE_fnc_replenishLoop = {
                     if (_enemyInside) exitWith {};
                 } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
             };
-            // A marker NEVER replenishes while it (or a same-side neighbor) is CONTESTED - the
-            // fight grinds the garrison down without an endless manpower tap. Supplies only flow
-            // once the contested marker stops fighting and a quiet period (replenishQuietPeriod)
-            // has fully elapsed. Proximity alone (a player within 2500m) never refills a garrison
-            // during a fight; far markers exist purely as neighbor reinforcement sources.
-            //
-            // PERMANENT RULE: one contested zone PER PLAYER. Each player fighting their own marker
-            // makes that marker THE zone for their fight - every such marker is a zone and gets
-            // its own replenish cycle (fn_getContestedMarkers returns one zone per alive player).
+            // SUPPLY + CONTESTED MODEL. A marker with ANY BLUFOR threat present (any player
+            // approaching/inside, or any assault squad targeting it) is contested from the moment
+            // the threat appears, garrison-independent. The contested marker itself replenishes to
+            // full template strength during the fight. Its same-side NEIGHBORS hold manpower while
+            // the fight runs (zoneBlock) - they are reinforcement sources, not grind-fodder.
+            // PERMANENT RULE: every actually-contested marker is a zone with its own replenish
+            // cycle (fn_getContestedMarkers returns all of them, no per-player cap).
             private _zoneList = [_owner] call MISSION_CORE_fnc_getContestedMarkers;
             private _contested = (_zoneList findIf { (_x select 0) == _locName } != -1);
             // A zone freezes its whole neighborhood: same-side markers within reinforce range of a
@@ -144,7 +144,29 @@ MISSION_CORE_fnc_replenishLoop = {
                 MISSION_CORE_REPLENISH_GRACE set [_locName, time];
             };
             private _grace = MISSION_CORE_REPLENISH_GRACE getOrDefault [_locName, -1e10];
-            private _supplyOpen = !(_contested || _zoneBlock) && { _grace != -1e10 } && { (time - _grace) >= _quiet };
+            // SUPPLY GATE (new contested model): a marker that is CONTESTED self-replenishes to
+            // its full template strength DURING the fight - the garrison never runs dry while a
+            // threat is present, so it can only be beaten down to its retreat threshold, not
+            // quietly wiped. Its same-side NEIGHBORS stay manpower-blocked (zoneBlock) for the
+            // whole fight. Exception: a marker that was a handoff's new supporting neighbor gets
+            // a one-time top-up back to its own capacity FIRST, then it is manpower-blocked.
+            // PERMANENT RULE: no more one-zone-per-player cap - supplies flow to whatever is
+            // actually contested (bounded only by the max-spawned-troops limits).
+            private _supplyOpen = _contested;
+            if (!_supplyOpen) then {
+                if (isNil "MISSION_CORE_HANDOFF_TOPUP") then { MISSION_CORE_HANDOFF_TOPUP = []; };
+                if (_locName in MISSION_CORE_HANDOFF_TOPUP) then {
+                    if (_alive >= _baseline) then {
+                        // Reached full strength: the one-time top-up is spent - go manpower-blocked.
+                        MISSION_CORE_HANDOFF_TOPUP = MISSION_CORE_HANDOFF_TOPUP - [_locName];
+                    } else {
+                        _supplyOpen = true;
+                    };
+                };
+            };
+            if (!_supplyOpen && { !_zoneBlock && { _grace != -1e10 } && { (time - _grace) >= _quiet } }) then {
+                _supplyOpen = true;
+            };
             // DETERMINATION-BASED RETREAT + FLIP.
             // - The garrison retreats once it has lost (1 - holdFrac) of its capacity (holdFrac from
             //   the marker's strategic value). It runs to the closest ally and despawns.
@@ -157,60 +179,117 @@ MISSION_CORE_fnc_replenishLoop = {
             if (isNil "MISSION_CORE_RETREATED") then { MISSION_CORE_RETREATED = createHashMap; };
             private _retreated = MISSION_CORE_RETREATED getOrDefault [_locName, false];
             diag_log format ["DYNAMIC CAPTURE DEBUG: %1 alive=%2 cap=%3 casualties=%4 retreatAt=%5 hold=%6 retreated=%7 enemyInside=%8", _locName, round _alive, _capacity, _casualties, _retreatAt, _holdFrac, _retreated, _enemyInside];
-            // Retreat: the garrison gives up at the determination threshold and runs away.
-            if (_casualties >= _retreatAt && { _alive > 0 } && { !_retreated }) then {
+            // Retreat: the garrison gives up at the determination threshold and runs away. The
+            // latch is tied to CASUALTIES ALONE - a garrison wiped to 0 before the threshold does
+            // not slip through: it keeps self-reinforcing (replenish is open while contested) and
+            // the instant cumulative losses cross retreatAt it retreats / flips to abandoned.
+            if (_casualties >= _retreatAt && { !_retreated }) then {
                 MISSION_CORE_RETREATED set [_locName, true];
                 diag_log format ["DYNAMIC RETREAT: %1 lost %2/%3 - garrison retreating", _locName, _casualties, _retreatAt];
                 [_locName, _locPos, _owner] call MISSION_CORE_fnc_retreatGarrison;
             };
-            // PERMANENT RULE: once the neighbors' reinforcement budget is spent the marker has GIVEN
-            // up - clear its contested flag immediately (not gated on the garrison retreating), so
-            // marching counter-attack squads retreat home and the marker decays. The
-            // player-moves-away clear is handled inside isMarkerContested.
-            if (!(isNil "MISSION_CORE_REINF_EXHAUSTED") && { MISSION_CORE_REINF_EXHAUSTED getOrDefault [_locName, false] }) then {
-                if (isNil "MISSION_CORE_CONTESTED") then { MISSION_CORE_CONTESTED = createHashMap; };
-                MISSION_CORE_CONTESTED deleteAt _locName;
-                // PERMANENT RULE: a marker that gives up takes its whole supporting neighborhood
-                // with it - deactivate every spawned same-side marker within the 4000m reinforce
-                // radius so the zone really goes quiet.
-                [_locName, _locPos, _owner] call MISSION_CORE_fnc_deactivateNeighborMarkers;
-            };
-            // Flip: walk into the empty (retreated / wiped) marker to occupy it. The garrison must
-            // have actually SPAWNED at least once (a baseline entry is only written after men field)
-            // - a player walking into a marker that never spawned its garrison cannot capture it.
+            // PERMANENT RULE (new contested model): contested NEVER clears because the marker
+            // "gave up" - contested only ends when the marker is captured fully, or all threats
+            // died / walked away (both handled by the capture / despawn paths). Even when its
+            // neighbors exhaust their reinforcement budget the marker stays contested: its own
+            // garrison keeps self-replenishing to full template strength while a threat is
+            // present. The neighbor-give-up teardown (budget spent) is handled inside
+            // fn_neighborCounterAttack / fn_deactivateNeighborMarkers, and only quiets the
+            // SUPPORTING neighborhood, never the marker's own fight.
+            // Flip: walk into the marker AFTER it has abandoned the fight to occupy it. The garrison
+            // must have RETREATED (crossed its determination casualty threshold) AND be gone from
+            // the map (alive == 0) - it is never "captured by wiping", because the garrison
+            // self-replenishes to full template strength while contested and only retreats at
+            // retreatAt. The garrison must ALSO have actually SPAWNED at least once (a baseline
+            // entry is only written after men field) - a player walking into a marker that never
+            // spawned its garrison cannot capture it.
             private _garrisonFielded = _locName in MISSION_CORE_GARRISON_BASELINE;
-            if (_enemyInside && { _alive == 0 || _retreated } && { _garrisonFielded }) then {
-                diag_log format ["DYNAMIC CAPTURE: %1 garrison gone - OCCUPYING", _locName];
+            if (_enemyInside && { _alive == 0 } && { _retreated } && { _garrisonFielded }) then {
+                diag_log format ["DYNAMIC CAPTURE: %1 garrison retreated - OCCUPYING", _locName];
                 [_locName, _locPos, _owner, _importance] call MISSION_CORE_fnc_captureMarkerForPlayers;
                 continue;
             };
+            // GIVE-UP FLIP (local manpower model): the marker bought its garrison out of its OWN
+            // local allotment. Once that pool is SPENT and the neighbors have exhausted their
+            // allotted reinforcement budget, there is nothing left to field - the marker has truly
+            // given up. It flips outright once no enemy is near (within double the marker footprint),
+            // with no walk-in required (the fight is over and nobody is even contesting it).
+            if (_alive == 0 && { _garrisonFielded } && { !_retreated } && { (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0]) <= 0 } && { (MISSION_CORE_REINF_EXHAUSTED getOrDefault [_locName, false]) }) then {
+                private _armDist = 2 * ((_ma max _mb) max 10);
+                private _enemyNear = _players findIf { side _x getFriend _owner < 0.6 && { _x distance _locPos < _armDist } } != -1;
+                if (!_enemyNear) then {
+                    diag_log format ["DYNAMIC CAPTURE: %1 manpower spent + neighbors exhausted - GIVING UP (no enemy within %2m)", _locName, round _armDist];
+                    [_locName, _locPos, _owner, _importance] call MISSION_CORE_fnc_captureMarkerForPlayers;
+                    continue;
+                };
+            };
             // Replenish the garrison (manpower flows to the marker) while below baseline, until it
-            // retreats. Supplies only run while the marker AND its neighborhood are NOT contested
-            // and the quiet period since the last fight has elapsed.
+            // retreats. Supplies run while the marker is CONTESTED (full template strength during
+            // the fight), or once it and its neighborhood are not contested and the quiet period
+            // since the last fight has elapsed.
             if (_supplyOpen && { _alive > 0 } && { _alive < _baseline } && { !_retreated }) then {
                 // The replenishing marker counts as one of the 4 active spawners while it refills
                 [_locName] call MISSION_CORE_fnc_spawnerSlotFree;
-                // Manpower is 1-for-1: draw from the nearest same-side base first. No base manpower
-                // -> no replenish (markers only field the men their base actually delivered).
+                // PERMANENT RULE (local manpower model): a garrison re-fields ONLY from the marker's
+                // OWN local manpower pool (MISSION_CORE_LOCATION_SUPPLY), 1-for-1 - a marker never
+                // draws base manpower for day-to-day replenish. A contested marker or an ACTIVE
+                // neighbor CANNOT request resupply - it grinds its own allotment. The ONLY base draw
+                // is the handoff top-up EXCEPTION neighbor (a new supporting marker refilled once).
+                if (isNil "MISSION_CORE_LOCATION_SUPPLY") then { MISSION_CORE_LOCATION_SUPPLY = createHashMap; };
                 private _want = ((_baseline - _alive) min 8) max 1;
-                private _draw = [_owner, _locPos, _want] call MISSION_CORE_fnc_drawBaseManpower;
-                private _replenished = [_loc, _owner, _importance, _alive, _baseline, _draw select 0] call MISSION_CORE_fnc_replenishMarker;
-                if (_replenished < (_draw select 0)) then { [(_draw select 1), (_draw select 0) - _replenished] call MISSION_CORE_fnc_refundBaseManpower; };
-                // 5s gap after a marker finishes its whole spawn set before the next marker
-                // replenishes, so the AI never spawns several towns' garrisons back-to-back.
-                if (_replenished > 0) then { sleep 5; };
+                private _funded = 0;
+                private _baseName = "";
+                if (isNil "MISSION_CORE_HANDOFF_TOPUP") then { MISSION_CORE_HANDOFF_TOPUP = []; };
+                if (_locName in MISSION_CORE_HANDOFF_TOPUP) then {
+                    private _draw = [_owner, _locPos, _want] call MISSION_CORE_fnc_drawBaseManpower;
+                    _funded = _draw select 0;
+                    _baseName = _draw select 1;
+                } else {
+                    private _local = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0];
+                    _funded = _local min _want;
+                    if (_funded > 0) then { MISSION_CORE_LOCATION_SUPPLY set [_locName, _local - _funded]; };
+                };
+                if (_funded > 0) then {
+                    private _replenished = [_loc, _owner, _importance, _alive, _baseline, _funded] call MISSION_CORE_fnc_replenishMarker;
+                    if (_replenished < _funded) then {
+                        if (_baseName == "") then { MISSION_CORE_LOCATION_SUPPLY set [_locName, (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0]) + (_funded - _replenished)]; }
+                        else { [_baseName, _funded - _replenished] call MISSION_CORE_fnc_refundBaseManpower; };
+                    };
+                    // 5s gap after a marker finishes its whole spawn set before the next marker
+                    // replenishes, so the AI never spawns several towns' garrisons back-to-back.
+                    if (_replenished > 0) then { sleep 5; };
+                };
             };
-            // Respawn the garrison when wiped, until it retreats. Only after the fight is over
-            // (marker + neighborhood not contested, quiet period elapsed) does a wiped garrison
-            // re-field - never during the fight itself.
+            // Respawn the garrison when wiped, until it retreats. A contested marker self-replenishes
+            // even mid-fight, so a garrison that was beaten to 0 before reaching its retreat
+            // threshold re-fields and keeps fighting - it is never quietly wiped away.
             if (_supplyOpen && { _alive == 0 } && { !_retreated }) then {
                 diag_log format ["DYNAMIC CAPTURE DEBUG: %1 alive=0 enemyInside=%2", _locName, _enemyInside];
                 [_locName] call MISSION_CORE_fnc_spawnerSlotFree;
+                // Same local-manpower rule as above: a wiped garrison re-fields ONLY from the
+                // marker's OWN local pool, or the handoff top-up EXCEPTION neighbor's base draw.
+                if (isNil "MISSION_CORE_LOCATION_SUPPLY") then { MISSION_CORE_LOCATION_SUPPLY = createHashMap; };
                 private _want = ((_baseline - 0) min 8) max 1;
-                private _draw = [_owner, _locPos, _want] call MISSION_CORE_fnc_drawBaseManpower;
-                private _replenished = [_loc, _owner, _importance, 0, _baseline, _draw select 0] call MISSION_CORE_fnc_replenishMarker;
-                if (_replenished < (_draw select 0)) then { [(_draw select 1), (_draw select 0) - _replenished] call MISSION_CORE_fnc_refundBaseManpower; };
-                if (_replenished > 0) then { sleep 5; };
+                private _funded = 0;
+                private _baseName = "";
+                if (isNil "MISSION_CORE_HANDOFF_TOPUP") then { MISSION_CORE_HANDOFF_TOPUP = []; };
+                if (_locName in MISSION_CORE_HANDOFF_TOPUP) then {
+                    private _draw = [_owner, _locPos, _want] call MISSION_CORE_fnc_drawBaseManpower;
+                    _funded = _draw select 0;
+                    _baseName = _draw select 1;
+                } else {
+                    private _local = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0];
+                    _funded = _local min _want;
+                    if (_funded > 0) then { MISSION_CORE_LOCATION_SUPPLY set [_locName, _local - _funded]; };
+                };
+                if (_funded > 0) then {
+                    private _replenished = [_loc, _owner, _importance, 0, _baseline, _funded] call MISSION_CORE_fnc_replenishMarker;
+                    if (_replenished < _funded) then {
+                        if (_baseName == "") then { MISSION_CORE_LOCATION_SUPPLY set [_locName, (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0]) + (_funded - _replenished)]; }
+                        else { [_baseName, _funded - _replenished] call MISSION_CORE_fnc_refundBaseManpower; };
+                    };
+                    if (_replenished > 0) then { sleep 5; };
+                };
             };
         } forEach _candidates;
     };

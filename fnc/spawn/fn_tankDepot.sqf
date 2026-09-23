@@ -139,6 +139,8 @@ MISSION_CORE_fnc_tankReserveSpawn = {
     private _center = [_parkPos select 0, _parkPos select 1, 0];
     private _size = if (count _loc > 8 && { (_loc select 8) isEqualType [] }) then { _loc select 8 } else { [200, 200] };
     private _maxR = ((_size select 0) max (_size select 1)) min 300;
+    // DEAD-VEHICLE SCAN: clear wrecks inside the depot park footprint before parking new armor.
+    [_center, _maxR] call MISSION_CORE_fnc_clearNearbyWrecks;
     // BIS_fnc_findSafePos: [center, minDist, maxDist, objDist, waterMode, maxGrad, shoreMode]
     private _pos = [_center, 0, _maxR, 15, 0, 0.5, 0] call BIS_fnc_findSafePos;
     if (count _pos < 2) then { _pos = [_center, 0, _maxR, 15, 0, 1, 0] call BIS_fnc_findSafePos; };
@@ -294,6 +296,12 @@ MISSION_CORE_fnc_poolTanksForSide = {
             };
         } forEach (keys MISSION_CORE_PORTS);
     };
+    // Recruit start pool: bonus tank points granted at mission start so the recruit menu has
+    // plenty of armor for testing (see startTanks tune key). Drained FIRST on consume.
+    if (_side == WEST) then {
+        if (isNil "MISSION_CORE_ARMOR_POOL_BONUS") then { MISSION_CORE_ARMOR_POOL_BONUS = 0; };
+        _n = _n + MISSION_CORE_ARMOR_POOL_BONUS;
+    };
     _n
 };
 
@@ -304,7 +312,17 @@ MISSION_CORE_fnc_consumePoolTankForSide = {
     params ["_side", "_nearPos"];
     if (isNil "_nearPos") then { _nearPos = [0, 0, 0]; };
     private _src = "";
-    if (!isNil "MISSION_CORE_TANK_STOCK" && { !isNil "MISSION_CORE_CACHED_POSITIONS" }) then {
+    // Recruit start pool drains FIRST (see startTanks tune key) - testing armor is priority so
+    // the recruit menu never starves on the freshly-seeded bonus points.
+    if (_side == WEST) then {
+        if (isNil "MISSION_CORE_ARMOR_POOL_BONUS") then { MISSION_CORE_ARMOR_POOL_BONUS = 0; };
+        if (MISSION_CORE_ARMOR_POOL_BONUS > 0) then {
+            MISSION_CORE_ARMOR_POOL_BONUS = MISSION_CORE_ARMOR_POOL_BONUS - 1;
+            _src = "start pool";
+            diag_log format ["RECRUIT TANK: consumed 1 start-pool tank point (bonus left %1)", MISSION_CORE_ARMOR_POOL_BONUS];
+        };
+    };
+    if (_src == "" && { !isNil "MISSION_CORE_TANK_STOCK" && { !isNil "MISSION_CORE_CACHED_POSITIONS" } }) then {
         private _depots = MISSION_CORE_CACHED_POSITIONS select {
             (_x select 4) == _side && { [_x] call MISSION_CORE_fnc_tankDepotIsDepot } && { ([(_x select 0)] call MISSION_CORE_fnc_tankDepotStock) > 0 }
         };

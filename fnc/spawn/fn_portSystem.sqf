@@ -303,6 +303,49 @@ private _bName = _needBase select 0;
         };
     } forEach MISSION_CORE_MANPOWER_CONVOYS;
     MISSION_CORE_MANPOWER_CONVOYS = MISSION_CORE_MANPOWER_CONVOYS select { count _x > 0 };
+
+    // ---- 4. Bases distribute to DESPAWNED markers low on local manpower ----
+    // RESUPPLY RULE (local manpower model): a marker requests resupply when it is LOW, but only a
+    // DESPAWNED marker may actually receive a shipment - it refills while dormant so a re-entered
+    // battle fields a fresh garrison. A CONTESTED marker or an ACTIVE neighbor CANNOT request
+    // resupply: it fights on its own local allotment alone (fn_replenishLoop draws from the
+    // marker's OWN MISSION_CORE_LOCATION_SUPPLY). The ONLY active-marker exception is the handoff
+    // top-up neighbor, which draws base manpower directly in fn_replenishLoop.
+    if (isNil "MISSION_CORE_SPAWNED_LOCATIONS") then { MISSION_CORE_SPAWNED_LOCATIONS = createHashMap; };
+    if (isNil "MISSION_CORE_LOCATION_SUPPLY") then { MISSION_CORE_LOCATION_SUPPLY = createHashMap; };
+    {
+        private _bName = _x;
+        private _stock = MISSION_CORE_BASE_MANPOWER getOrDefault [_bName, 0];
+        if (_stock <= 0) then { continue; };
+        private _bEnt = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _bName }) param [0, []];
+        if (count _bEnt == 0) then { continue; };
+        private _bSide = _bEnt select 4;
+        private _bPos = _bEnt select 1;
+        // Nearest despawned same-side marker below half its initial local allotment.
+        private _best = [];
+        private _bestD = 1e10;
+        {
+            if ((_x select 4) != _bSide) then { continue; };
+            private _mName = _x select 0;
+            if (MISSION_CORE_SPAWNED_LOCATIONS getOrDefault [_mName, false]) then { continue; };
+            private _allot = ((_x select 7) * 30 + 50);
+            private _local = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_mName, 0];
+            if (_local >= (_allot * 0.5)) then { continue; };
+            private _d = _bPos distance2D (_x select 1);
+            if (_d < _bestD) then { _bestD = _d; _best = _x; };
+        } forEach MISSION_CORE_CACHED_POSITIONS;
+        if (count _best == 0) then { continue; };
+        private _mName = _best select 0;
+        private _allot = ((_best select 7) * 30 + 50);
+        private _need = (_allot - (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_mName, 0])) max 0;
+        if (_need <= 0) then { continue; };
+        private _give = (_stock min _need) max 0;
+        if (_give > 0) then {
+            MISSION_CORE_BASE_MANPOWER set [_bName, _stock - _give];
+            MISSION_CORE_LOCATION_SUPPLY set [_mName, (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_mName, 0]) + _give];
+            diag_log format ["DYNAMIC MANPOWER: base %1 resupplied despawned %2 +%3 local manpower (base rem=%4)", _bName, _mName, round _give, _stock - _give];
+        };
+    } forEach (keys MISSION_CORE_BASE_MANPOWER);
 };
 
 // Draw up to _men manpower from the nearest same-side base with stock, 1-for-1.

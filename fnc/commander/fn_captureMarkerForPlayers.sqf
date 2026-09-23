@@ -1,9 +1,13 @@
 
-// When a marker's garrison is wiped while a player is inside it, the marker is OCCUPIED, not
-// instantly captured. Ownership flips to the player side immediately, but the marker enters a
-// 10-minute hold phase (see fn_occupationMonitor): the new owner gets NO defender spawns, the
-// previous owner counter-attacks to win it back, and if the new owner leaves/dies inside the
-// marker reverts to the previous owner. Only after holding for 10 minutes is the capture final.
+// When a marker's garrison has ABANDONED the fight (crossed its determination casualty threshold
+// and run away) and a player walks into the empty marker, the marker is OCCUPIED, not instantly
+// captured. Ownership flips to the player side immediately, but the marker enters a 10-minute
+// hold phase (see fn_occupationMonitor): the new owner gets NO defender spawns, the previous
+// owner counter-attacks to win it back, and if the new owner leaves/dies inside the marker
+// reverts to the previous owner. Only after holding for 10 minutes is the capture final.
+// PERMANENT RULE: the garrison is NEVER wiped-captured - it self-replenishes to full strength
+// while contested and only retreats at its retreat threshold, so this function is only ever
+// reached via the retreat gate.
 MISSION_CORE_fnc_captureMarkerForPlayers = {
     params ["_locName", "_locPos", "_owner", "_importance"];
     private _playerSide = if (_owner == WEST) then { EAST } else { WEST };
@@ -57,7 +61,7 @@ MISSION_CORE_fnc_captureMarkerForPlayers = {
     } forEach MISSION_CORE_SPAWN_QUEUE;
     MISSION_CORE_SPAWN_QUEUE = _kept;
 
-    diag_log format ["DYNAMIC CAPTURE: %1 occupied by %2 (garrison wiped) - hold 10min to secure", _locName, _playerSide];
+    diag_log format ["DYNAMIC CAPTURE: %1 occupied by %2 (garrison retreated) - hold 10min to secure", _locName, _playerSide];
     ["DynOps_MarkerOccupied",
         ["MARKER OCCUPIED", format ["%1 occupied - hold it for 10 minutes to secure it!", _locName]]
     ] remoteExec ["BIS_fnc_showNotification", 0];

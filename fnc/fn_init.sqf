@@ -175,6 +175,11 @@ if (isServer) then {
     MISSION_CORE_REDFOR_DATA pushBack MISSION_CORE_REDFOR_TANKS_LEFT;
     diag_log format ["DYNAMIC OPS: Max tanks BLUFOR=%1 REDFOR=%2", MISSION_CORE_BLUFOR_TANKS_LEFT, MISSION_CORE_REDFOR_TANKS_LEFT];
 
+    // Recruit-test start pool: bonus armor points granted at mission start so the recruit menu
+    // has plenty of tanks immediately (see startTanks tune key).
+    MISSION_CORE_ARMOR_POOL_BONUS = ["startTanks", 0] call MISSION_CORE_fnc_tune;
+    diag_log format ["DYNAMIC OPS: Start armor pool bonus=%1 (recruit-test startTanks)", MISSION_CORE_ARMOR_POOL_BONUS];
+
     diag_log format ["DYNAMIC OPS: BLUFOR=%1 (%2 groups)", MISSION_CORE_BLUFOR_FACTION, count (MISSION_CORE_BLUFOR_DATA select 17)];
     diag_log format ["DYNAMIC OPS: REDFOR=%1 (%2 groups)", MISSION_CORE_REDFOR_FACTION, count (MISSION_CORE_REDFOR_DATA select 17)];
 
@@ -186,6 +191,9 @@ if (isServer) then {
     // 3. Analyze terrain and cache valid structure positions
     call compile preprocessFileLineNumbers "fnc\fn_spawn.sqf";
     MISSION_CORE_CACHED_POSITIONS = MISSION_CORE_LOCATIONS call MISSION_CORE_fnc_cacheTerrain;
+    // Publish the start-pool armor count immediately (publishArmorPool defined above) so client
+    // recruit menus show the bonus tanks before the recruitTankManagerLoop's first 15s publish.
+    if (!(isNil "MISSION_CORE_fnc_publishArmorPool")) then { call MISSION_CORE_fnc_publishArmorPool; };
 
     // 3b. Resolve ports: nest ports inside their host markers (hide + lock + host inherits
     // factory tier), keep isolated ports as factory-tier objectives, and register them for the
