@@ -102,6 +102,10 @@ MISSION_CORE_fnc_placeTowerMGs = {
                 // gunners twitch and refuse to target while players can still mount it.
                 //[_wep, _b, false] call BIS_fnc_attachToRelative;
                 _defGroup addVehicle _wep;
+                // Raw createVehicle, so it misses the safeVehicleSpawn funnel. Attach the get-out
+                // handler directly - fn_getOutStatic is a no-op by design (an emptied tower gun
+                // stays empty, permanent rule), this only latches and logs the event.
+                if (!isNil "MISSION_CORE_fnc_attachGetOut") then { [_wep] call MISSION_CORE_fnc_attachGetOut; };
                 private _gunner = _defGroup createUnit [selectRandom _unitPool, _deckPos, [], 0, "NONE"];
                 _gunner moveInGunner _wep;
             } else {

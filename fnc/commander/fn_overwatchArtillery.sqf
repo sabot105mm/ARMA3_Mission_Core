@@ -8,7 +8,7 @@ MISSION_CORE_fnc_overwatchArtillery = {
     private _sideKey = if (_side == WEST) then { "BLUFOR" } else { "REDFOR" };
     private _lastFire = time;
     while { !isNull _veh && { alive _veh } && { { alive _x } count units _grp > 0 } } do {
-        sleep 15 + random 15;
+        sleep (15 + random 15);
         if (time - _lastFire < 120) then { continue; };
         private _shells = (magazinesAmmo _veh) select { (_x select 1) > 0 && { (_x select 0) find "Smoke" == -1 } };
         if (count _shells == 0) then { continue; };

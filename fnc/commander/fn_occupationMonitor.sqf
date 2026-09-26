@@ -47,7 +47,7 @@ MISSION_CORE_fnc_occupationMonitor = {
     if (isNil "MISSION_CORE_OCCUPATION") then { MISSION_CORE_OCCUPATION = createHashMap; };
     diag_log "AI COMMANDER: occupation monitor started";
     while { count MISSION_CORE_OCCUPATION > 0 } do {
-        sleep 8 + random 4;
+        sleep (8 + random 4);
         if (isNil "MISSION_CORE_OCCUPATION") then { MISSION_CORE_OCCUPATION = createHashMap; };
         {
             private _locName = _x;

@@ -71,21 +71,27 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
             // Still contested (or was moments ago): keep marching.
             private _lastContested = MISSION_CORE_CONTESTED_LAST getOrDefault [_tgtName, -1e10];
             if (time - _lastContested < (["contestedGraceSeconds", 45] call MISSION_CORE_fnc_tune)) then { continue; };
-        // Retreat destination = the closest SAME-SIDE cached marker (the "next closest ally"),
-        // not the squad's origin town - squads move away from where the fight was, toward the
-        // closest friendly marker. PERMANENT RULE: never retreat to the marker they're in / the
-        // target they were attacking.
-        private _dest = [getPosATL (leader _grp), _side, [_origin, _tgtName]] call MISSION_CORE_fnc_getRetreatDest;
+        // Retreat destination = the nearest SAME-SIDE cached marker that is at least
+        // retreatMinDistance (1500m) from the CONTESTED marker - not the squad's origin town, and
+        // not the next village over. Squads move AWAY from where the fight was, and far enough that
+        // the same fight does not simply restart next door. PERMANENT RULE: never retreat to the
+        // marker they're in / the target they were attacking.
+        // The 1500m is measured from the TARGET's position, NOT from the squad: the column turns
+        // around while still short of the target, so measuring from its own position would pick a
+        // marker 400m from the fight and the rule would never bind.
+        private _tgtPos = (MISSION_CORE_CACHED_POSITIONS select _tgtIdx) select 1;
+        private _dest = [getPosATL (leader _grp), _side, [_origin, _tgtName], _tgtPos] call MISSION_CORE_fnc_getRetreatDest;
         if (_dest distance [0, 0, 0] < 1) then {
                 diag_log format ["AI COMMANDER: despawning neighbor %1 (from %2) - target %3 no longer contested", groupId _grp, _origin, _tgtName];
+                // Nowhere to walk to, so they are deleted where they stand - but the men still go
+                // back to the marker that supplied them, not into the void.
+                [_grp, getPosATL (leader _grp), _origin] call MISSION_CORE_fnc_retreatPayout;
                 [_grp] call MISSION_CORE_fnc_deleteGroupCompletely;
                 continue;
         };
-        diag_log format ["AI COMMANDER: neighbor %1 (from %2) retreating to closest %3 - target %4 no longer contested", groupId _grp, _origin, _dest, _tgtName];
-            _grp setVariable ["MISSION_CORE_ORDER", "retreat"];
+        diag_log format ["AI COMMANDER: neighbor %1 (from %2) retreating to %3 (%4m from the fight) - target %5 no longer contested", groupId _grp, _origin, _dest, round (_dest distance2D _tgtPos), _tgtName];
             _grp setVariable ["MISSION_CORE_RETREAT_FROM", _tgtName];
-            _grp setVariable ["MISSION_CORE_RETREAT_DEST", _dest];
-            _grp setVariable ["MISSION_CORE_RETREAT_DEADLINE", time + 300];
+            [_grp, _dest] call MISSION_CORE_fnc_beginRetreat;
             _grp setCombatMode "GREEN";   // hold fire (return fire only) while withdrawing
             _grp setBehaviour "AWARE";    // stay in formation (CARELESS breaks ranks and lies down)
             _grp setFormation "WEDGE";    // stay in formation
@@ -110,6 +116,9 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
             private _deadline = _grp getVariable ["MISSION_CORE_RETREAT_DEADLINE", time + 300];
             if ((leader _grp) distance2D _dest < 150 || { time > _deadline } || { { alive _x } count units _grp == 0 }) then {
                 diag_log format ["AI COMMANDER: despawning neighbor %1 after retreat", groupId _grp];
+                // Settle the survivors into the retreat marker's economy before the delete. The
+                // arrival waypoint script pays the same group out, so this is latched to one payout.
+                [_grp, _dest] call MISSION_CORE_fnc_retreatPayout;
                 [_grp] call MISSION_CORE_fnc_deleteGroupCompletely;
             };
         } forEach +MISSION_CORE_SPAWNED_GROUPS;

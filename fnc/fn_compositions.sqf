@@ -25,6 +25,15 @@ MISSION_CORE_fnc_placeComposition = {
         private _obj = _class createVehicle _pos;
         _obj setDir (_relDir + _dir);
         _obj setPos _pos;
+        if (_obj isKindOf "StaticWeapon") then {
+            // Raw createVehicle - misses the safeVehicleSpawn funnel, so attach the get-out handler
+            // directly. This is the funnel the location/defence presets use (fn_spawnDefenses), and
+            // those comps are full of B_Static_AA_F, B_Static_AT_F, B_Mortar_01_F and the HMG/MG
+            // turrets, so without this every preset emplacement gun went unhandled. fn_getOutStatic
+            // is a no-op by design: an emptied gun stays empty for good and is never re-garrisoned
+            // (permanent rule, fn_monitorCrew).
+            if (!isNil "MISSION_CORE_fnc_attachGetOut") then { [_obj] call MISSION_CORE_fnc_attachGetOut; };
+        };
         if (_side != WEST) then { _obj setCaptive false; };
         _objects pushBack _obj;
     } forEach _compData;
@@ -109,6 +118,10 @@ MISSION_CORE_fnc_spawnBigBunker = {
         private _obj = _class createVehicle _pos;
         _obj setDir (_relDir + _dir);
         if (_obj isKindOf "StaticWeapon") then {
+            // Raw createVehicle - misses the safeVehicleSpawn funnel, so attach the get-out handler
+            // directly. fn_getOutStatic is a no-op by design: an emptied gun stays empty for good
+            // and is never re-garrisoned (permanent rule, fn_monitorCrew).
+            if (!isNil "MISSION_CORE_fnc_attachGetOut") then { [_obj] call MISSION_CORE_fnc_attachGetOut; };
             // Seat the gun at its editor-defined embrasure/deck height above the host base so it
             // covers through firing slits, open parapets or rooftop decks instead of being snapped
             // to the ground. Guns without a comp height still rest on the ground.

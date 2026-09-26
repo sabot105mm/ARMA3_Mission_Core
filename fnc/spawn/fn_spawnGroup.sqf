@@ -43,7 +43,14 @@ MISSION_CORE_fnc_spawnGroup = {
                 params ["_unit"];
                 private _g = group _unit;
                 if (!isNull _g) then {
-                    private _m = _g getVariable ["MISSION_CORE_ORIGIN_MARKER", ""];
+                    // PERMANENT RULE (GARRISON-ONLY TALLY): a marker's casualty tally counts ONLY
+                    // squads spawned AS ITS OWN GARRISON (initial garrison + replenish), which carry
+                    // the MISSION_CORE_CASUALTY_MARKER tag. Squads dispatched OUTWARD (counter-attack
+                    // / reinforce / hunt sent to another marker) never receive that tag, so deaths
+                    // suffered in someone else's fight are NOT credited back to the source marker -
+                    // they cannot drain its retreat threshold or scare-erosion. MISSION_CORE_ORIGIN_
+                    // MARKER alone is not enough: dispatched squads keep the source as origin.
+                    private _m = _g getVariable ["MISSION_CORE_CASUALTY_MARKER", ""];
                     if (_m != "") then {
                         if (isNil "MISSION_CORE_MARKER_CASUALTIES") then { MISSION_CORE_MARKER_CASUALTIES = createHashMap; };
                         MISSION_CORE_MARKER_CASUALTIES set [_m, (MISSION_CORE_MARKER_CASUALTIES getOrDefault [_m, 0]) + 1];
@@ -60,9 +67,10 @@ MISSION_CORE_fnc_spawnGroup = {
                 if (count _vehPos < 2) then { _vehPos = [_position, _markerSize, 30, 0] call MISSION_CORE_fnc_findVehiclePos; };
                 if (count _vehPos < 2) then { _vehPos = [_position] call MISSION_CORE_fnc_ensureLandPos; };
                 if (count _vehPos == 2) then { _vehPos pushBack 0; };
-                private _veh = _uClass createVehicle ([_vehPos] call MISSION_CORE_fnc_liftSpawn);
+                // ONE-STOP SAFE VEHICLE SPAWN: wrecks near the spot deleted + living-vehicle (crewed
+                // or empty) check + re-roll + global dead purge + road alignment all in one call.
+                private _veh = [_uClass, _vehPos] call MISSION_CORE_fnc_safeVehicleSpawn;
                 _grp addVehicle _veh;
-                [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
                 _vehList pushBack _veh;
             };
         };

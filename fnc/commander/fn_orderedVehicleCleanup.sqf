@@ -129,6 +129,15 @@ MISSION_CORE_fnc_despawnOrderedVehicle = {
 MISSION_CORE_fnc_orderedVehicleCleanupLoop = {
     diag_log "VEHICLE CLEANUP: ordered-vehicle sweeper started";
     if (isNil "MISSION_CORE_VEH_ORDERS") then { MISSION_CORE_VEH_ORDERS = []; };
+    // FOOT-TRANSPORT STUCK RECOVERY runs here, in the sweeper the user asked to extend, but on its
+    // own watch list rather than MISSION_CORE_VEH_ORDERS. Foot trucks are deliberately untagged:
+    // this sweeper's job for a tagged vehicle is delete+refund after 90s, which is the WRONG answer
+    // for a truck carrying a squad (it would delete the men and refund the truck). Trucks instead
+    // get the recovery ladder - road order, then teleport, then unload-and-walk - and only ONE truck
+    // is worked on per tick so the rescue cannot become a pile-up of its own.
+    if (!isNil "MISSION_CORE_fnc_recoverOneFootTransport") then {
+        [] call MISSION_CORE_fnc_recoverOneFootTransport;
+    };
     private _tick = ["stuckVehicleTick", 30] call MISSION_CORE_fnc_tune;
     while { true } do {
         sleep _tick;
@@ -138,6 +147,18 @@ MISSION_CORE_fnc_orderedVehicleCleanupLoop = {
         {
             private _veh = _x;
             if (isNull _veh || { !(alive _veh) }) then { continue; };
+            // GET-OUT OVERRIDE. A vehicle whose crew dismounted is the get-out handler's business,
+            // not this sweeper's. The two DISAGREE on the money and must not both act:
+            //   this sweeper REFUNDS a stuck ordered vehicle (supply + manpower + a tank back),
+            //   while a get-out loss is a real casualty that BILLS and replaces.
+            // The crew exit is the more specific signal, so it wins: skip the vehicle here and let
+            // the get-out role script resolve it. Un-tag it as well, so this sweeper does not keep
+            // re-reading a vehicle it is no longer responsible for. A vehicle that merely PARKED
+            // with its crew still aboard is unaffected - that is this sweeper's actual job.
+            if (_veh getVariable ["MISSION_CORE_GETOUT_RESOLVED", false]) then {
+                [_veh] call MISSION_CORE_fnc_untagOrderedVehicle;
+                continue;
+            };
             private _tag = _veh getVariable ["MISSION_CORE_VEH_ORDER", []];
             if (count _tag < 6) then { continue; };
             _tag params ["_spawnPos", "_targetPos", "_spawnTime", "_refund", "_lastPos", "_stoppedSince"];

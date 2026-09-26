@@ -14,7 +14,7 @@ MISSION_CORE_fnc_defenseSpotLoop = {
     private _prox = ["standToProx", 600] call MISSION_CORE_fnc_tune;
     if (isNil "MISSION_CORE_SPOT_COOLDOWN") then { MISSION_CORE_SPOT_COOLDOWN = createHashMap; };
     while { true } do {
-        sleep 6 + random 4;
+        sleep (6 + random 4);
         if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { continue; };
         // Nothing spawned at all - nothing to react to. Keep looping (a garrison may spawn later,
         // e.g. a recruit or a marker garrison popping in near a player); just skip the per-group pass.

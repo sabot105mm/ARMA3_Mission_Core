@@ -11,6 +11,19 @@ MISSION_CORE_fnc_queuedCounterAttackTank = {
     // spawn a counter-attack out of a marker the players now own.
     private _provNow = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _provName });
     if (count _provNow > 0 && { (_provNow select 0) select 4 != _side }) exitWith { false };
+    // MANPOWER RESERVE (PERMANENT RULE): re-check at release time - the provider never ships so
+    // many men to counter-attacks that the men left at home would drop below its own retreat
+    // threshold (round(cap * (1 - holdFrac))). A provider that was drained while queued stays home.
+    private _qCap = [_importance] call MISSION_CORE_fnc_markerCapacity;
+    private _qRetreatAt = round (_qCap * 0.15);
+    if (count _provNow > 0) then {
+        private _qDet = [(_provNow select 0)] call MISSION_CORE_fnc_getMarkerDetermination;
+        _qRetreatAt = round (_qCap * (1 - (_qDet select 1)));
+    };
+    if ((_qCap - (MISSION_CORE_COMMIT getOrDefault [_provName, 0]) - (_template select 2)) < _qRetreatAt) exitWith {
+        diag_log format ["DYNAMIC QUEUE: dropped queued counter-attack tank %1 from %2 - home men above retreat threshold", _template select 0, _provName];
+        true
+    };
     // Tank pool: only a pool owner below its allowance lends a counter-attack tank. Re-checked
     // here so a queue that outlived the provider's pool does not push it past its allowance.
     if (count _provNow > 0) then {

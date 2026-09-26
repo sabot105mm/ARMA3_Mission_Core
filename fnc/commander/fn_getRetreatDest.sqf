@@ -15,9 +15,23 @@
 // squad's CURRENT position, and markers owned by the ENEMY are excluded. Returns [0,0,0] when no
 // same-side marker exists.
 //
-// Returns the position of the closest friendly marker whose straight-line path from _pos does NOT
-// cross an enemy marker; falls back to the plain closest friendly marker when every candidate is
-// blocked (better to retreat somewhere than nowhere).
+// _farFrom: the CONTESTED marker the squad is breaking off from. The separation rule below is
+// measured from it, NOT from _pos - those are different places. A neighbor column turns around
+// while still short of the target, so measuring from its own position would happily pick a village
+// 400m from the fight and the rule would do nothing. Defaults to _pos, which is already correct for
+// a garrison (its _pos IS the marker it lost) and for a player-hunt contingent (its _pos is where
+// the player was last seen).
+//
+// RETREAT SEPARATION (PERMANENT RULE): a candidate must be at least retreatMinDistance (1500m)
+// from the contested marker. Without it a broken-off column re-forms at the next village over and
+// the same fight simply restarts, because the AI never really left. The squad walks to the next
+// genuinely DISTANT friendly marker instead of the merely closest one.
+//
+// Returns the nearest friendly marker that is BOTH far enough from the fight and line-clear; falls
+// back to the FARTHEST line-clear marker when the map holds nothing that far away, and to the
+// farthest marker outright when every path is blocked. The fallback is deliberate: a garrison must
+// never be stranded, because MISSION_CORE_RETREATED is already latched by the time it retreats, so a
+// garrison that failed to leave could neither respawn nor be captured.
 //
 // Calling this from the retreat destination picker is what keeps retreating garrisons from driving
 // home through a hostile base.
@@ -54,30 +68,74 @@ MISSION_CORE_fnc_lineCrossesEnemy = {
 };
 
 MISSION_CORE_fnc_getRetreatDest = {
-    params ["_pos", ["_side", sideUnknown], ["_exclude", []]];
+    params ["_pos", ["_side", sideUnknown], ["_exclude", []], ["_farFrom", []]];
+    // _farFrom defaults to _pos when the caller does not name the contested marker. It is resolved
+    // here rather than written as a params default of "_pos": referencing an earlier parameter from
+    // inside a params default left _farFrom unbound on the 3-argument call path, and the first
+    // distance2D against it then failed with "Undefined variable in expression: _farFrom". A
+    // sentinel is unambiguous, and a caller that hands over anything that is not a 3-number position
+    // is treated as having named nothing, which is the same answer _pos gives.
+    if (count _farFrom != 3 || { !(_farFrom isEqualType []) } || { count (_farFrom select { _x isEqualType 0 }) != 3 }) then {
+        _farFrom = _pos;
+    };
+    // _pos is measured against all through this function, so validate it once up front rather than
+    // letting a malformed call fail deep inside a forEach.
+    if (count _pos != 3 || { !(_pos isEqualType []) } || { count (_pos select { _x isEqualType 0 }) != 3 }) exitWith { [0, 0, 0] };
     if (isNil "MISSION_CORE_CACHED_POSITIONS") exitWith { [0, 0, 0] };
     private _useSide = if (_side == sideUnknown) then { WEST } else { _side };
-    // Gather all same-side, non-excluded markers, sorted by distance from the squad.
+    private _minDist = ["retreatMinDistance", 1500] call MISSION_CORE_fnc_tune;
+    // [distance from the squad, distance from the contested marker, marker row]
     private _cands = [];
     {
         if ((_x select 4) == _useSide && { !((_x select 0) in _exclude) }) then {
-            private _d = (_x select 1) distance2D _pos;
-            _cands pushBack [_d, _x];
+            _cands pushBack [(_x select 1) distance2D _pos, (_x select 1) distance2D _farFrom, _x];
         };
     } forEach MISSION_CORE_CACHED_POSITIONS;
     if (count _cands == 0) exitWith { [0, 0, 0] };
     _cands sort true;
-    // Walk the closest candidates in order; take the first whose line to the squad does not cross
-    // an enemy marker. The squad's own position is the start of the line, so it is never blocked.
-    private _best = _cands select 0;
-    private _foundDest = false;
+    // PASS 1: nearest candidate that is BOTH far enough from the contested marker and line-clear.
+    private _dest = [];
     {
-        private _destPos = (_x select 1) select 1;
-        if (!([_pos, _destPos, _useSide] call MISSION_CORE_fnc_lineCrossesEnemy)) then {
-            _best = _x;
-            _foundDest = true;
+        if ((_x select 1) >= _minDist) then {
+            private _cPos = (_x select 2) select 1;
+            if !([_pos, _cPos, _useSide] call MISSION_CORE_fnc_lineCrossesEnemy) then { _dest = _cPos; };
         };
-        if (_foundDest) exitWith {};
+        if (count _dest > 0) exitWith {};
     } forEach _cands;
-    (_best select 1) select 1
+    // PASS 2: the map holds nothing that far away - take the FARTHEST line-clear marker, so the
+    // squad still maximizes its separation instead of walking 200m and re-entering the fight.
+    private _bestFar = -1;
+    if (count _dest == 0) then {
+        {
+            private _cPos = (_x select 2) select 1;
+            if ((_x select 1) > _bestFar) then {
+                if !([_pos, _cPos, _useSide] call MISSION_CORE_fnc_lineCrossesEnemy) then {
+                    _bestFar = _x select 1;
+                    _dest = _cPos;
+                };
+            };
+        } forEach _cands;
+    };
+    // PASS 3: every straight path is blocked by an enemy marker - go to the farthest one anyway.
+    // Arriving somewhere bad beats never leaving, and the arrival despawn clears them either way.
+    if (count _dest == 0) then {
+        {
+            if ((_x select 1) > _bestFar) then {
+                _bestFar = _x select 1;
+                _dest = (_x select 2) select 1;
+            };
+        } forEach _cands;
+    };
+    // Log only when the map genuinely holds nothing that far away - NOT when the chosen marker is
+    // near, or every ordinary retreat would report a fallback that never happened.
+    if (_cands findIf { (_x select 1) >= _minDist } == -1) then {
+        diag_log format ["RETREAT DEST: no friendly marker is %1m from the contested marker - using the farthest (%2m) instead", _minDist, round _bestFar];
+    };
+    // One shape check at the boundary. Every caller either measures the answer with distance or
+    // hands it straight to addWaypoint, and three of them broke on a value that was not a position.
+    // A cached row that is not a full [x,y,z] must not escape as a bare coordinate, so a malformed
+    // candidate degrades to "nowhere to go" - the same answer the no-marker case already returns,
+    // and every caller already has a defined path for it.
+    if (count _dest != 3 || { !(_dest isEqualType []) } || { count (_dest select { _x isEqualType 0 }) != 3 }) exitWith { [0, 0, 0] };
+    _dest
 };

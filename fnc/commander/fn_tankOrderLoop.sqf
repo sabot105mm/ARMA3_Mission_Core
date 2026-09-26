@@ -125,8 +125,7 @@ MISSION_CORE_fnc_tankDeployAbstract = {
     for "_i" from 1 to _count do {
         private _spot = if (_i - 1 < count _colSpots) then { _colSpots select (_i - 1) } else { _spawn };
         if (count _spot == 2) then { _spot pushBack 0; };
-        private _veh = createVehicle [_vehClass, [_spot] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
-        [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
+        private _veh = [_vehClass, _spot] call MISSION_CORE_fnc_safeVehicleSpawn;
         _vehs pushBack _veh;
         _grp addVehicle _veh;
         for "_c" from 1 to 3 do { _grp createUnit [_crewClass, _spot, [], 0, "NONE"]; };
@@ -388,7 +387,17 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     // canMove covers any hull/locomotion damage even when the vehicle has no named
                     // track hitpoints (not every MBT variant exposes HitLTrack/HitRTrack).
                     private _crit = _dmg > 0.8;
-                    if (_crit || _gunDown || _tracksDown || !(canMove _x)) then {
+                    // GET-OUT HANDOFF. A delivered tank whose crew dismounted at >30% damage is
+                    // flagged by fn_getOutArmor and written off HERE rather than there, because
+                    // this loop already owns the write-off accounting: it bails the crew to a
+                    // runner group, removes the tank from _sVehs and decrements MISSION_CORE_TANK_
+                    // INFLIGHT exactly once. fn_getOutArmor deliberately does not touch that ledger
+                    // - flagging is what makes double-accounting impossible. The 0.30 gate is
+                    // LOWER than the 0.80 _crit above on purpose: a delivery is armour the player
+                    // has already paid for, so it is written off as soon as it is clearly not
+                    // going to finish the run.
+                    private _getOutWro = _x getVariable ["MISSION_CORE_GETOUT_WRITEOFF", false];
+                    if (_crit || _gunDown || _tracksDown || !(canMove _x) || _getOutWro) then {
                         _wro pushBack _x;
                     };
                 } forEach _sVehs;
@@ -399,6 +408,10 @@ MISSION_CORE_fnc_tankOrderLoop = {
                         if (isNull _tank) then { continue; };
                         private _tankCrew = crew _tank;
                         if (count _tankCrew > 0) then {
+                            // This bail is ORDERED, not an abandonment: the write-off path below
+                            // accounts the lost delivery itself. Suppress the get-out handler so it
+                            // does not also resolve the hull and double-account the shipment.
+                            _tank setVariable ["MISSION_CORE_GETOUT_SUPPRESS", true];
                             { unassignVehicle _x; _x leaveVehicle _tank; [_x] orderGetIn false; _x action ["getOut", _tank]; } forEach _tankCrew;
                             sleep 0.3;
                             private _runnerGrp = createGroup _sSide;
@@ -495,8 +508,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     for "_i" from 1 to _sCount do {
                         private _spot = if (_i - 1 < count _colSpots) then { _colSpots select (_i - 1) } else { _spawn };
                         if (count _spot == 2) then { _spot pushBack 0; };
-                        private _veh = createVehicle [selectRandom _mbtClasses, [_spot] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
-                        [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
+                        private _veh = [selectRandom _mbtClasses, _spot] call MISSION_CORE_fnc_safeVehicleSpawn;
                         _vehs pushBack _veh;
                         _grp addVehicle _veh;
                         for "_c" from 1 to 3 do { _grp createUnit [_crewClass, _spot, [], 0, "NONE"]; };
@@ -556,6 +568,42 @@ MISSION_CORE_fnc_tankOrderLoop = {
                             diag_log format ["DYNAMIC TANK: materialized convoy %1 -> %2 destroyed en route - %3 tanks lost", _depot, _tgt, _cnt];
                         }];
                     } forEach _vehs;
+                    // DROWNED RECOVERY. "Drowned" is a MISSION level event (removed in 2.02, brought
+                    // back in 2.14) and NOT a per-object one, so it is registered ONCE here with
+                    // addMissionEventHandler and the selectivity this system needs comes from a
+                    // REGISTRY rather than from the attachment. The previous code called
+                    // _hull addEventHandler ["Drowned", ...], which is not in the per-object EH enum
+                    // at all: every hull threw "Unknown enum value: Drowned", the uncaught error
+                    // aborted the forEach, and the success line printed anyway - so nothing was ever
+                    // attached while the log claimed otherwise.
+                    //
+                    // A bare mission handler would be no good either: it also fires for depot stock
+                    // inside createVehicle, before MISSION_CORE_TANK_HOME and the park-list entry
+                    // exist, so no variable gate can keep it away from a parked hull. So the handler
+                    // ignores anything not in the registry, and the registry is populated HERE and
+                    // only here - at the assault materialize step, once those variables do exist.
+                    // Factory/depot stock and passive delivery convoys are therefore never in it,
+                    // so a submerged parked hull stays invisible to this system, which was the point.
+                    if (_sAssault) then {
+                        if (!isNil "MISSION_CORE_fnc_vehicleDrowned") then {
+                            // Registration, pruning and handler installation all live in the helper -
+                            // this is no longer the only writer of the registry, it is just one caller.
+                            if (!isNil "MISSION_CORE_fnc_drownedWatch") then {
+                                [_vehs, format ["convoy %1 -> %2", _sCid, _sTarget]] call MISSION_CORE_fnc_drownedWatch;
+                            };
+                        } else {
+                            diag_log "DROWN-EH: handler not compiled - assault tanks get no drowned recovery";
+                        };
+                    };
+                    // WRECK-REAPER ECONOMY STAMP. The AI-wreck reaper (fn_safeVehicleSpawn) is
+                    // armed on every tracked hull, so it needs to know which hulls are battlefield
+                    // casualties and which are POOL/ECONOMY stock. Only an assault column is a
+                    // casualty. A passive delivery is armor the pool ledger has already spent and
+                    // the player paid for - deleting one would drain the pool with no accounting
+                    // and no replacement, because the Killed -> requestArmorReinforcement path only
+                    // fires on destruction, not on an abandoned-but-alive hull. Same split as the
+                    // Drowned EH above, for the same reason.
+                    { if (!isNull _x) then { _x setVariable ["MISSION_CORE_ECONOMY_ARMOR", !_sAssault]; }; } forEach _vehs;
                     _x set [9, 1];
                     _x set [10, _vehs];
                     _x set [11, _grp];

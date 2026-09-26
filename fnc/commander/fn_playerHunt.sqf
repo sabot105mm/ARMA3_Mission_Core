@@ -62,7 +62,7 @@ MISSION_CORE_fnc_playerHunt = {
     private _detectRange = ["huntDetectRange", 1200] call MISSION_CORE_fnc_tune;
 
     while { true } do {
-        sleep 20 + random 10;
+        sleep (20 + random 10);
         if (isNil "MISSION_CORE_SPAWNED_LOCATIONS") then { continue; };
         if (isNil "MISSION_CORE_CACHED_POSITIONS") then { continue; };
         private _players = allPlayers select { alive _x && { side _x == _enemySide } };
@@ -207,6 +207,10 @@ MISSION_CORE_fnc_huntDispatch = {
     // AMMO: a source marker with <30% ammo is defensive and never spares men to hunt. At 0 ammo
     // it is fully passive. Only markers with enough ammo may field a hunt contingent.
     _cands = _cands select { ([(_x select 0)] call MISSION_CORE_fnc_getAmmoFraction) >= 0.3 };
+    // RETREAT GATE (PERMANENT RULE): once a source marker's garrison has retreated (crossed its
+    // determination casualty threshold) it stops fielding hunt contingents - the hunt gate keeps
+    // spawning from a marker only until that marker retreats, never after it has given up.
+    _cands = _cands select { isNil "MISSION_CORE_RETREATED" || { !((MISSION_CORE_RETREATED getOrDefault [(_x select 0), false])) } };
     private _maxN = ["huntMaxContingents", 3] call MISSION_CORE_fnc_tune;
     private _srcRange = ["huntSourceMaxRange", 2500] call MISSION_CORE_fnc_tune;
     // Exclude markers that CONTAIN the aim point (you can't attack your own yard with 0m run).
@@ -228,6 +232,18 @@ MISSION_CORE_fnc_huntDispatch = {
     _srcCands = _srcCands select { (_x select 1) distance2D _lkp <= _srcRange };
     _srcCands resize (_maxN min (count _srcCands));
 
+    // COUNTER-ATTACK CURVE PACING (HUNT GATE, PERMANENT RULE): a source marker ACTIVELY
+    // supporting a live counter-attack (a contested zone within neighbor range whose
+    // reinforcement pool is NOT exhausted) paces its hunt dispatches on the same cubic intensity
+    // curve as its reinforcement spawns - fast while the zone's pool is fresh, losing steam as
+    // it drains. A marker with no counter-attack to support keeps its hunt gate open at the
+    // director's normal cadence until it retreats (retreat gate above).
+    private _zoneList = [_side] call MISSION_CORE_fnc_getContestedMarkers;
+    if (isNil "MISSION_CORE_REINF_EXHAUSTED") then { MISSION_CORE_REINF_EXHAUSTED = createHashMap; };
+    if (isNil "MISSION_CORE_REINF_SENT") then { MISSION_CORE_REINF_SENT = createHashMap; };
+    private _liveZones = _zoneList select { !(MISSION_CORE_REINF_EXHAUSTED getOrDefault [(_x select 0), false]) };
+    if (isNil "MISSION_CORE_HUNT_COOLDOWN") then { MISSION_CORE_HUNT_COOLDOWN = createHashMap; };
+
     private _dispatched = 0;
     {
         private _src = _x;
@@ -237,8 +253,46 @@ MISSION_CORE_fnc_huntDispatch = {
         private _srcSize = if (count _src > 8) then { _src select 8 } else { [200, 200] };
         private _srcD = _srcPos distance2D _lkp;
 
+        // Nearest live counter-attack zone near this source (within neighbor reinforce range).
+        private _nearZn = "";
+        private _nearD = 1e10;
+        { private _d = (_x select 1) distance2D _srcPos; if (_d < _nearD) then { _nearD = _d; _nearZn = _x select 0; }; } forEach _liveZones;
+        private _supporting = (_nearZn != "");
+        private _pace = 0;
+        if (_supporting) then {
+            // Intense-zone progress (men sent / budget) drives the cubic curve gap, mirroring
+            // fn_neighborCounterAttack's own curve (0.2s fresh -> ~5s near exhausted). Hunt pacing
+            // scales the gap up to the director's cadence via huntCurvePace.
+            private _sentTotal = MISSION_CORE_REINF_SENT getOrDefault [_nearZn, 0];
+            private _pool = 1;
+            private _idx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _nearZn };
+            if (_idx >= 0) then {
+                private _zp = MISSION_CORE_CACHED_POSITIONS select _idx;
+                private _budgetFrac = ([_zp] call MISSION_CORE_fnc_getMarkerDetermination) select 2;
+                private _nb = [_nearZn, (_zp select 1), _side, _zoneList apply { _x select 0 }] call MISSION_CORE_fnc_getMarkerNeighbors;
+                private _sum = 0;
+                { _sum = _sum + ([(_x select 7)] call MISSION_CORE_fnc_markerCapacity); } forEach _nb;
+                _pool = round (_sum * _budgetFrac);
+            };
+            private _frac = (((_sentTotal / (_pool max 1)) min 1) max 0);
+            private _gap = 0.2 + ((_frac * _frac * _frac) * 4.8);
+            _pace = _gap * (["huntCurvePace", 4] call MISSION_CORE_fnc_tune);
+            diag_log format ["PLAYER HUNT: %1 source %2 follows counter-attack curve for %3 (frac=%4 gap=%5s cd=%6s)", _side, _srcName, _nearZn, _frac, _gap, round _pace];
+        };
+
+        // Curve cooldown gate: while the marker's next allowed hunt time has not arrived it
+        // dispatches nothing toward ANY player (the marker is mid-reinforcement-tempo).
+        private _cd = MISSION_CORE_HUNT_COOLDOWN getOrDefault [_srcName, -1e10];
+        if (time < _cd) then {
+            diag_log format ["PLAYER HUNT: %1 source %2 paused - counter-attack curve cooldown (%.1fs left)", _side, _srcName, _cd - time];
+            continue;
+        };
+
         private _grp = [_player, _lkp, _heading, _side, _sideVar, _factionData, _srcName, _srcPos, _srcSize, _srcImp, _srcD] call MISSION_CORE_fnc_huntSpawnContingent;
         if (isNull _grp) then { continue; };
+        // Only a SUCCESSFUL dispatch sets the source's next allowed hunt time - a refused or
+        // skipped source stays free to retry on the next director tick.
+        if (_pace > 0) then { MISSION_CORE_HUNT_COOLDOWN set [_srcName, time + _pace]; };
         // AMMO: dispatching a hunt contingent costs the source marker ammo.
         [_srcName, ["ammoCostHunt", 2] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_consumeAmmo;
 
@@ -330,11 +384,28 @@ MISSION_CORE_fnc_huntSpawnContingent = {
                     private _infPool = [(_factionData select 17)] call MISSION_CORE_fnc_getInfTemplates;
                     if (count _infPool > 0) then {
                         private _template = selectRandom _infPool;
-                        _grp = [_template select 0, _spawnPos, _side, _factionData select 3, "AWARE", "NORMAL", _srcImp, _srcPos, _srcSize] call MISSION_CORE_fnc_spawnGroup;
-                        if (!isNull _grp) then {
-                            _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _srcName];
-                            if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
-                            MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
+                        // MANPOWER (marker pool, PERMANENT RULE): a CONJURED hunt squad is paid for
+                        // out of the source marker's OWN MISSION_CORE_LOCATION_SUPPLY pool - 1 man =
+                        // 1 supply, the same 1-for-1 rule that funds garrison replenishment. It is
+                        // never free on top of the fielded army. An empty pool fields no conjured
+                        // contingent (spare garrison squads can still be re-tasked - they already
+                        // exist inside the budget). This makes repeated hunts draw down the same
+                        // pool that funds the marker's garrison, so back-to-back sightings can never
+                        // bankroll unlimited bandit squads.
+                        private _manDraw = _template select 2;
+                        if (isNil "MISSION_CORE_LOCATION_SUPPLY") then { MISSION_CORE_LOCATION_SUPPLY = createHashMap; };
+                        private _supply = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_srcName, 0];
+                        if (_supply < _manDraw) then {
+                            diag_log format ["PLAYER HUNT: %1 source %2 manpower pool %3 < %4 men - no conjured hunt squad", _side, _srcName, _supply, _manDraw];
+                        } else {
+                            _grp = [_template select 0, _spawnPos, _side, _factionData select 3, "AWARE", "NORMAL", _srcImp, _srcPos, _srcSize] call MISSION_CORE_fnc_spawnGroup;
+                            if (!isNull _grp) then {
+                                MISSION_CORE_LOCATION_SUPPLY set [_srcName, _supply - _manDraw];
+                                diag_log format ["PLAYER HUNT: %1 conjured hunt squad %2 from %3 - manpower pool -%4 (remain=%5)", _side, groupId _grp, _srcName, _manDraw, _supply - _manDraw];
+                                _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _srcName];
+                                if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+                                MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
+                            };
                         };
                     };
                 } else {
@@ -630,16 +701,37 @@ MISSION_CORE_fnc_huntSweep = {
     _list = _list - [_grp];
     MISSION_CORE_HUNT_ACTIVE set [_playerKey, _list];
 
+    // Declared out here, beside the branch that reads them, rather than inside it. The retreat
+    // destination is consumed two blocks deeper (in the else), and a private declared inside a then
+    // block is not reliably in scope at that depth.
+    private _dest = [];
+    private _hasDest = false;
+
     // No re-contact within the window -> retreat to the closest same-side marker, despawn on arrival.
     if (!isNull _grp && { count units _grp > 0 }) then {
         diag_log format ["PLAYER HUNT: contingent %1 sweep over - retreating", groupId _grp];
         // The hunt is over - release ownership so the commander can recommit this squad later.
         _grp setVariable ["MISSION_CORE_HUNT_KEY", ""];
         _grp setVariable ["MISSION_CORE_ORDER", ""];
-        private _dest = [getPos (leader _grp), _side, [_srcName]] call MISSION_CORE_fnc_getRetreatDest;
-        if (_dest distance [0, 0, 0] < 1) then {
+        _dest = [getPos (leader _grp), _side, [_srcName]] call MISSION_CORE_fnc_getRetreatDest;
+        // fn_getRetreatDest answers [0,0,0] for "nowhere to go", but a call that fails partway can
+        // leave _dest as something that is not a position at all. Measure nothing until the shape is
+        // known: both distance and addWaypoint need three numbers, and handing either a non-position
+        // is what produced "0 elements provided, 3 expected" at the distance test and again at the
+        // waypoint, with the error reported against addWaypoint and _grp rather than the real cause.
+        if (count _dest == 3 && { _dest isEqualType [] }) then {
+            _hasDest = count (_dest select { _x isEqualType 0 }) == 3;
+        };
+        if (!_hasDest || { _dest distance2D [0, 0, 0] < 1 }) then {
+            // Nowhere to walk to - the men still go back to the marker the hunt drew them from.
+            [_grp, getPos (leader _grp), _srcName] call MISSION_CORE_fnc_retreatPayout;
             [_grp] call MISSION_CORE_fnc_deleteGroupCompletely;
         } else {
+            // Record the destination so fn_retreatPayout can resolve which marker these survivors
+            // are being credited to on arrival. MISSION_CORE_ORDER is deliberately left "" - the
+            // hunt releases ownership so the commander can recommit this squad later, and the
+            // despawn sweeper only ever touches groups tagged "retreat".
+            _grp setVariable ["MISSION_CORE_RETREAT_DEST", _dest];
             _grp setCombatMode "GREEN";
             _grp setBehaviour "AWARE";
             _grp setSpeedMode "FULL";

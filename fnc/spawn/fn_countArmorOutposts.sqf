@@ -1,14 +1,21 @@
 
 MISSION_CORE_fnc_countArmorOutposts = {
     params ["_side"];
-    // Killed handlers / support callbacks can report sideUnknown (or an exotic side object) - the
-    // side-variable lookup must never receive a non-string name. Derive it via STRING comparison
-    // with a guaranteed "" default, so a non-WEST/EAST value exits BEFORE the loop (and is logged)
-    // instead of ever reaching getVariable with a bad key.
-    private _sideVar = switch (str _side) do {
-        case "WEST": { "MISSION_CORE_BLUFOR" };
-        case "EAST": { "MISSION_CORE_REDFOR" };
-        default { "" };
+    // Killed handlers / support callbacks can report sideUnknown (or an exotic side object), so a
+    // non-WEST/EAST value must be refused BEFORE the side-variable lookup rather than reaching
+    // getVariable with a bad key.
+    //
+    // Compare the SIDE VALUE, never its string form. Two reasons:
+    //  (1) "switch (str _side) { case "EAST" }" never matches - A3 stringifies the enemy side as
+    //      "ENEMY" and resistance as "GUER", so every EAST call fell through to default and the
+    //      function refused to count REDFOR at all (silently reporting 0 outposts).
+    //  (2) A switch-derived variable is typed Any by the compiler. getVariable then fails to
+    //      resolve its [name, default] overload, falls back to the String-only form, and the
+    //      whole function fails to compile: "Error Type Any, expected String". An
+    //      if/then/else of string literals is inferred as String, which is what the 18 other
+    //      files in this mission that build _sideVar do.
+    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else {
+        if (_side == EAST) then { "MISSION_CORE_REDFOR" } else { "" }
     };
     if (_sideVar == "") exitWith {
         diag_log format ["ARMOR OUTPOSTS: countArmorOutposts refused side %1 (type %2)", _side, typeName _side];

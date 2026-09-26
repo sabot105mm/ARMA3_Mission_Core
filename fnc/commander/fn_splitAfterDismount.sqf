@@ -17,6 +17,11 @@ MISSION_CORE_fnc_splitAfterDismount = {
             if ((_veh distance2D _tgt <= _unloadDist) || { _veh distance2D _tgt <= 50 }) then {
                 private _crew = crew _veh select { vehicle _x == _veh && { alive _x } };
                 _crew = _crew - [driver _veh];
+                // ORDERED unload, not an abandonment. Suppress the get-out handler for this truck
+                // so the routine stand-off dismount is not read as a crew abandoning the vehicle -
+                // without this, every normal unload would delete the truck mid-battle (the cargo
+                // seats would be handled as cargo, but the driver reseat below would not).
+                _veh setVariable ["MISSION_CORE_GETOUT_SUPPRESS", true];
                 { unassignVehicle _x } forEach _crew;
                 _grpRef leaveVehicle _veh;
                 { _x action ["getOut", _veh] } forEach _crew;

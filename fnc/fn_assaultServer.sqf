@@ -166,31 +166,17 @@ MISSION_CORE_fnc_serverStagedLeaderTorch = {
 
 // Stage a recruited BLUFOR squad at its source edge on the bearing to an enemy target.
 // Only the waypoint/order/EH setup happens here - map + staged register handled by caller.
+// Waypoint/order/state setup is the SHARED staging core (fn_assaultStaging.sqf, compiled
+// server-side before this file via fn_aiCommander.sqf) - BLUFOR and REDFOR edge-staging never
+// diverge. This wrapper adds only the BLUFOR leader-torch EH.
 MISSION_CORE_fnc_serverStageGroup = {
     params ["_grp", "_srcPos", "_srcSize", "_tgtPos", ["_tgtName", ""]];
     if (count _srcSize == 0) then { _srcSize = [200, 200]; };
-    private _rad = (_srcSize select 0) max 1;
+    if (isNil "MISSION_CORE_fnc_stageGroupAtEdge") exitWith {
+        diag_log "BLUFOR STAGED: shared staging core missing (fn_assaultStaging.sqf not compiled)";
+    };
+    private _stagePos = [_grp, _srcPos, _srcSize, _tgtPos] call MISSION_CORE_fnc_stageGroupAtEdge;
     private _dir = _srcPos getDir _tgtPos;
-    private _stagePos = _srcPos getPos [_rad, _dir];
-    if (_stagePos isEqualTo _srcPos) then { _stagePos = _srcPos getPos [250, _dir]; };
-    [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-    _grp setBehaviour "SAFE";
-    _grp setCombatMode "YELLOW";
-    _grp setSpeedMode "LIMITED";
-    private _wp = _grp addWaypoint [_stagePos, 30];
-    _wp setWaypointType "MOVE";
-    _wp setWaypointBehaviour "SAFE";
-    _wp setWaypointCombatMode "YELLOW";
-    _wp setWaypointSpeed "LIMITED";
-    private _hwp = _grp addWaypoint [_stagePos, 0];
-    _hwp setWaypointType "HOLD";
-    _hwp setWaypointBehaviour "SAFE";
-    _hwp setWaypointCombatMode "YELLOW";
-    _hwp setWaypointSpeed "LIMITED";
-    _grp setCurrentWaypoint _wp;
-    _grp setVariable ["MISSION_CORE_ORDER", "staging"];
-    _grp setVariable ["MISSION_CORE_ATTACK_TARGET", _tgtPos];
-    _grp setVariable ["MISSION_CORE_STAGE_POS", _stagePos];
     (leader _grp) addEventHandler ["Killed", { _this call MISSION_CORE_fnc_serverStagedLeaderTorch; }];
     diag_log format ["BLUFOR STAGED: %1 staged at %2 on bearing %3 toward %4", groupId _grp, _stagePos, round _dir, _tgtName];
 };
@@ -219,8 +205,7 @@ MISSION_CORE_fnc_serverSpawnTransport = {
     _vPos = _vPos findEmptyPosition [0, 30, _vehClass];
     if (count _vPos == 0) then { _vPos = _caller getPos [15, _dir]; };
 
-    private _veh = createVehicle [_vehClass, _vPos, [], 0, "NONE"];
-    _veh setDir _dir;
+    private _veh = [_vehClass, _vPos, false, _dir] call MISSION_CORE_fnc_safeVehicleSpawn;
 
     private _units = units _grp;
     if (count _units > 0) then { (_units select 0) moveInDriver _veh; };
@@ -343,13 +328,23 @@ MISSION_CORE_fnc_serverGroupTryRefill = {
     } forEach _missingVeh;
 
     {
-        private _v = createVehicle [_x, [_spawnPos] call MISSION_CORE_fnc_liftSpawn, [], 15, "CAN_COLLIDE"];
+        private _v = [_x, _spawnPos] call MISSION_CORE_fnc_safeVehicleSpawn;
         private _vGrp = createVehicleCrew _v;
         { if (!isNull _x) then { [_x] joinSilent _grp; }; } forEach units _vGrp;
         [_v] joinSilent _grp;
         if (!isNull _vGrp) then { deleteGroup _vGrp; };
         _v setVariable ["MISSION_CORE_BLUFOR", true];
     } forEach _vehGot;
+
+    // Tracked hulls bought here come out of the shared vehicle pool, so they are the most expensive
+    // thing this function puts on the map. Registered here rather than at the callers because one
+    // caller is fn_serverMonitorAttackGroups, which tops groups back up repeatedly for the whole
+    // mission - any registration done at spawn time would have missed every later refill.
+    if (count _vehGot > 0) then {
+        if (!isNil "MISSION_CORE_fnc_drownedWatch") then {
+            [_vehGot, "recruit group refill"] call MISSION_CORE_fnc_drownedWatch;
+        };
+    };
 
     private _needMen = ((_unitCount - ({ alive _x } count units _grp)) max 0) min _unitCount;
     private _menClasses = _grpUnits select { _x isKindOf "Man" };
@@ -415,6 +410,15 @@ MISSION_CORE_fnc_assaultServerRequestNew = {
     };
 
     [_grp, _spawnPos, [200, 200]] call MISSION_CORE_fnc_alignGroupVehiclesToRoad;
+    // Both recruit spawn paths resolve the template straight out of CfgGroups, so an Armored pick
+    // (BUS_TankPlatoon and friends) puts real crewed tanks on the map here - and they are paid for
+    // out of player manpower, refunded only if the spawn itself failed. Neither path entered its
+    // hulls in the Drowned watch registry, so a tank that sank was lost outright with nothing back.
+    // Register whatever tracked armour the template brought; the helper no-ops on infantry, and
+    // dedupes so a crewed group contributes one row per hull rather than one per crew member.
+    if (!isNil "MISSION_CORE_fnc_drownedWatch") then {
+        [_grp, format ["recruit %1", _grpName]] call MISSION_CORE_fnc_drownedWatch;
+    };
     private _isMotorized = _catName find "Motorized" > -1 || _subCat find "motor" > -1;
     private _isMechanized = _catName find "Mechanized" > -1 || _subCat find "mech" > -1;
     if (_isMotorized || _isMechanized) then {
@@ -643,6 +647,15 @@ MISSION_CORE_fnc_assaultServerRERecruit = {
     };
 
     [_grp, _spawnPos, [200, 200]] call MISSION_CORE_fnc_alignGroupVehiclesToRoad;
+    // Both recruit spawn paths resolve the template straight out of CfgGroups, so an Armored pick
+    // (BUS_TankPlatoon and friends) puts real crewed tanks on the map here - and they are paid for
+    // out of player manpower, refunded only if the spawn itself failed. Neither path entered its
+    // hulls in the Drowned watch registry, so a tank that sank was lost outright with nothing back.
+    // Register whatever tracked armour the template brought; the helper no-ops on infantry, and
+    // dedupes so a crewed group contributes one row per hull rather than one per crew member.
+    if (!isNil "MISSION_CORE_fnc_drownedWatch") then {
+        [_grp, format ["recruit %1", _grpName]] call MISSION_CORE_fnc_drownedWatch;
+    };
     private _isMotorized = _catName find "Motorized" > -1 || _subCat find "motor" > -1;
     private _isMechanized = _catName find "Mechanized" > -1 || _subCat find "mech" > -1;
     if (_isMotorized || _isMechanized) then {
@@ -701,6 +714,7 @@ MISSION_CORE_fnc_assaultServerReleaseStaged = {
         _grp setVariable ["MISSION_CORE_ORDER", "attack"];
         private _cmdWps = _grp getVariable ["MISSION_CORE_RECRUIT_LAST_WPS", []];
         private _applyWps = if (count _cmdWps > 0) then { _cmdWps } else { _wps };
+        diag_log format ["[MISSION_CORE] releaseFromStaging %.1: drafted %2 / RECRUIT_LAST_WPS %3 -> applying %4 wps (%5)", _grpId, count _wps, count _cmdWps, count _applyWps, if (count _cmdWps > 0) then { "commander-drawn" } else { "staging draft" }];
         [netId _grp, _applyWps, _tgtPos] call MISSION_CORE_fnc_applyAssaultWaypointsNet;
         if (_grpId >= 0 && { !isNil "MISSION_CORE_ATTACK_GROUPS" }) then {
             private _adata = MISSION_CORE_ATTACK_GROUPS getOrDefault [_grpId, []];

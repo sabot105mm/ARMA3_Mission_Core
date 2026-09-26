@@ -95,9 +95,11 @@ if (isServer) then {
                     if ((_rx*_rx)/(_a*_a) + (_ry*_ry)/(_b*_b) <= 1) then {
                         if (([_testPos] call MISSION_CORE_fnc_checkFlat) > 0.85 && { [_testPos] call MISSION_CORE_fnc_isDryPos }) then {
                             // Never pick a spot that sits inside or on top of a giant boulder -
-                            // spawning infantry there wedges them in the rock.
-                            private _nearRocks = nearestTerrainObjects [_testPos, ["ROCK", "ROCKS", "BOULDER"], 6];
-                            if (count _nearRocks > 0) then { continue; };
+                            // spawning infantry there wedges them in the rock. This asked for
+                            // "BOULDER", which is not a CfgTerrain class, so the guard never
+                            // matched anything; a boulder is class HIDE, so the shared
+                            // blocklist is what actually catches it.
+                            if (!([_testPos, 6] call MISSION_CORE_fnc_isClearOfTerrain)) then { continue; };
                             private _hasPOI = [_testPos] call MISSION_CORE_fnc_checkPOI;
                             private _elevated = [_testPos] call MISSION_CORE_fnc_checkElevated;
                             if (_hasPOI || _elevated) then { _validPositions pushBack [_testPos, _hasPOI, _elevated]; };
@@ -343,6 +345,26 @@ if (isServer) then {
             if (time - MISSION_CORE_QUEUE_WAKE > 15) then { MISSION_CORE_QUEUE_WAKE = time; };
         };
     }];
+
+    // 6c. Drowned armour: AI tanks have no water awareness and will reverse at full
+    // speed into a lake when they spot an enemy. Rescue the hull (lift to dry land,
+    // repair the engine, re-seat the crew); a repeat offender is written off so the
+    // freed armour cap slot is refilled by the spawn queue. Registered on the server
+    // here for AI armour; the client registers the same handler in initPlayerLocal.sqf
+    // for the player's own hulls.
+    // The recovery helpers are compiled here so an ASSAULT column can be given a
+    // per-tank Drowned handler when fn_tankOrderLoop dispatches it.
+    // NO GLOBAL MISSION EH: a mission-level "Drowned" handler cannot be selective - it
+    // also fires for depot/factory stock the instant createVehicle returns, before
+    // MISSION_CORE_TANK_HOME and the park-list entry even exist, so no variable gate
+    // can keep it off parked hulls. The handler is attached per tank, at dispatch, to
+    // assault columns only (fn_tankOrderLoop.sqf, materialize step).
+    call compile preprocessFileLineNumbers "fnc\commander\fn_vehicleDrowned.sqf";
+    if (isNil "MISSION_CORE_fnc_vehicleDrowned") then {
+        diag_log "DROWN: fn_vehicleDrowned.sqf not compiled (missing or stale copy) - recovery disabled";
+    } else {
+        diag_log "DROWN: helpers compiled (server) - handler attaches on assault dispatch";
+    };
 
     // 6a. AI artillery - one SPG (or mortar) per side that shells spotted enemy armor
     call compile preprocessFileLineNumbers "fnc\fn_artillery.sqf";

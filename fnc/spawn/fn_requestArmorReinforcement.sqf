@@ -204,9 +204,10 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
         _spawnPos = [_spawnPos, _spawnPos, [100, 100]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
     };
     if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
-    private _veh = createVehicle [_vehClass, [_spawnPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+    // ONE-STOP SAFE VEHICLE SPAWN: wrecks near the spot deleted + living-vehicle (crewed or empty)
+    // check + re-roll + global dead purge + road alignment all in one call.
+    private _veh = [_vehClass, _spawnPos] call MISSION_CORE_fnc_safeVehicleSpawn;
     _grp addVehicle _veh;
-    [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
     private _crewClass = if (_side == WEST) then { "B_crew_F" } else { "O_crew_F" };
     private _crewList = [];
     for "_c" from 1 to 3 do { _crewList pushBack (_grp createUnit [_crewClass, _spawnPos, [], 0, "NONE"]); };

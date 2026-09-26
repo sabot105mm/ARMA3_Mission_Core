@@ -383,3 +383,78 @@ MISSION_CORE_fnc_refundBaseManpower = {
     private _stock = MISSION_CORE_BASE_MANPOWER getOrDefault [_baseName, 0];
     MISSION_CORE_BASE_MANPOWER set [_baseName, _stock + _amount];
 };
+
+// Pooled manpower request for a full assault (maximal counter-attack). Draw order is
+// supplier-first: bases/HQ 1:1 up to _men, then same-side neighbor markers' local pools
+// (MISSION_CORE_LOCATION_SUPPLY) nearest-first. Every supplier keeps its OWN retreat-reserve
+// floor (round(cap*(1-holdFrac))) - a marker never strips itself below what it needs to defend.
+// The receiver marker's own pool is NOT tapped (its garrison already lives there).
+// Returns [_funded, _donors] where _donors = [[kind, name, amount], ...] for refund (LIFO).
+// kind is "base" or "neighbor"; name is the marker/base; amount = manpower taken.
+MISSION_CORE_fnc_requestManpower = {
+    params ["_side", "_locPos", "_men", ["_receiverName", ""]];
+    if (_men <= 0) exitWith { [0, []] };
+    private _need = _men;
+    private _donors = [];
+    // 1) Bases/HQ, nearest same-side base with stock, 1:1.
+    private _baseDraw = [_side, _locPos, _need] call MISSION_CORE_fnc_drawBaseManpower;
+    if ((_baseDraw select 0) > 0) then {
+        _need = _need - (_baseDraw select 0);
+        _donors pushBack ["base", _baseDraw select 1, _baseDraw select 0];
+    };
+    // 2) Neighbor marker local pools, nearest-first, each keeping its retreat-reserve floor.
+    if (_need > 0) then {
+        private _zoneNames = ([_side] call MISSION_CORE_fnc_getContestedMarkers) apply { _x select 0 };
+        private _neighbors = ([_receiverName, _locPos, _side, _zoneNames] call MISSION_CORE_fnc_getMarkerNeighbors) select {
+            // Bases were already drawn above - skip them here.
+            !([_x] call MISSION_CORE_fnc_isBaseMarker)
+        };
+        // Guarded loop (NO exitWith inside forEach: exitWith would exit requestManpower itself
+        // and skip the [funded, donors] return below). Each giver keeps its own retreat reserve:
+        // round(cap * (1 - holdFrac)) - a marker never strips itself below what it needs to defend.
+        private _stillNeeded = _need > 0;
+        private _n = 0;
+        while { _stillNeeded && { _n < count _neighbors } } do {
+            private _nbr = _neighbors select _n;
+            private _nName = _nbr select 0;
+            private _nCap = [(_nbr select 7)] call MISSION_CORE_fnc_markerCapacity;
+            private _nDet = [_nbr] call MISSION_CORE_fnc_getMarkerDetermination;
+            private _nReserve = round (_nCap * (1 - (_nDet select 1)));
+            private _nLocal = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_nName, 0];
+            private _nGive = ((_nLocal - _nReserve) max 0) min _need;
+            if (_nGive > 0) then {
+                MISSION_CORE_LOCATION_SUPPLY set [_nName, _nLocal - _nGive];
+                _donors pushBack ["neighbor", _nName, _nGive];
+                _need = _need - _nGive;
+                diag_log format ["MANPOWER REQUEST: %1 drew %2 men from neighbor %3 (kept reserve %4, rem %5)", _receiverName, round _nGive, _nName, _nReserve, _nLocal - _nGive];
+            };
+            _stillNeeded = _need > 0;
+            _n = _n + 1;
+        };
+    };
+    [_men - _need, _donors]
+};
+
+// Refund unused pooled manpower back to its donors, LAST-IN-FIRST-OUT (refunds the most
+// recently drawn donor first, which refunds longer-distance draws preferentially).
+MISSION_CORE_fnc_refundManpower = {
+    params ["_donors", "_amount"];
+    if (_amount <= 0 || { count _donors == 0 }) exitWith {};
+    for "_i" from (count _donors - 1) to 0 step -1 do {
+        private _donor = _donors select _i;
+        private _kind = _donor select 0;
+        private _name = _donor select 1;
+        private _taken = _donor select 2;
+        if (_taken <= 0) then { continue; };
+        private _back = _taken min _amount;
+        if (_kind == "base") then {
+            [_name, _back] call MISSION_CORE_fnc_refundBaseManpower;
+        } else {
+            if (isNil "MISSION_CORE_LOCATION_SUPPLY") then { MISSION_CORE_LOCATION_SUPPLY = createHashMap; };
+            MISSION_CORE_LOCATION_SUPPLY set [_name, (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_name, 0]) + _back];
+        };
+        _amount = _amount - _back;
+        diag_log format ["MANPOWER REFUND: %1 returned %2 men to %3 %4", "", round _back, _kind, _name];
+        if (_amount <= 0) exitWith {};
+    };
+};

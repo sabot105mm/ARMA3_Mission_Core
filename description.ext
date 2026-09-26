@@ -899,7 +899,7 @@ class DYNOPS_RecruitMenu
         {
             idc = 1619;
             x = 0.18; y = 0.74; w = 0.54; h = 0.03;
-            text = "Waypoints apply to every selected group. ESC in editor = keep current path.";
+            text = "Waypoints apply to every selected group. ESC in editor closes it; use APPLY below to push the drawn route.";
             colorText[] = {0.65,0.65,0.65,1};
             colorBackground[] = {0,0,0,0};
             sizeEx = 0.017;
@@ -912,6 +912,18 @@ class DYNOPS_RecruitMenu
             sizeEx = 0.02;
             colorBackground[] = {0.5,0.45,0.15,0.95};
             action = "[] spawn MISSION_CORE_fnc_recruitCommanderOpenWP;";
+        };
+        class CommanderApplyWPBtn: RscButton
+        {
+            idc = 1690;
+            x = 0.18; y = 0.818; w = 0.54; h = 0.03;
+            text = "APPLY DRAWN WAYPOINTS TO SELECTED";
+            sizeEx = 0.019;
+            colorBackground[] = {0.2,0.5,0.25,0.95};
+            // Commander tab only; shown by fnc_recruitMenuTab (tab == 3). Start hidden so it never
+            // flashes on the player/defend/attack tabs before the tab switch runs.
+            visible = 0;
+            action = "call MISSION_CORE_fnc_commanderApplyDrawnWP;";
         };
 
         class CloseBtn: RscButton
@@ -1078,6 +1090,10 @@ class MISSION_CORE_TUNE {
     huntSpawnMinPlayerDist = 500;
     huntMaxContingents = 3;
     huntSourceMaxRange = 2500;
+    huntCurvePace = 4;
+
+    // ----- Assault artillery -----
+    artyBracketSteps = 4;
 
     armorLocalMbtImp3 = 2;
     armorLocalMbtLo = 1;
@@ -1161,6 +1177,12 @@ class MISSION_CORE_TUNE {
     stuckVehicleTime = 240;
     stuckVehicleRadius = 150;
     stuckVehicleTick = 30;
+
+    // ----- Drowned armour recovery (fn_vehicleDrowned.sqf) -----
+    // How many times a group may drown before the hull is written off. 1 = rescue
+    // never, write off on the first drowning. 2 = rescue once, then write off if it
+    // drowns again. Player-owned hulls are always rescued and ignore this entirely.
+    drownRescueLimit = 2;
 
     // BLUFOR AI behavior (0 = disabled, 1 = enabled)
     bluforAutoAttack = 0;

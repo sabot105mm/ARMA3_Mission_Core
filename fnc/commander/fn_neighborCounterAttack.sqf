@@ -212,6 +212,13 @@ MISSION_CORE_fnc_neighborCounterAttack = {
             };
             private _infPool = [_groups] call MISSION_CORE_fnc_getInfTemplates;
             private _sentMen = 0;
+            // MANPOWER RESERVE (PERMANENT RULE): a provider keeps a home reserve = its own retreat
+            // threshold (round(cap * (1 - holdFrac))). It refuses to dispatch another counter-attack
+            // squad once the men left at home (cap - committed - sent so far) would drop BELOW that
+            // line - a marker strips itself only to its retreat point, never past it.
+            private _provCap = [_provImp] call MISSION_CORE_fnc_markerCapacity;
+            private _provDet = [_prov] call MISSION_CORE_fnc_getMarkerDetermination;
+            private _provRetreatAt = round (_provCap * (1 - (_provDet select 1)));
             for "_i" from 1 to _infGroups do {
                 if (count _infPool == 0) exitWith {};
                 // INTENSITY CURVE + HARD CAP (PERMANENT RULE): never commit a squad once the
@@ -221,6 +228,12 @@ MISSION_CORE_fnc_neighborCounterAttack = {
                 // exponentially (pow 3) to 5s near exhausted, so the wave visibly loses steam.
                 if ((_sentTotal + _sentMen) >= _pool) exitWith {};
                 private _template = selectRandom _infPool;
+                // MANPOWER RESERVE: stop this provider's dispatch once the men left at home would
+                // fall below its own retreat threshold - it keeps its garrison able to defend.
+                private _providedCommit = MISSION_CORE_COMMIT getOrDefault [_provName, 0];
+                if ((_provCap - _providedCommit - _sentMen - (_template select 2)) < _provRetreatAt) exitWith {
+                    diag_log format ["DYNAMIC REINF RESERVE: %1 holding back - home men would drop below its retreat threshold (cap=%2 com=%3 sent=%4 retreatAt=%5)", _provName, _provCap, _providedCommit, _sentMen, _provRetreatAt];
+                };
                 private _frac = ((_sentTotal + _sentMen) / _poolSafe) min 1;
                 private _gap = 0.2 + ((_frac * _frac * _frac) * 4.8);
                 // Reinforcements assemble INSIDE the provider's marker (the lax scan tolerates a

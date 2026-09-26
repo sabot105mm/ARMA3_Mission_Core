@@ -25,6 +25,9 @@ MISSION_CORE_fnc_queuedReplenish = {
     if (isNull _grp) exitWith { false };
     _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _locName];
     _grp setVariable ["MISSION_CORE_REPLENISH_GROUP", true];
+    // GARRISON TAG: queued replenish squads are the marker's OWN garrison re-fielded - deaths
+    // count against its retreat tally (dispatched squads never carry this tag).
+    _grp setVariable ["MISSION_CORE_CASUALTY_MARKER", _locName];
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
     MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
     // Deferred replenish squads also converge on the contested marker center (group pos ->
@@ -45,18 +48,27 @@ MISSION_CORE_fnc_queuedReplenish = {
             } forEach _contestedList;
         };
     };
-    if (count _cTarget > 0) then {
-        [_grp, _cTarget select 1, _cTarget select 2] call MISSION_CORE_fnc_sendCounterAttack;
-        diag_log format ["DYNAMIC QUEUE: released queued replenish %1 +%2 men -> contested %3", _locName, _template select 2, _cTarget select 0];
+    // SUPPLY-REUSE HOOK (tried unconditionally, mirroring fn_replenishMarker): while a staged
+    // counter-attack is still filling at this marker, its own supply squads BECOME the assault's
+    // infantry - the arriving squad is rerouted to the staging edge and counted against the
+    // assembly's manpower need instead of marching into the marker. If no assembly is open, route
+    // to the contested center as usual (or SAD the marker center when nothing is contested).
+    if ([_grp, _locName, _locPos, _markerSize, _side] call MISSION_CORE_fnc_tryAbsorbSupply) then {
+        diag_log format ["DYNAMIC QUEUE: absorbed +%2 men (%1) into staged counter-attack", _locName, _template select 2];
     } else {
-        [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-        private _wp = _grp addWaypoint [_locPos, 60];
-        _wp setWaypointType "SAD";
-        _wp setWaypointSpeed "NORMAL";
-        _wp setWaypointBehaviour "COMBAT";
-        _grp setCurrentWaypoint _wp;
-        _grp setCombatMode "RED";
-        diag_log format ["DYNAMIC QUEUE: released queued replenish %1 +%2 men", _locName, _template select 2];
+        if (count _cTarget > 0) then {
+            [_grp, _cTarget select 1, _cTarget select 2] call MISSION_CORE_fnc_sendCounterAttack;
+            diag_log format ["DYNAMIC QUEUE: released queued replenish %1 +%2 men -> contested %3", _locName, _template select 2, _cTarget select 0];
+        } else {
+            [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
+            private _wp = _grp addWaypoint [_locPos, 60];
+            _wp setWaypointType "SAD";
+            _wp setWaypointSpeed "NORMAL";
+            _wp setWaypointBehaviour "COMBAT";
+            _grp setCurrentWaypoint _wp;
+            _grp setCombatMode "RED";
+            diag_log format ["DYNAMIC QUEUE: released queued replenish %1 +%2 men", _locName, _template select 2];
+        };
     };
     true
 };

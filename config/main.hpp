@@ -117,6 +117,10 @@ class MISSION_CORE_TUNE {
     huntSpawnMinPlayerDist = 500;   // fresh hunt contingents NEVER conjure within this of any alive player
     huntMaxContingents = 3;         // how many nearby markers each dispatch a hunting squad
     huntSourceMaxRange = 2500;      // a marker must be within this of the LKP to join the hunt
+    huntCurvePace = 4;              // counter-attack curve gap scale for a hunt source mid-reinforcement
+
+    // ----- Assault artillery -----
+    artyBracketSteps = 4;           // bracket-rake volleys across an active target marker's footprint (near->far)
 
     // ----- Armor caps -----
     armorLocalMbtImp3 = 2;          // max local MBTs for importance >= 3
@@ -189,6 +193,8 @@ class MISSION_CORE_TUNE {
     // ----- Replenish -----
     replenishCapPerMarker = 5;       // max alive replenish squads assigned per marker
     replenishRange = 2500;           // markers within this of a player are replenish candidates
+    counterAttackSupplyTTL = 90;     // staged counter-attack waits this long for arrive-and-route supply squads before spawning its own fallback
+    counterAttackFlipWatchTTL = 600; // after a counter-attack releases, keep watching the origin for an en-route flip this long (converts survivors to assault posture)
 
     // ----- Objectives -----
     objDefendRange = 2500;           // defend objective wins when the threatened friendly is this close

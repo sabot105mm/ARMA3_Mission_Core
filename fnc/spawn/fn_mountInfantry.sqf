@@ -93,7 +93,7 @@ MISSION_CORE_fnc_mountInfantry = {
         && { !([_p] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) }
         && { [_p] call _spotFree }
         && { count (nearestObjects [_p, ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"], 8]) == 0 }
-        && { count (nearestTerrainObjects [_p, ["TREE", "FOREST", "BUSH", "FENCE", "WALL", "HEDGE", "ROCK", "ROCKS", "SMALL TREE", "FOREST BORDER", "FOREST SQUARE", "FOREST TRIANGLE"], 8]) == 0 }
+        && { [_p] call MISSION_CORE_fnc_isClearOfTerrain }
     };
     private _lastTruckPos = MISSION_CORE_TRUCK_LAST_POS getOrDefault [str _side, [0, 0, 0]];
     private _savedKey = str _side;
@@ -147,9 +147,8 @@ MISSION_CORE_fnc_mountInfantry = {
         MISSION_CORE_TRUCK_SAFE_SPOTS set [_savedKey, _savedSpots];
     };
     MISSION_CORE_TRUCK_LAST_POS set [_savedKey, _pos];
-    private _truck = createVehicle [_vehClass, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+    private _truck = [_vehClass, _pos] call MISSION_CORE_fnc_safeVehicleSpawn;
     _grp addVehicle _truck;
-    [_truck] call MISSION_CORE_fnc_alignVehicleToRoad;
     _truck setVariable ["MISSION_CORE_TRUCK_ORIGIN", _pos];
     private _hasGun = [_truck] call MISSION_CORE_fnc_hasMountedGun;
     if (!_hasGun) then {
@@ -221,5 +220,12 @@ MISSION_CORE_fnc_mountInfantry = {
         };
     } forEach units _grp;
     diag_log format ["DYNAMIC TRANSPORT: mounted %1 foot squad (%2 men) into %3 for %4%5", groupId _grp, count units _grp, _vehClass, _grp getVariable ["MISSION_CORE_ORIGIN_MARKER", "?"], if (_selfDrive) then { " (self-drive)" } else { "" }];
+    // Register a dedicated-driver foot transport for stuck watching. fn_attackStuckWatchdog only
+    // tests a leader still within 25m of its spawn point, and this truck is deliberately NOT tagged
+    // for fn_orderedVehicleCleanup (whose 90s delete+refund would fight the recovery ladder) - so
+    // without this it would be invisible to every stuck check and wedge a whole column behind it.
+    if (!_selfDrive && { !isNull (_truck getVariable ["MISSION_CORE_DRIVER_GROUP", grpNull]) }) then {
+        if (!isNil "MISSION_CORE_fnc_watchFootTransport") then { [_truck] call MISSION_CORE_fnc_watchFootTransport; };
+    };
     _truck
 };

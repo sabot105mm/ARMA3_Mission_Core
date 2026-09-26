@@ -2,7 +2,7 @@
 MISSION_CORE_fnc_aiCommanderLoop = {
     diag_log "AI COMMANDER: Started";
     while { true } do {
-        sleep 8 + random 5;
+        sleep (8 + random 5);
         private _players = allPlayers select { alive _x };
         // Snapshot the live engine lists ONCE per tick and reuse them across every marker below.
         // Calling allUnits/allGroups per marker refetches + allocates a full list each time - a
@@ -305,7 +305,11 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                         if (time > (MISSION_CORE_COUNTERATTACK_COOLDOWN getOrDefault [_markerName, 0])) then {
                             MISSION_CORE_COUNTERATTACK_COOLDOWN set [_markerName, time + 600];
                             [_markerName, ["ammoCostCounterAttack", 2] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_consumeAmmo;
-                            [EAST, _locPos, _targetPos, _importance, _markerName] call MISSION_CORE_fnc_assembleAssault;
+                            // STAGED full counter-attack: manpower pooled from suppliers, the whole
+                            // force staged at this marker's edge (the _targetPos is the nearest engaged
+                            // player's live position, so no target NAME - matched via getLocByPos at
+                            // release) and released together once every group has arrived.
+                            [EAST, _locPos, _targetPos, _importance, _markerName, true, ""] call MISSION_CORE_fnc_assembleAssault;
                         };
                     };
 

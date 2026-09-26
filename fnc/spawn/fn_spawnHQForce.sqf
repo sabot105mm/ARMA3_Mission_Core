@@ -36,7 +36,7 @@ MISSION_CORE_fnc_spawnHQForce = {
             // fn_isSafeVehicleSpawnPos): re-roll to a safe road/flat spot if the chosen one fails.
             _vehPos = [_vehPos, _targetPos, _markerSize] call MISSION_CORE_fnc_safeVehicleSpawnPos;
             if (count _vehPos == 2) then { _vehPos pushBack 0; };
-            private _tank = createVehicle [selectRandom _mbtClasses, [_vehPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+            private _tank = [selectRandom _mbtClasses, _vehPos] call MISSION_CORE_fnc_safeVehicleSpawn;
             private _grp = createGroup _side;
             _grp addVehicle _tank;
             private _tc = [];
@@ -45,7 +45,6 @@ MISSION_CORE_fnc_spawnHQForce = {
             if (!isNull _d && isNull (driver _tank)) then { _d moveInDriver _tank; };
             if (!isNull _g && isNull (gunner _tank)) then { _g moveInGunner _tank; };
             if (!isNull _c && isNull (commander _tank)) then { _c moveInCommander _tank; };
-            [_tank] call MISSION_CORE_fnc_alignVehicleToRoad;
             _grp setBehaviour "AWARE"; _grp setCombatMode "YELLOW"; _grp setSpeedMode "FULL";
             _grp setVariable [format ["MISSION_CORE_%1", _isBLU], true];
             _grp setVariable ["MISSION_CORE_MARKER_CENTER", _targetPos];
@@ -75,7 +74,7 @@ MISSION_CORE_fnc_spawnHQForce = {
         if (count _apcPos == 2) then { _apcPos pushBack 0; };
         _apcPos = [_apcPos, _targetPos, _markerSize] call MISSION_CORE_fnc_safeVehicleSpawnPos;
         if (count _apcPos == 2) then { _apcPos pushBack 0; };
-        private _apc = createVehicle [selectRandom _apcClasses, [_apcPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+        private _apc = [selectRandom _apcClasses, _apcPos] call MISSION_CORE_fnc_safeVehicleSpawn;
         private _grp = createGroup _side;
         _grp addVehicle _apc;
         private _driver = _grp createUnit [_crewClass, _apcPos, [], 0, "NONE"];
@@ -89,7 +88,6 @@ MISSION_CORE_fnc_spawnHQForce = {
             _u moveInCargo _apc;
             _infantry pushBack _u;
         };
-        [_apc] call MISSION_CORE_fnc_alignVehicleToRoad;
         _grp setBehaviour "AWARE"; _grp setCombatMode "YELLOW"; _grp setSpeedMode "FULL";
         _grp setVariable [format ["MISSION_CORE_%1", _isBLU], true];
         _grp setVariable ["MISSION_CORE_MARKER_CENTER", _targetPos];

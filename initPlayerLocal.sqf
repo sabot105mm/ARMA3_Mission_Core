@@ -98,4 +98,14 @@ addMissionEventHandler ["EntityRespawned", {
     };
 }];
 
+// Drowned armour helpers. NOTE: no client-side mission EH is registered - see the
+// server-side comment in fn_init.sqf. A global "Drowned" handler is not selective, so
+// the handler is attached per tank (server side, on an assault column) and forwarded to
+// the owning machine by MISSION_CORE_fnc_vehicleDrowned when that hull is not local.
+// Compiled here so that forward has a target on the client.
+call compile preprocessFileLineNumbers "fnc\commander\fn_vehicleDrowned.sqf";
+if (isNil "MISSION_CORE_fnc_vehicleDrowned") then {
+    diag_log "DROWN: fn_vehicleDrowned.sqf not compiled (client) - owner forward unavailable";
+};
+
 diag_log format ["DYNAMIC OPS: Player %1 initialized", name player];

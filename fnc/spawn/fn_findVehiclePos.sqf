@@ -19,24 +19,37 @@ MISSION_CORE_fnc_findVehiclePos = {
         private _existingVehs = vehicles select { alive _x && { _x isKindOf "LandVehicle" } };
         private _roadBest = _center;
         private _roadScore = 99999;
+        // Track the best road that is ALSO >=40m from any parked land vehicle. Repeated spawns to
+        // the same marker (re-purchased vehicles, reinforcements) must never re-land on the exact
+        // road spot the previous vehicle sits on - the plain _roadBest fallback below ignored
+        // vehicles entirely and re-picked the same deterministic road every time, stacking spawns.
+        private _roadBestClear = _center;
+        private _roadScoreClear = 99999;
         private _rMax = ((count _roads) - 1) min (_attempts - 1);
         for "_r" from 0 to _rMax do {
             private _rcand = getPosATL (_roads select _r);
             private _nearBuildings = nearestObjects [_rcand, ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"], 8];
-            private _nearTerrain = nearestTerrainObjects [_rcand, ["TREE", "FOREST", "BUSH", "FENCE", "WALL", "HEDGE", "ROCK", "ROCKS"], 8];
+            private _nTerrain = [_rcand, 8] call MISSION_CORE_fnc_countTerrainBlockers;
             private _nearVeh = _existingVehs findIf { _rcand distance _x < 40 } > -1;
-            private _roadScoreNow = count _nearBuildings + count _nearTerrain;
+            private _roadScoreNow = count _nearBuildings + _nTerrain;
             if (_roadScoreNow < _roadScore) then { _roadScore = _roadScoreNow; _roadBest = _rcand; };
+            if (!_nearVeh && _roadScoreNow < _roadScoreClear) then { _roadScoreClear = _roadScoreNow; _roadBestClear = _rcand; };
             if (_roadScoreNow <= 1 && { !_nearVeh } && { [_rcand] call MISSION_CORE_fnc_isDryPos } && { !([_rcand] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) }) exitWith {
                 _pos = _rcand;
                 _clear = true;
             };
         };
-        // Best road even if a stray vehicle parks within 40m of it (armor already on the road is
-        // fine to spawn beside): only hard geometry and flagged spawn-kills block a road spot.
-        if (!_clear && _roadScore <= 1 && { !([_roadBest] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) }) then {
-            _pos = _roadBest;
+        // Prefer the best road that is ALSO clear of parked armor (never restart a spawn on top of
+        // the previous vehicle). Only when NO road clears them does the geometry-only best road
+        // (stray armor parked in the middle of a town) resolve the spawn as a true last resort.
+        if (!_clear && _roadScoreClear <= 1 && { !([_roadBestClear] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) }) then {
+            _pos = _roadBestClear;
             _clear = true;
+        } else {
+            if (!_clear && _roadScore <= 1 && { !([_roadBest] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) }) then {
+                _pos = _roadBest;
+                _clear = true;
+            };
         };
     };
     // Prefer pre-validated flat spawn spots cached per marker by the isFlatEmpty scan. Vehicles
@@ -64,9 +77,15 @@ MISSION_CORE_fnc_findVehiclePos = {
         private _existingVehs = vehicles select { alive _x && { _x isKindOf "LandVehicle" } };
         // Track the least-obstructed candidate as a fallback: a spawn should never land inside
         // geometry, so instead of returning the last random attempt (which can be a bad spot that
-        // makes the vehicle explode on spawn) we remember the cleanest one found.
+        // makes the vehicle explode on spawn) we remember the cleanest one found. A SEPARATE
+        // best-clear tracks the cleanest candidate that is ALSO >=40m away from parked land
+        // vehicles - repeated spawns to a tight marker must spread out, never stack on the last
+        // vehicle. Vehicles ignore the building score entirely (score 0 = no geometry at all).
         private _best = _center;
         private _bestScore = 99999;
+        private _bestClear = _center;
+        private _bestClearScore = 99999;
+        private _foundClearCand = false;
         // Stay INSIDE the marker: pass 1 is the marker ellipse itself, pass 2 a 1.25x safety net.
         // The old 1.6x/3.2x expansion flung troops and vehicles well outside their town. Troops
         // (_lax) tolerate minor obstacles (a building or trees nearby) so a spot inside a dense
@@ -85,10 +104,11 @@ MISSION_CORE_fnc_findVehiclePos = {
                 // of the spawn so vehicles never appear inside geometry or wedged against an
                 // obstacle. Troops may spawn next to a couple of minor objects.
                 private _nearBuildings = nearestObjects [_cand, ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"], _clearR];
-                private _nearTerrain = nearestTerrainObjects [_cand, ["TREE", "FOREST", "BUSH", "FENCE", "WALL", "HEDGE", "ROCK", "ROCKS"], _clearR];
+                private _nTerrain = [_cand, _clearR] call MISSION_CORE_fnc_countTerrainBlockers;
                 private _nearVeh = _existingVehs findIf { _cand distance _x < 40 } > -1;
-                private _score = count _nearBuildings + count _nearTerrain;
+                private _score = count _nearBuildings + _nTerrain;
                 if (_score < _bestScore) then { _bestScore = _score; _best = _cand; };
+                if (!_nearVeh && _score < _bestClearScore) then { _bestClearScore = _score; _bestClear = _cand; _foundClearCand = true; };
                 if (_score <= _acceptScore && { !_nearVeh } && { [_cand] call MISSION_CORE_fnc_isDryPos } && { !([_cand] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) }) exitWith {
                     _pos = _cand;
                     _clear = true;
@@ -96,7 +116,7 @@ MISSION_CORE_fnc_findVehiclePos = {
             };
             if (_clear) exitWith {};
         };
-        if (!_clear) then { _pos = _best; };
+        if (!_clear) then { _pos = if (_foundClearCand) then { _bestClear } else { _best }; };
     };
     [_pos] call MISSION_CORE_fnc_ensureLandPos
 };

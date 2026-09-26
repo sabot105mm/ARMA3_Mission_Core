@@ -2,7 +2,7 @@
 MISSION_CORE_fnc_armorCommanderLoop = {
     diag_log "AI ARMOR COMMANDER: Started";
     while { true } do {
-        sleep 10 + random 5;
+        sleep (10 + random 5);
         // Snapshot the live engine unit/group lists ONCE per tick and reuse them across the side and
         // group loops below. Calling allUnits/allGroups repeatedly (per group, per location) refetches
         // and allocates a fresh list each time - a huge CPU cost on large maps. The snapshot is
@@ -101,6 +101,11 @@ MISSION_CORE_fnc_armorCommanderLoop = {
                         };
                         if (count _riders > 0 && { !canMove _apc }) then {
                             _apc setVariable ["MISSION_CORE_MECH_IMMOBILE_DISMOUNTED", true];
+                            // ORDERED dismount, not an abandonment: this loop is deliberately KEEPING
+                            // the crew aboard a hull it cannot move (the permanent rule above), so
+                            // the get-out handler must not read the split as "crew left, resolve the
+                            // vehicle" and relocate/reboard or write the APC off underneath it.
+                            _apc setVariable ["MISSION_CORE_GETOUT_SUPPRESS", true];
                             private _side = side _grp;
                             private _newGrp = createGroup _side;
                             _riders joinSilent _newGrp;

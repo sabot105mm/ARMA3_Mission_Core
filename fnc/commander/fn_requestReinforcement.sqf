@@ -96,7 +96,7 @@ MISSION_CORE_fnc_requestReinforcement = {
         // when a squad is KIA and frees a slot.
         // PERMANENT RULE (global foot budget): the sender cap also respects the per-side foot-squad
         // cap - a reinforcement arm NEVER floats the map over footSquadCapSquads.
-        if !([EAST, "inf", _locPos] call MISSION_CORE_fnc_townCategoryCanUse) || { ([EAST] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) } then {
+        if (!([EAST, "inf", _locPos] call MISSION_CORE_fnc_townCategoryCanUse) || { ([EAST] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) }) then {
             ["MISSION_CORE_fnc_queuedReinforce", format ["reinf_%1_%2", _providerName, _locName], [EAST, _x, _spawnPos, _factionData select 3, _importance, _locPos, _mSize, _providerName]] call MISSION_CORE_fnc_enqueueSpawn;
         } else {
             private _grp = [_x select 0, _spawnPos, EAST, _factionData select 3, "AWARE", "LIMITED", _importance, _locPos, _mSize] call MISSION_CORE_fnc_spawnGroup;
@@ -123,7 +123,12 @@ MISSION_CORE_fnc_requestReinforcement = {
 
     // Supply now moves as a PHYSICAL convoy, not instant credit. The provider is charged, and the
     // recipient only receives supply when the truck actually arrives (or it is lost if destroyed).
-    [_providerName, _locName, _supplyGiven] call MISSION_CORE_fnc_startConvoy;
-
-    diag_log format ["DYNAMIC SUPPLY REINF: %1 -> %2 convoy dispatched (%3 supply)", _providerName, _locName, _supplyGiven];
+    // PERMANENT RULE: a contested recipient never gets a convoy - reinforcements still field men, but
+    // no supply trucks roll into a zone the players are actively fighting over (see fn_startConvoy).
+    if (!isNil "MISSION_CORE_CONTESTED_MARKERS" && { _locName in MISSION_CORE_CONTESTED_MARKERS }) then {
+        diag_log format ["DYNAMIC SUPPLY REINF: %1 -> %2 supply convoy skipped - recipient contested", _providerName, _locName];
+    } else {
+        [_providerName, _locName, _supplyGiven] call MISSION_CORE_fnc_startConvoy;
+        diag_log format ["DYNAMIC SUPPLY REINF: %1 -> %2 convoy dispatched (%3 supply)", _providerName, _locName, _supplyGiven];
+    };
 };

@@ -36,8 +36,7 @@ MISSION_CORE_fnc_builderSpawnDefense = {
         };
         case "tank": {
             _grp = createGroup WEST;
-            private _veh = createVehicle [_class, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 0, "CAN_COLLIDE"];
-            _veh setDir _dir;
+            private _veh = [_class, _pos, false, _dir] call MISSION_CORE_fnc_safeVehicleSpawn;
             _grp addVehicle _veh;
             private _crew = [];
             for "_c" from 1 to 3 do { _crew pushBack (_grp createUnit ["B_crew_F", _pos, [], 0, "NONE"]); };
@@ -51,6 +50,12 @@ MISSION_CORE_fnc_builderSpawnDefense = {
             private _wep = createVehicle [_class, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 0, "CAN_COLLIDE"];
             _wep setDir _dir;
             _grp addVehicle _wep;
+            // Emplacements are built with a raw createVehicle, so they never pass through
+            // MISSION_CORE_fnc_safeVehicleSpawn and would otherwise miss the get-out handler.
+            // fn_getOutStatic is a deliberate no-op (the permanent rule is that an emptied
+            // emplacement stays empty and is never re-garrisoned) - this attach exists so the
+            // event is logged and latched, not so the gunner can be replaced.
+            if (!isNil "MISSION_CORE_fnc_attachGetOut") then { [_wep] call MISSION_CORE_fnc_attachGetOut; };
             private _gunner = _grp createUnit [selectRandom (MISSION_CORE_BLUFOR_DATA select 19), getPos _wep, [], 0, "NONE"];
             _gunner moveInGunner _wep;
             [_wep, _dir] call MISSION_CORE_fnc_faceWeapon;

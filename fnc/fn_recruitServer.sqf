@@ -27,6 +27,62 @@ if (isNil "MISSION_CORE_REFILL_PENDING") then { MISSION_CORE_REFILL_PENDING = []
 
 // ---- helpers ----------------------------------------------------------
 
+// REAL SAFE SPAWN FOR A GARRISON SQUAD.
+//
+// Both recruit spawns used BIS_fnc_findSafePos with condition 0, which is weaker than it looks:
+// waterMode 0 still PERMITS water inside the inner 50% radius, and the condition argument is what
+// is supposed to say "and not on top of an enemy" - passing 0 says nothing. So a marker could be
+// rebuilt straight into the assault that had just wiped it, or onto a shoreline, and the squad
+// would die again on the next tick. That is the "[GARRISON] hq_4 UNDER ATTACK - 0 defender(s)"
+// warning repeating forever: the rebuild happens, the squad dies, the marker never heals.
+//
+// A deterministic ring search around the marker, strictest rung first, so every rung states its
+// own rule and the chosen spot is reproducible in the log. Dry test mirrors isDryPos - the spot
+// itself plus 7 ring probes - because a spawn on the shoreline is a drowned spawn. Enemy
+// definition matches garrisonWarnLoop (EAST against a BLUFOR garrison). The angle is jittered
+// inside each 22.5 deg sector so repeat rebuilds do not stack on the identical spot.
+MISSION_CORE_fnc_garrisonSafeSpawnPos = {
+    params ["_center", ["_ring", 60], ["_minEnemyDist", 220]];
+    private _enemies = allUnits select { side _x == EAST && { alive _x } };
+    private _isDry = {
+        params ["_p"];
+        private _ok = true;
+        for "_i" from 0 to 7 do {
+            if (surfaceIsWater (_p getPos [7, _i * 45])) then { _ok = false; };
+        };
+        // Dry ground is still not a place a man can stand: a boulder is CfgTerrain class HIDE, so
+        // the old ROCK-style filters never saw one and garrisons kept spawning inside rock faces.
+        if (_ok && { !([_p, 8] call MISSION_CORE_fnc_isClearOfTerrain) }) then { _ok = false; };
+        _ok
+    };
+    // Rungs, strictest first: [radius, minEnemyDist, requireDry]. Rung 2 relaxes the enemy
+    // distance because a marker under fire has no dry spot 220m from the enemy - insisting on it
+    // would push the squad outside its own garrison. Rung 4 drops the dry test and lets
+    // ensureLandPos have the final word.
+    private _ladders = [[_ring, _minEnemyDist, true], [floor (_ring * 1.5), 60, true], [floor (_ring * 1.5), 0, true], [_ring * 2, 0, false]];
+    private _pos = [];
+    private _usedRung = -1;
+    for "_l" from 0 to (count _ladders) - 1 do {
+        if (count _pos >= 2) then { break; };
+        private _r = _ladders select _l;
+        private _rad = _r select 0;
+        private _minE = _r select 1;
+        private _needDry = _r select 2;
+        for "_i" from 0 to 15 do {
+            private _cand = _center getPos [_rad, (_i * 22.5) + random 22.5];
+            private _ok = true;
+            if (_needDry && { !(_cand call _isDry) }) then { _ok = false; };
+            if (_ok && { count (_enemies select { _x distance _cand < _minE }) > 0 }) then { _ok = false; };
+            if (_ok) then { _pos = _cand; _usedRung = _l; break; };
+        };
+    };
+    if (count _pos < 2) then { _pos = [_center] call MISSION_CORE_fnc_ensureLandPos; _usedRung = 4; };
+    if (count _pos == 2) then { _pos pushBack 0; };
+    if (count _pos >= 3) then { _pos setDir (random 360); };
+    diag_log format ["GARRISON SPAWN: safe pos rung %1 at %2 (enemies within %3m: %4)", _usedRung, mapGridPosition _pos, _minEnemyDist, count (_enemies select { _x distance _pos < _minEnemyDist })];
+    _pos
+};
+
 // Look up a marker's importance (index 7) and type name (index 2) from the
 // cached positions (authoritative server list). Falls back to importance 1.
 MISSION_CORE_fnc_garrisonMarkerInfo = {
@@ -285,9 +341,7 @@ MISSION_CORE_fnc_serverGarrisonDeploy = {
     if (!_proceed) exitWith { };
 
     // Spawn the squad.
-    private _spawnPos = [_markerPos, 0, 80, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
-    if (count _spawnPos < 2) then { _spawnPos = _markerPos; };
-    if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
+    private _spawnPos = [_markerPos] call MISSION_CORE_fnc_garrisonSafeSpawnPos;
     private _cfgPath = configFile >> "CfgGroups" >> "West" >> _faction >> _catName >> _grpName;
     private _grp = [_spawnPos, WEST, _cfgPath] call BIS_fnc_spawnGroup;
     if (isNull _grp) then {
@@ -514,13 +568,11 @@ MISSION_CORE_fnc_serverAddVehicle = {
     private _grp = grpNull;
     if (_isStatic) then {
         // Mortars are static and crew light - spawn the piece + a small crew group.
-        _veh = createVehicle [_vehClass, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+        _veh = [_vehClass, _pos] call MISSION_CORE_fnc_safeVehicleSpawn;
         _veh setVehicleAmmo 1;
         _grp = createVehicleCrew _veh;
     } else {
-        _veh = createVehicle [_vehClass, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
-        _veh setDir ((getDir _veh) + 180);
-        [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
+        _veh = [_vehClass, _pos] call MISSION_CORE_fnc_safeVehicleSpawn;
         _grp = createVehicleCrew _veh;
     };
     if (isNull _veh) then {
@@ -727,9 +779,7 @@ MISSION_CORE_fnc_garrisonRefillRespawnSquad = {
     private _markerSize = if (count (_loc select 1) > 1) then { (_loc select 1) select 1 } else { [200, 200, 0] };
     private _markerDir = if (count (_loc select 1) > 2) then { (_loc select 1) select 2 } else { 0 };
     private _markerShape = if (count (_loc select 1) > 3) then { (_loc select 1) select 3 } else { "ELLIPSE" };
-    private _spawnPos = [_markerPos, 0, 80, 10, 0, 0.5, 0] call BIS_fnc_findSafePos;
-    if (count _spawnPos < 2) then { _spawnPos = _markerPos; };
-    if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
+    private _spawnPos = [_markerPos] call MISSION_CORE_fnc_garrisonSafeSpawnPos;
     private _cfgPath = configFile >> "CfgGroups" >> "West" >> _faction >> _catName >> _grpName;
     private _grp = [_spawnPos, WEST, _cfgPath] call BIS_fnc_spawnGroup;
     if (isNull _grp) then {
@@ -807,13 +857,11 @@ MISSION_CORE_fnc_garrisonRefillRespawnVehicle = {
     private _veh = objNull;
     private _grp = grpNull;
     if (_isStatic) then {
-        _veh = createVehicle [_vehClass, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+        _veh = [_vehClass, _pos] call MISSION_CORE_fnc_safeVehicleSpawn;
         _veh setVehicleAmmo 1;
         _grp = createVehicleCrew _veh;
     } else {
-        _veh = createVehicle [_vehClass, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
-        _veh setDir ((getDir _veh) + 180);
-        [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
+        _veh = [_vehClass, _pos] call MISSION_CORE_fnc_safeVehicleSpawn;
         _grp = createVehicleCrew _veh;
     };
     if (isNull _veh || isNull _grp) exitWith { objNull };
@@ -1116,6 +1164,13 @@ MISSION_CORE_fnc_assaultArtySpotTarget = {
             if ({ alive _x } count units _ag > 0) then { _spotters pushBack _ag; };
         } forEach MISSION_CORE_ATTACK_GROUPS_RELAY;
     };
+    // The piece's OWN crew are spotters too: anything the SPG can actually SEE or detect becomes a
+    // live contact. Bracketing a marker is always the LAST RESORT - even mid-rake, a barrel-up target
+    // preempts the shared mark barrage and the rake simply stalls (it only advances when every piece
+    // fires the current step), resuming only when no contact remains.
+    {
+        if (alive _x && { side _x == side _veh }) then { _spotters pushBack _x; };
+    } forEach (crew _veh);
     if (count _spotters == 0) exitWith { [] };
     // Search a radius that matches the marker footprint (largest half-axis + belt), never tiny.
     private _mSearch = 800;
@@ -1214,6 +1269,154 @@ MISSION_CORE_fnc_assaultArtyMarkerFireable = {
         _pressing = allPlayers findIf { alive _x && { side _x == side _veh && { _x distance2D _mPos < 1200 } } } != -1;
     };
     _pressing
+};
+
+// BRACKET-RAKE LINE: the set of volley positions that sweep a target marker's footprint from its
+// NEAR side to its FAR side, as seen from a reference firing position (_refPos). The line is the
+// chord of the marker's rotated ELLIPSE (half-axes _a/_b, rotation _dir - a square marker is just
+// _a == _b) that runs from the marker edge closest to _refPos through the center to the farthest
+// edge. That is how "start barrage from the closest side to the furthest side" is computed for any
+// square OR elliptical footprint. Returns the step positions (near -> far, inclusive) or [] when no
+// chord can be built (piece basically inside / degenerate).
+MISSION_CORE_fnc_artyRakeLine = {
+    params ["_refPos", "_aimAt", ["_a", 200], ["_b", 200], ["_dir", 0], ["_stepsN", 4]];
+    if (typeName _aimAt != "ARRAY" || { count _aimAt < 2 }) exitWith { [] };
+    private _center = [_aimAt select 0, _aimAt select 1, 0];
+    private _p = if (typeName _refPos == "ARRAY" && { count _refPos >= 2 }) then { [_refPos select 0, _refPos select 1, 0] } else { _center };
+    private _dx = (_center select 0) - (_p select 0);
+    private _dy = (_center select 1) - (_p select 1);
+    private _ds = sqrt ((_dx * _dx) + (_dy * _dy));
+    if (_ds < 1) exitWith { [] };
+    private _ux = _dx / _ds;
+    private _uy = _dy / _ds;
+    private _a2 = _a * _a;
+    private _b2 = _b * _b;
+    private _ca = cos _dir;
+    private _sa = sin _dir;
+    // Local (rotated) ellipse frame: local x along (_ca,_sa), local y along (-_sa,_ca).
+    private _rx0 = (_p select 0) - (_center select 0);
+    private _ry0 = (_p select 1) - (_center select 1);
+    private _lx0 = (_rx0 * _ca) + (_ry0 * _sa);
+    private _ly0 = (-_rx0 * _sa) + (_ry0 * _ca);
+    private _dlu = (_ux * _ca) + (_uy * _sa);
+    private _dlv = (-_ux * _sa) + (_uy * _ca);
+    // Ray P + s*d intersects the ellipse when (lx(s)^2/a^2) + (ly(s)^2/b^2) = 1: quadratic in s.
+    private _aq = ((_dlu * _dlu) / _a2) + ((_dlv * _dlv) / _b2);
+    private _bq = 2 * (((_lx0 * _dlu) / _a2) + ((_ly0 * _dlv) / _b2));
+    private _cq = (((_lx0 * _lx0) / _a2) + ((_ly0 * _ly0) / _b2)) - 1;
+    private _disc = (_bq * _bq) - (4 * _aq * _cq);
+    if (_aq <= 0) exitWith { [] };
+    if (_disc < 0) exitWith { [] };
+    private _sq = sqrt _disc;
+    private _s1 = (-_bq - _sq) / (2 * _aq);
+    private _s2 = (-_bq + _sq) / (2 * _aq);
+    if (_s1 > _s2) then { private _t = _s1; _s1 = _s2; _s2 = _t; };
+    if (_s2 < 1) exitWith { [] };
+    if (_s1 < 1) then { _s1 = 1; };
+    private _nx = (_p select 0) + (_ux * _s1);
+    private _ny = (_p select 1) + (_uy * _s1);
+    private _fx = (_p select 0) + (_ux * _s2);
+    private _fy = (_p select 1) + (_uy * _s2);
+    private _steps = [];
+    private _count = _stepsN max 1;
+    for "_i" from 0 to _count do {
+        private _f = _i / _count;
+        _steps pushBack [(_nx + ((_fx - _nx) * _f)), (_ny + ((_fy - _ny) * _f)), 0];
+    };
+    _steps
+};
+
+// Shared bracket-rake step for the CURRENT volley of an assault-arty group firing on its assigned
+// active target marker. Every member of the group gets the SAME bracket location (the rake steps are
+// built once from the group leader's line of sight and stored per group+marker), and the rake only
+// advances when every registered live piece in the group has fired at the current step. After the
+// LAST bracket location the member is set for this marker ownership: the piece ceases firing on the
+// marker location itself - further fire missions are limited to spotted contacts and laser dots.
+// Returns the shared step position, or [] when no marker barrage may be delivered (already raked,
+// or no valid rake line could be built).
+MISSION_CORE_fnc_assaultArtyBracketStep = {
+    params ["_veh", "_grp", "_aimAt"];
+    if (isNull _grp) exitWith { [] };
+    // Resolve the aim marker: name, center, footprint shape (a, b, rotation).
+    private _aimName = "";
+    private _aimCenter = _aimAt;
+    private _sz = [200, 200, 0];
+    if (!(isNil "MISSION_CORE_LOCATIONS") && { (typeName _aimAt) == "ARRAY" && { count _aimAt >= 2 } }) then {
+        private _li = MISSION_CORE_LOCATIONS findIf { ((_x select 1) select 0) distance2D _aimAt < 150 };
+        if (_li >= 0) then {
+            _aimName = (MISSION_CORE_LOCATIONS select _li) select 0;
+            _aimCenter = ((MISSION_CORE_LOCATIONS select _li) select 1) select 0;
+        };
+    };
+    if (!(isNil "MISSION_CORE_CACHED_POSITIONS") && { _aimName != "" }) then {
+        private _ci = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _aimName };
+        if (_ci >= 0) then {
+            private _cs = (MISSION_CORE_CACHED_POSITIONS select _ci) select 8;
+            if (count _cs > 0) then { _sz set [0, _cs select 0]; };
+            if (count _cs > 1) then { _sz set [1, _cs select 1]; };
+            if (count _cs > 2) then { _sz set [2, _cs select 2]; };
+        };
+    };
+    private _owner = WEST;
+    if (!(isNil "MISSION_CORE_LOCATIONS") && { _aimName != "" }) then {
+        private _li = MISSION_CORE_LOCATIONS findIf { (_x select 0) == _aimName };
+        if (_li >= 0) then { _owner = (MISSION_CORE_LOCATIONS select _li) select 5; };
+    };
+    // CEASE-FIRE LATCH: once the rake has swept this marker under this ownership, the bare marker
+    // never draws fire again - only spotted contacts or laser dots. A later re-capture/re-ownership
+    // of the marker re-arms the rake.
+    if (isNil "MISSION_CORE_ARTY_BARRAGE_DONE") then { MISSION_CORE_ARTY_BARRAGE_DONE = createHashMap; };
+    private _done = MISSION_CORE_ARTY_BARRAGE_DONE getOrDefault [_aimName, []];
+    if (count _done > 0 && { (_done select 0) == _owner }) exitWith { [] };
+    // Shared per-group, per-marker rake plan.
+    if (isNil "MISSION_CORE_ARTY_BRACKETS") then { MISSION_CORE_ARTY_BRACKETS = createHashMap; };
+    private _key = format ["%1|%2", str _grp, _aimName];
+    private _plan = MISSION_CORE_ARTY_BRACKETS getOrDefault [_key, []];
+    if (count _plan == 0) then {
+        private _ref = getPosATL (leader _grp);
+        if (typeName _ref != "ARRAY" || { count _ref < 2 }) then { _ref = getPosATL _veh; };
+        private _steps = [_ref, _aimCenter, _sz select 0, _sz select 1, _sz select 2, ["artyBracketSteps", 4] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_artyRakeLine;
+        if (count _steps == 0) exitWith { [] };
+        _plan = [0, _steps];
+        MISSION_CORE_ARTY_BRACKETS set [_key, _plan];
+        diag_log format ["PLAYER ARTY: bracket rake built for group %1 across %2 (%3 positions near->far)", _grp, _aimName, count _steps];
+    };
+    private _idx = _plan select 0;
+    private _steps = _plan select 1;
+    if (_idx >= count _steps) exitWith {
+        MISSION_CORE_ARTY_BARRAGE_DONE set [_aimName, [_owner, true]];
+        MISSION_CORE_ARTY_BRACKETS deleteAt _key;
+        diag_log format ["PLAYER ARTY: bracket rake for %1 complete - ceasing fire on marker location", _aimName];
+        []
+    };
+    private _stepPos = _steps select _idx;
+    // Same bracket location for every member of the artillery group.
+    _veh setVariable ["MISSION_CORE_ARTY_BRACKET_STEP", _idx];
+    // Advance the shared rake only when EVERY registered live piece in the group has fired at the
+    // current step - no member skips a bracket location.
+    private _allFired = true;
+    if (!(isNil "MISSION_CORE_PLAYER_ARTY")) then {
+        {
+            private _key2 = _x;
+            if (_key2 find "_LOOP" == 0) then { continue; };
+            private _d2 = _y;
+            _d2 params ["_v2", "_g2"];
+            if (_g2 != _grp) then { continue; };
+            if (isNull _v2 || { !(alive _v2) }) then { continue; };
+            if ((_v2 getVariable ["MISSION_CORE_ARTY_BRACKET_STEP", -1]) < _idx) then { _allFired = false; };
+        } forEach MISSION_CORE_PLAYER_ARTY;
+    };
+    if (_allFired) then {
+        _idx = _idx + 1;
+        _plan set [0, _idx];
+        MISSION_CORE_ARTY_BRACKETS set [_key, _plan];
+        if (_idx >= count _steps) then {
+            MISSION_CORE_ARTY_BARRAGE_DONE set [_aimName, [_owner, true]];
+            MISSION_CORE_ARTY_BRACKETS deleteAt _key;
+            diag_log format ["PLAYER ARTY: bracket rake for %1 complete at last bracket - ceasing fire on marker location", _aimName];
+        };
+    };
+    _stepPos
 };
 
 // One loop monitors every player-placed artillery piece and shells the
@@ -1329,11 +1532,23 @@ MISSION_CORE_fnc_playerArtyLoop = {
                 // keep generic nearest-spotted-target behavior.
                 private _target = [];
                 private _targetFromContact = false;
+                private _bracketPos = [];   // shared group bracket-rake step when marker-barraging
                 if (_preferLaser) then { _target = _laserTarget; } else {
                     if (_standoffGun) then {
                         _target = [_veh, _aimAt] call MISSION_CORE_fnc_assaultArtySpotTarget;
                         if (count _target > 0) then { _targetFromContact = true; }
-                        else { if (_markerFireable) then { _target = _aimAt; }; };
+                        else {
+                            if (_markerFireable) then {
+                                // BRACKET BARRAGE (active target marker): rake the marker's footprint
+                                // from its NEAR side to its FAR side - all pieces fire at the SAME
+                                // bracket location each volley, stepping across until the LAST bracket,
+                                // then cease firing on the marker location. Afterwards the bare marker
+                                // never draws indirect fire again - further fire missions come only from
+                                // spotted contacts (assaultArtySpotTarget) or laser dots.
+                                _bracketPos = [_veh, _grp, _aimAt] call MISSION_CORE_fnc_assaultArtyBracketStep;
+                                if (count _bracketPos > 0) then { _target = _aimAt; };
+                            };
+                        };
                     } else {
                         _target = [_veh, _enemy] call MISSION_CORE_fnc_artilleryTarget;
                         if (count _target == 0) then {
@@ -1389,7 +1604,9 @@ MISSION_CORE_fnc_playerArtyLoop = {
                             private _magClass = _mag select 0;
                             // Standoff barrage is delivered to a scattered point so each volley lands
                             // near the marker rather than on the head of a single soldier/vehicle.
-                            private _firePos = if (_exact) then { _target } else { [_veh, _target, false] call MISSION_CORE_fnc_scatterArtilleryPoint; };
+                            // A bracket-rake volley aims ALL pieces of the group at the same shared step position; any
+                            // other area shot keeps the scattered-point behavior.
+                            private _firePos = if (_exact) then { _target } else { if (count _bracketPos > 0) then { _bracketPos } else { [_veh, _target, false] call MISSION_CORE_fnc_scatterArtilleryPoint; }; };
                             // A fire mission outside the round's reach makes the crew radio "Invalid
                             // coordinates. Cease fire." and nothing flies. Pull the aim back along the
                             // bearing to the target (90%..30% of distance) until the point is verifiably
@@ -1425,7 +1642,7 @@ MISSION_CORE_fnc_playerArtyLoop = {
                             if ((_tp inRangeOfArtillery [[_veh], _magClass])) then {
                                 _cmdr doArtilleryFire [_tp, _magClass, _salvo];
                                 _veh setVariable ["MISSION_CORE_ARTY_LAST_FIRE", time];
-                                diag_log format ["PLAYER ARTY: %1 (%2) fired %3x %4 at %5 -> %6m via %7 (%8)", _veh, typeOf _veh, _salvo, _magClass, _tp, round (_veh distance2D _tp), _cmdr, if (_roundTier == "laser") then { "laser-LGB" } else { if (_roundTier == "gps") then { "laser-GPS" } else { if (_standoffGun) then { if (_targetFromContact) then { "assault-contact" } else { "assault-barrage" } } else { "spot/marker" } } }];
+                                diag_log format ["PLAYER ARTY: %1 (%2) fired %3x %4 at %5 -> %6m via %7 (%8)", _veh, typeOf _veh, _salvo, _magClass, _tp, round (_veh distance2D _tp), _cmdr, if (_roundTier == "laser") then { "laser-LGB" } else { if (_roundTier == "gps") then { "laser-GPS" } else { if (_standoffGun) then { if (_targetFromContact) then { "assault-contact" } else { if (count _bracketPos > 0) then { "assault-bracket" } else { "assault-barrage" } } } else { "spot/marker" } } }];
                             } else {
                                 diag_log format ["PLAYER ARTY: %1 (%2) skipped fire mission %3 - out of range / invalid coords", _veh, typeOf _veh, _target];
                             };

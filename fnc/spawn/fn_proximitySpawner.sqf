@@ -110,7 +110,7 @@ MISSION_CORE_fnc_proximitySpawner = {
     MISSION_CORE_SPAWNED_GROUPS = [];
     private _maxActive = ["proxMaxActive", 6] call MISSION_CORE_fnc_tune;
     while { true } do {
-        sleep 10 + random 5;
+        sleep (10 + random 5);
         private _players = allPlayers select { alive _x };
         private _playerSides = _players apply { side _x };
         // ACTIVE released assault-squad leaders are spawn actors too: a squad marching through

@@ -1,15 +1,16 @@
 // Full "safe to spawn a vehicle here?" check, shared by every armored/truck spawn path (defense
 // vehicles, HQ forces, tank orders, convoys, depot parks, foot transports). A vehicle must land
 // on dry ground that is not a flagged-unsafe spawn, be free of any land vehicle still parked
-// there, and be clear of hard geometry AND terrain objects (trees, rocks, forest) within 8m -
-// so armor and trucks never materialize on a mountain slope or in a treeline they can't cross.
+// there, and be clear of hard geometry AND terrain objects (trees, rocks, forest, boulders,
+// wrecks, ruins) within 8m - so armor and trucks never materialize on a mountain slope, in a
+// treeline they can't cross, or inside a boulder (class HIDE, which no ROCK filter ever caught).
 MISSION_CORE_fnc_isSafeVehicleSpawnPos = {
     params ["_pos"];
     if (!([_pos] call MISSION_CORE_fnc_isDryPos)) exitWith { false };
     if ([_pos] call MISSION_CORE_fnc_isUnsafeVehicleSpawn) exitWith { false };
     if ((vehicles select { alive _x && { _x isKindOf "LandVehicle" } }) findIf { _pos distance _x < 40 } > -1) exitWith { false };
     if (count (nearestObjects [_pos, ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"], 8]) > 0) exitWith { false };
-    if (count (nearestTerrainObjects [_pos, ["TREE", "FOREST", "BUSH", "FENCE", "WALL", "HEDGE", "ROCK", "ROCKS", "SMALL TREE", "FOREST BORDER", "FOREST SQUARE", "FOREST TRIANGLE"], 8]) > 0) exitWith { false };
+    if (!([_pos] call MISSION_CORE_fnc_isClearOfTerrain)) exitWith { false };
     true
 };
 

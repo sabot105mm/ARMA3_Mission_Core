@@ -174,11 +174,16 @@ MISSION_CORE_fnc_tankReserveSpawn = {
         };
         if (!_foundClear) then { _pos = _bestSpot; };
     };
-    _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos;
+    // DRY-LAND GUARANTEE MUST BE LAST. ensureLandPos guarantees a 20m ring of dry terrain
+    // (isDryPos), but safeVehicleSpawnPos may then relocate the hull up to 100m - which can
+    // undo that ring and leave a parked tank sitting in the shallows. A hull spawned with its
+    // engine in the water reports Drowned on the spawn frame, so the stock tank would sit
+    // half-sunk at the factory until something moved it. Land check therefore runs after the
+    // final position gate, not before it.
     _pos = [_pos, _pos, [100, 100]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos;
     if (count _pos == 2) then { _pos pushBack 0; };
-    private _veh = createVehicle [selectRandom _mbtClasses, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 0, "CAN_COLLIDE"];
-    _veh setDir random 360;
+    private _veh = [selectRandom _mbtClasses, _pos, true, (random 360)] call MISSION_CORE_fnc_safeVehicleSpawn;
     _veh lock 0;
     _veh setVariable ["MISSION_CORE_TANK_RESERVE", true];
     _veh setVariable ["MISSION_CORE_TANK_HOME", _name];

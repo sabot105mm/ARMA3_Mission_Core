@@ -43,6 +43,12 @@ MISSION_CORE_fnc_startConvoy = {
     private _startPos = (MISSION_CORE_CACHED_POSITIONS select _provIdx) select 1;
     private _endPos = (MISSION_CORE_CACHED_POSITIONS select _recvIdx) select 1;
     if (_startPos distance2D _endPos < 50) exitWith {};
+    // PERMANENT RULE: never ship supply to a marker the players are fighting over. The truck would
+    // only drive its cargo straight into the contested zone; the provider keeps its supply for
+    // quieter markers. Uses the broadcast contested union (friendly zones + enemy targets).
+    if (!isNil "MISSION_CORE_CONTESTED_MARKERS" && { _recipientName in MISSION_CORE_CONTESTED_MARKERS }) exitWith {
+        diag_log format ["DYNAMIC CONVOY: %1 -> %2 supply convoy skipped - recipient contested", _providerName, _recipientName];
+    };
     if (_cost < 0) then { _cost = _supplyAmount + ceil (_supplyAmount * 0.1); };
     private _provSupply = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_providerName, 0];
     MISSION_CORE_LOCATION_SUPPLY set [_providerName, _provSupply - _cost];
@@ -126,8 +132,7 @@ MISSION_CORE_fnc_convoyLoop = {
                         if (_truckClass == "") then { _truckClass = "O_Truck_02_covered_F"; };
                         private _spawn = [[_curPos] call MISSION_CORE_fnc_ensureLandPos, _curPos, [60, 60]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
                         if (count _spawn == 2) then { _spawn pushBack 0; };
-                        private _truck = createVehicle [_truckClass, [_spawn] call MISSION_CORE_fnc_liftSpawn, [], 0, "CAN_COLLIDE"];
-                        [_truck] call MISSION_CORE_fnc_alignVehicleToRoad;
+                        private _truck = [_truckClass, _spawn] call MISSION_CORE_fnc_safeVehicleSpawn;
                         _truck setVariable ["MISSION_CORE_CONVOY_TRUCK", true];
                         _truck setVariable ["MISSION_CORE_TRUCK_ORIGIN", _spawn];
                         private _drvGrp = createGroup EAST;
@@ -165,7 +170,13 @@ MISSION_CORE_fnc_convoyLoop = {
                     if (!isNull _truck) then {
                         private _boxClass = "";
                         {
-                            if (!isNil "_x" && { _x != "" }) exitWith { _boxClass = _x; };
+                            // Ammo-box entries are class-name strings in some builds and
+                            // [class, ...] pairs in others - normalize whichever way it's stored.
+                            private _cand = _x;
+                            private _bName = if (_cand isEqualType "") then { _cand } else {
+                                if (_cand isEqualType [] && { count _cand > 0 }) then { _cand select 0 } else { "" };
+                            };
+                            if (_bName != "") exitWith { _boxClass = _bName; };
                         } forEach ((MISSION_CORE_REDFOR_DATA select 11) select { true });
                         if (_boxClass == "") then { _boxClass = "Box_East_Ammo_F"; };
                         createVehicle [_boxClass, getPos _truck, [], 0, "CAN_COLLIDE"];

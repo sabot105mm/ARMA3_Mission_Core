@@ -7,7 +7,7 @@ MISSION_CORE_fnc_defenseCoordinator = {
     private _slotsPerSide = ["defenseRingsPerSide", 2] call MISSION_CORE_fnc_tune;
     private _defenseRadius = ["defenseRadius", 1800] call MISSION_CORE_fnc_tune;
     while { true } do {
-        sleep 8 + random 5;
+        sleep (8 + random 5);
         private _players = allPlayers select { alive _x };
         private _playerSides = _players apply { side _x };
         {

@@ -67,6 +67,8 @@ call compile preprocessFileLineNumbers "fnc\commander\fn_debugVisuals.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_despawnUncontestedNeighbors.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_deleteGroupCompletely.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_getRetreatDest.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_retreatPayout.sqf";
+call compile preprocessFileLineNumbers "fnc\commander\fn_transportStuckRecovery.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_playerHunt.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_objectiveDirector.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_playNoteSound.sqf";

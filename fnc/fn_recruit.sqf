@@ -293,7 +293,7 @@ MISSION_CORE_fnc_attackGroupTryRefill = {
 
     // Spawn the missing armored vehicles + crew into the group.
     {
-        private _v = createVehicle [_x, [_spawnPos] call MISSION_CORE_fnc_liftSpawn, [], 15, "CAN_COLLIDE"];
+        private _v = [_x, _spawnPos] call MISSION_CORE_fnc_safeVehicleSpawn;
         private _vGrp = createVehicleCrew _v;
         { if (!isNull _x) then { [_x] joinSilent _grp; }; } forEach units _vGrp;
         [_v] joinSilent _grp;
@@ -331,8 +331,10 @@ MISSION_CORE_fnc_openRecruitment = {
     [] spawn MISSION_CORE_fnc_recruitMenuRefresh;
 };
 
-// Manual refresh (top-left REFRESH button). No auto-refresh: values only update on demand so the
-// menu never churns selections underneath the player.
+// Manual refresh (top-left REFRESH button). Repopulates the LISTS, which clears the current
+// target/squad selection - so this is for when the lists themselves are stale. The status labels
+// (manpower, armor pool, instant-delivery) do NOT need this button: they are refreshed on a timer
+// by fnc_recruitMenuLiveLoop while the menu is open.
 MISSION_CORE_fnc_recruitManualRefresh = {
     disableSerialization;
     if (isNull (uiNamespace getVariable ["DYNOPS_RecruitMenu", objNull])) exitWith {};
@@ -389,6 +391,12 @@ MISSION_CORE_fnc_recruitMenuLoad = {
     // Restore last tab or default to player
     private _tab = MISSION_CORE_RECRUIT_ACTIVE_TAB;
     _tab call MISSION_CORE_fnc_recruitMenuTab;
+
+    // Keep manpower / armor pool / instant-delivery labels live while the menu stays open, so the
+    // player never has to hit REFRESH (which would repopulate the lists and drop their selection).
+    private _liveId = (missionNamespace getVariable ["MISSION_CORE_RECRUIT_LIVE_ID", 0]) + 1;
+    missionNamespace setVariable ["MISSION_CORE_RECRUIT_LIVE_ID", _liveId];
+    [_liveId] spawn MISSION_CORE_fnc_recruitMenuLiveLoop;
 };
 
 // One-shot refresh right after the menu opens or a tab is clicked: pull the authoritative server
@@ -554,8 +562,8 @@ MISSION_CORE_fnc_recruitMenuTab = {
     { (_disp displayCtrl _x) ctrlShow (_tab == 1) } forEach [1620, 1621, 1622, 1623, 1624, 1625, 1641, 1642, 1645, 1646, 1647, 1648, 1650, 1651, 1652, 1653, 1654, 1655, 1659, 1660, 1662];
     // Attack tab: 1630-1640, 1661-1663, 1643/1644/1649
     { (_disp displayCtrl _x) ctrlShow (_tab == 2) } forEach [1630, 1631, 1632, 1633, 1634, 1635, 1636, 1637, 1638, 1639, 1640, 1643, 1644, 1649, 1661, 1664, 1663, 1665, 1666];
-    // Commander tab: 1615-1619
-    { (_disp displayCtrl _x) ctrlShow (_tab == 3) } forEach [1615, 1616, 1617, 1618, 1619];
+    // Commander tab: 1615-1619, plus the APPLY DRAWN WAYPOINTS button (1690)
+    { (_disp displayCtrl _x) ctrlShow (_tab == 3) } forEach [1615, 1616, 1617, 1618, 1619, 1690];
 
     // Tab button highlight
     private _tabColors = [
@@ -588,6 +596,31 @@ MISSION_CORE_fnc_recruitMenuUpdateMP = {
     if (isNull _disp) exitWith {};
     private _mp = if (isNil "MISSION_CORE_BLUFOR_MANPOWER") then { 0 } else { MISSION_CORE_BLUFOR_MANPOWER };
     (_disp displayCtrl 1604) ctrlSetText format ["MANPOWER: %1", round _mp];
+};
+
+// Live status-label refresh while the menu is open. Touches ONLY the non-destructive status
+// labels (manpower / instant-delivery toggle / armor pool) so those numbers stay current on their
+// own. It deliberately does NOT call the Populate functions: those lbClear + lbSetCurSel -1, which
+// is what wipes the player's target and squad selections. List repopulation stays the manual
+// REFRESH button's (and tab-switch's) job.
+MISSION_CORE_fnc_recruitMenuLiveTick = {
+    disableSerialization;
+    if (isNull (uiNamespace getVariable ["DYNOPS_RecruitMenu", objNull])) exitWith {};
+    call MISSION_CORE_fnc_recruitMenuUpdateMP;
+    call MISSION_CORE_fnc_recruitMenuUpdateArmorPool;
+    call MISSION_CORE_fnc_recruitMenuUpdatePortBtn;
+};
+
+// Poll loop for the live labels, run for as long as the menu is open. _runId guards against a
+// stale loop lingering when the menu is closed and quickly reopened (a fresh open bumps the id and
+// the old loop stands down), so two tickers can never run at once.
+MISSION_CORE_fnc_recruitMenuLiveLoop = {
+    params ["_runId"];
+    while { !isNull (uiNamespace getVariable ["DYNOPS_RecruitMenu", objNull]) } do {
+        if (missionNamespace getVariable ["MISSION_CORE_RECRUIT_LIVE_ID", 0] != _runId) exitWith {};
+        sleep 1.5;
+        call MISSION_CORE_fnc_recruitMenuLiveTick;
+    };
 };
 
 // Cleanup on dialog close.
@@ -1285,12 +1318,20 @@ MISSION_CORE_fnc_recruitMenuPopulateCommander = {
 
 // Build a plain data list of a group's currently set waypoints: [pos, type, roe, speed, behaviour].
 // Drops the automatic trailing HOLD waypoint every group carries so only real tasking is returned.
+// Only the UNFINISHED part of the route is returned: Arma keeps completed waypoints on the group,
+// so without slicing, APPEND re-queued a finished route in front of the drawn waypoints and
+// setCurrentWaypoint jumped back to the first stale one (the group kept its old waypoint). For a
+// non-local group the waypoint list is not readable here - return nothing so callers fall back to
+// a plain replace instead of composing a wrong route from stale data.
 MISSION_CORE_fnc_groupCurrentWaypoints = {
     params ["_grp"];
     private _out = [];
     if (isNull _grp) exitWith { _out };
+    if !(local _grp) exitWith { _out };
     private _arr = waypoints _grp;
     if (count _arr > 0) then {
+        private _cwp = (currentWaypoint _grp) min ((count _arr) - 1);
+        if (_cwp > 0) then { _arr = _arr select [_cwp, (count _arr) - _cwp]; };
         private _last = _arr select (count _arr - 1);
         if (waypointType _last == "HOLD") then { _arr deleteAt (count _arr - 1); };
     };
@@ -1332,8 +1373,11 @@ MISSION_CORE_fnc_wpEditorSyncCurrentMarkers = {
 
 // Open the WP editor in COMMANDER mode: current route is shown, drawn waypoints are later applied
 // to the selected groups (APPEND keeps the current route, NEW replaces it entirely - toggle with V).
+// Default is NEW: an already-released group must adopt the drawn route NOW, not after re-running its
+// stale waypoint list (auto-APPEND used to re-queue the whole old route in front of the drawn one).
 MISSION_CORE_fnc_recruitCommanderOpenWP = {
     private _sel = missionNamespace getVariable ["MISSION_CORE_COMMAND_SELECTED", []];
+    diag_log format ["[MISSION_CORE] commanderOpenWP: sel=%1", count _sel];
     if (count _sel == 0) exitWith { hint "Select at least one group first."; };
     MISSION_CORE_WP_DONE_TARGET = "COMMANDER";
     private _grp = _sel select 0;
@@ -1341,7 +1385,7 @@ MISSION_CORE_fnc_recruitCommanderOpenWP = {
     missionNamespace setVariable ["MISSION_CORE_COMMAND_WP_GROUP", _grp];
     private _cur = [_grp] call MISSION_CORE_fnc_groupCurrentWaypoints;
     missionNamespace setVariable ["MISSION_CORE_COMMAND_WP_CURRENT_COUNT", count _cur];
-    missionNamespace setVariable ["MISSION_CORE_COMMAND_WP_MODE", if (count _cur > 0) then { "APPEND" } else { "NEW" }];
+    missionNamespace setVariable ["MISSION_CORE_COMMAND_WP_MODE", "NEW"];
     [] spawn MISSION_CORE_fnc_recruitAttackOpenWP;
 };
 
@@ -1354,8 +1398,9 @@ MISSION_CORE_fnc_commanderApplyWaypoints = {
     private _drawn = +MISSION_CORE_RECRUIT_SAVED_WAYPOINTS;
     private _mode = missionNamespace getVariable ["MISSION_CORE_COMMAND_WP_MODE", "NEW"];
     private _sel = missionNamespace getVariable ["MISSION_CORE_COMMAND_SELECTED", []];
-    if (count _sel == 0) exitWith { MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = []; hint "No groups selected - nothing applied."; };
-    if (count _drawn == 0 && { _mode == "NEW" }) exitWith { MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = []; hint "No waypoints drawn - groups keep their current path."; };
+    diag_log format ["[MISSION_CORE] commanderApplyWaypoints ENTER: drawn=%1 mode=%2 sel=%3", count _drawn, _mode, count _sel];
+    if (count _sel == 0) exitWith { diag_log "[MISSION_CORE] commanderApplyWaypoints EXIT: no groups selected"; MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = []; hint "No groups selected - nothing applied."; };
+    if (count _drawn == 0 && { _mode == "NEW" }) exitWith { diag_log "[MISSION_CORE] commanderApplyWaypoints EXIT: no waypoints drawn"; MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = []; hint "No waypoints drawn - groups keep their current path."; };
     private _applied = 0;
     {
         private _grp = _x;
@@ -1371,9 +1416,20 @@ MISSION_CORE_fnc_commanderApplyWaypoints = {
             _grp setVariable ["MISSION_CORE_ORDER", "attack"];
             _grp setVariable ["MISSION_CORE_ATTACK_TARGET", _targetPos];
         } else {
+            // The local applyAssaultWaypointsNet silently no-ops for a group owned by another machine
+            // (its locality guard exits immediately), which is why commander-drawn routes never reached
+            // server-owned released/staged squads. Forward to the actual owner instead, then stamp the
+            // group's LAST_WPS server-side so a later release-from-staging honours this drawn route
+            // (the release path prefers MISSION_CORE_RECRUIT_LAST_WPS over the stored staging draft).
             [netId _grp, _wps, _targetPos] remoteExecCall ["MISSION_CORE_fnc_applyAssaultWaypointsNet", owner (leader _grp), false];
+            diag_log format ["[MISSION_CORE] commanderApplyWaypoints: forwarded %1 wps for %2 (netId %3) to owner %4", count _wps, groupId _grp, netId _grp, owner (leader _grp)];
         };
         _grp setVariable ["MISSION_CORE_RECRUIT_LAST_WPS", +_wps, true];
+    private _firstBeh = waypointBehaviour _firstWp;
+    private _firstRoe = waypointCombatMode _firstWp;
+    _grp setVariable ["MISSION_CORE_ORDER", "attack"];
+    _grp setVariable ["MISSION_CORE_ATTACK_TARGET", _targetPos];
+    _grp setVariable ["MISSION_CORE_RECRUIT_LAST_WPS", +_wps, true];
         _applied = _applied + 1;
     } forEach _sel;
     MISSION_CORE_RECRUIT_SAVED_WAYPOINTS = [];
@@ -1388,6 +1444,19 @@ MISSION_CORE_fnc_commanderApplyWaypoints = {
         _names = _names + (groupId _g);
     } forEach _sel;
     hint format ["%1 group(s) routed (%2): %3", _applied, if (_mode == "APPEND") then { "appended to current route" } else { "new route" }, _names];
+};
+
+// Explicit "APPLY DRAWN WAYPOINTS" button on the commander tab. The editor's ESC handler already
+// applies on close, but if the drawn list is somehow empty at close (cancelled editor, cleared list),
+// the squad silently keeps its old route - this button lets the commander push the drawn list again
+// without reopening the editor, and reports per-group what actually happened.
+MISSION_CORE_fnc_commanderApplyDrawnWP = {
+    private _sel = missionNamespace getVariable ["MISSION_CORE_COMMAND_SELECTED", []];
+    diag_log format ["[MISSION_CORE] APPLY BTN clicked: sel=%1 drawn=%2", count _sel, count MISSION_CORE_RECRUIT_SAVED_WAYPOINTS];
+    if (count _sel == 0) exitWith { hint "Select at least one group first."; };
+    if (count MISSION_CORE_RECRUIT_SAVED_WAYPOINTS == 0) exitWith { hint "No drawn waypoints to apply - open the WAYPOINT EDITOR and draw a route first."; };
+    missionNamespace setVariable ["MISSION_CORE_COMMAND_WP_MODE", "NEW"];
+    call MISSION_CORE_fnc_commanderApplyWaypoints;
 };
 
 // RemoteExec target on the commander client: pops up the approval dialog when the AI commander
@@ -1446,8 +1515,7 @@ MISSION_CORE_fnc_recruitSpawnTransport = {
     _vPos = _vPos findEmptyPosition [0, 30, _vehClass];
     if (count _vPos == 0) then { _vPos = player getPos [15, _dir]; };
 
-    private _veh = createVehicle [_vehClass, _vPos, [], 0, "NONE"];
-    _veh setDir _dir;
+    private _veh = [_vehClass, _vPos, false, _dir] call MISSION_CORE_fnc_safeVehicleSpawn;
 
     // No separate driver crew: the squad's own group drives the transport. One member takes the
     // driver seat, the rest fill the cargo seats. Because the squad group itself is driving, an
@@ -1969,6 +2037,7 @@ MISSION_CORE_fnc_recruitAttackOpenWP = {
         MISSION_CORE_RECRUIT_SAVED_WAYPOINTS pushBack [_pos, MISSION_CORE_RECRUIT_WP_TYPE, MISSION_CORE_RECRUIT_WP_ROE, MISSION_CORE_RECRUIT_WP_SPEED, MISSION_CORE_RECRUIT_WP_BEHAVIOUR];
         [_pos, MISSION_CORE_RECRUIT_WP_TYPE, _wpIdx] call MISSION_CORE_fnc_wpEditorCreateMarker;
         call MISSION_CORE_fnc_wpPanelUpdateCount;
+        diag_log format ["[MISSION_CORE] editor map click: WP %1 placed (%2), total=%3", _wpIdx + 1, MISSION_CORE_RECRUIT_WP_TYPE, count MISSION_CORE_RECRUIT_SAVED_WAYPOINTS];
         hint format ["WP %1 placed: %2", _wpIdx + 1, MISSION_CORE_RECRUIT_WP_TYPE];
     };
 
@@ -2047,6 +2116,7 @@ MISSION_CORE_fnc_recruitAttackOpenWP = {
     // Wait for map to close (Escape), then clean up, run the done-action, and return to the menu.
     [] spawn {
         waitUntil { sleep 0.5; !visibleMap };
+        diag_log format ["[MISSION_CORE] editor close watcher fired: doneTarget='%1' drawn=%2", MISSION_CORE_WP_DONE_TARGET, count MISSION_CORE_RECRUIT_SAVED_WAYPOINTS];
         onMapSingleClick "";
         private _kid = missionNamespace getVariable ["MISSION_CORE_RECRUIT_WP_KEYHANDLER", -1];
         if (_kid >= 0) then { findDisplay 12 displayRemoveEventHandler ["KeyDown", _kid]; };

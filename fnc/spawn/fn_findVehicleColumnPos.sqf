@@ -29,8 +29,8 @@ MISSION_CORE_fnc_findVehicleColumnPos = {
         private _rp = getPosATL _x;
         if (surfaceIsWater _rp) then { continue; };
         private _nb = nearestObjects [_rp, ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"], 8];
-        private _nt = nearestTerrainObjects [_rp, ["TREE", "FOREST", "BUSH", "FENCE", "WALL", "HEDGE", "ROCK", "ROCKS"], 8];
-        private _sc = count _nb + count _nt;
+        private _nt = [_rp, 8] call MISSION_CORE_fnc_countTerrainBlockers;
+        private _sc = count _nb + _nt;
         if (!isNil "MISSION_CORE_fnc_isUnsafeVehicleSpawn" && { [_rp] call MISSION_CORE_fnc_isUnsafeVehicleSpawn }) then { _sc = _sc + 99; };
         _good pushBack [_sc, _rp, _x];
     } forEach _roads;
@@ -63,8 +63,8 @@ MISSION_CORE_fnc_findVehicleColumnPos = {
             if (count _spots >= _count) exitWith {};
             if (_spots findIf { _p distance2D _x < 20 } == -1) then {
                 private _nb = nearestObjects [_p, ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"], 8];
-                private _nt = nearestTerrainObjects [_p, ["TREE", "FOREST", "BUSH", "FENCE", "WALL", "HEDGE", "ROCK", "ROCKS"], 8];
-                if (count _nb + count _nt <= 1) then { _spots pushBack _p; };
+                private _nt = [_p, 8] call MISSION_CORE_fnc_countTerrainBlockers;
+                if (count _nb + _nt <= 1) then { _spots pushBack _p; };
             };
             _frontier pushBack _x;
         } forEach (roadsConnectedTo _seg);

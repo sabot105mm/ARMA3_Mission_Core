@@ -17,7 +17,7 @@ MISSION_CORE_fnc_monitorCrew = {
     } forEach units _grp;
     private _respawnQueue = [];
     while { !isNull _grp } do {
-        sleep 6 + random 4;
+        sleep (6 + random 4);
         {
             _x params ["_wep", "_class", "_rpos", "_rdir"];
             if (isNull _wep || { !alive _wep }) then {

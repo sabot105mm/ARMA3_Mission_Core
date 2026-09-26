@@ -116,7 +116,11 @@ MISSION_CORE_fnc_sendCounterAttack = {
     // 2. One MOVE waypoint to the advance point, then one SAD waypoint at the marker center.
     //    High alert (AWARE) and engage at will (RED combat mode) throughout.
     private _addAssaultWps = {
-        params ["_grp", "_movePos", "_moveType", "_advSpeed", ["_fireMode", _combatMode], ["_wpRadius", 10]];
+        // _fireMode defaults to a literal, NOT to the enclosing function's _combatMode. A params
+        // default that reaches out of the block for a variable from the caller's scope is the same
+        // hazard that left _farFrom unbound in fn_getRetreatDest; every call site below now passes
+        // _combatMode explicitly, so nothing is lost and the lookup is no longer cross-scope.
+        params ["_grp", "_movePos", "_moveType", "_advSpeed", ["_fireMode", "RED"], ["_wpRadius", 10]];
         // Keep the squad in WEDGE formation while advancing at full speed to the contested marker.
         // Set the group's own behaviour/speed explicitly (not just the waypoints) so the squad is
         // AWARE and at FULL speed from the moment the order is issued.
@@ -189,7 +193,7 @@ MISSION_CORE_fnc_sendCounterAttack = {
         private _vehHasGun = [_veh] call MISSION_CORE_fnc_hasMountedGun;
         if (_vehHasGun || { !([_veh] call MISSION_CORE_fnc_isSoftTransport) }) then {
             // Gun vehicle or armor: crew stays in - MOVE to the advance point, then SAD
-            [_group, _dismountPos, "MOVE", _advSpeed] call _addAssaultWps;
+            [_group, _dismountPos, "MOVE", _advSpeed, _combatMode] call _addAssaultWps;
         } else {
             // Unarmed truck-mounted foot squad: move to 100m short of the contested center,
             // disembark (GETOUT + TRANSPORT UNLOAD), then SAD. GREEN (hold fire) while riding.
@@ -207,7 +211,7 @@ MISSION_CORE_fnc_sendCounterAttack = {
                 diag_log format ["AI COMMAND: %1 foot patrol (%2 men) from %3 boarding %4 -> contested %5", groupId _group, count units _group, _originName, typeOf _truck, _targetPos];
                 if ([_truck] call MISSION_CORE_fnc_hasMountedGun) then {
                     // Gun truck - fight from the vehicle, crew stays in
-                    [_group, _dismountPos, "MOVE", _advSpeed] call _addAssaultWps;
+                    [_group, _dismountPos, "MOVE", _advSpeed, _combatMode] call _addAssaultWps;
                 } else {
                     // After everyone dismounts, split the foot infantry into a separate group so they
                     // never re-board; the driver stays with the truck and drives it away

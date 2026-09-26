@@ -9,7 +9,7 @@ MISSION_CORE_fnc_spawnDefenseVehicle = {
     if (count _pos < 2) then { _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos; };
     if (count _pos == 2) then { _pos pushBack 0; };
     private _crewClass = if (_side == WEST) then { "B_crew_F" } else { "O_crew_F" };
-    private _veh = createVehicle [_vehClass, [_pos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
+    private _veh = [_vehClass, _pos] call MISSION_CORE_fnc_safeVehicleSpawn;
     _veh setVariable ["MISSION_CORE_REINF_TARGET", _targetPos];
     _veh addEventHandler ["Killed", {
         params ["_v"];

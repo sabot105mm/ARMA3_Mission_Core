@@ -18,10 +18,11 @@ MISSION_CORE_fnc_findCoveredSpawns = {
         (_p distance2D _locPos) <= _edgeRadius
     };
     // A spot that sits inside or on top of a giant boulder is unusable - infantry would spawn
-    // wedged in the rock.
+    // wedged in the rock. Trees/forest/bush are subtracted because they are the COVER these spots
+    // are being chosen FOR, not an obstacle to them.
     private _clearOfRocks = {
         params ["_p"];
-        count (nearestTerrainObjects [_p, ["ROCK", "ROCKS", "BOULDER"], 5]) == 0
+        [_p, 5, MISSION_CORE_TERRAIN_COVER] call MISSION_CORE_fnc_isClearOfTerrain
     };
     private _houseSpots = [];
     private _treeSpots = [];

@@ -82,10 +82,22 @@ MISSION_CORE_fnc_replenishMarker = {
         if (isNull _grp) exitWith {};
         _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _locName];
         _grp setVariable ["MISSION_CORE_REPLENISH_GROUP", true];
+        // GARRISON TAG: replenish squads are the marker's OWN garrison re-fielded - deaths count
+        // against its retreat tally (dispatched squads never carry this tag).
+        _grp setVariable ["MISSION_CORE_CASUALTY_MARKER", _locName];
         if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
         MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
         _spawned = _spawned + _unitCount;
         _toSpawn = _toSpawn - _unitCount;
+        // SUPPLY-REUSE HOOK: while a staged counter-attack is still filling at this marker (an
+        // active MISSION_CORE_STAGING_BUDGET entry), its own supply squads BECOME the assault's
+        // infantry - the arriving squad is rerouted to the staging edge and counted against the
+        // assembly's manpower need instead of marching to the contested center. Such a squad keeps
+        // its ORIGIN/GARRISON accounting; tryAbsorbSupply clears CASUALTY_MARKER so deaths during
+        // the counter-attack never drain the marker's retreat tally (dispatched-squad rule).
+        if ([_grp, _locName, _locPos, _markerSize, _side] call MISSION_CORE_fnc_tryAbsorbSupply) then {
+            diag_log format ["DYNAMIC REPLENISH: %1 absorbed +%2 men (%3) into staged counter-attack", _locName, _unitCount, _template select 0];
+        } else {
         if (count _cTarget > 0) then {
             [_grp, _cTarget select 1, _cTarget select 2] call MISSION_CORE_fnc_sendCounterAttack;
             diag_log format ["DYNAMIC REPLENISH: %1 +%2 men (%3) -> contested %4 (%5m from group)", _locName, _unitCount, _template select 0, _cTarget select 0, round (_spawnPos distance (_cTarget select 1))];
@@ -98,6 +110,7 @@ MISSION_CORE_fnc_replenishMarker = {
             _grp setCurrentWaypoint _wp;
             _grp setCombatMode "RED";
             diag_log format ["DYNAMIC REPLENISH: %1 +%2 men (%3) from %4m edge -> center", _locName, _unitCount, _template select 0, round _edgeRadius];
+        };
         };
         // 0.4s breathing room between squad spawns so the garrison trickles in instead of
         // popping several squads at once and the global foot/cap re-checks stay accurate.

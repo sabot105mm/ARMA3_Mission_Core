@@ -3,6 +3,9 @@
 // toward the closest friendly marker, then despawns on arrival. The despawn is what removes them
 // from the map - they are never left patrolling their abandoned home.
 //
+// On arrival fn_retreatPayout credits the survivors' manpower and tanks to the friendly marker they
+// reached, so the men are not simply deleted off the books.
+//
 // The retreat destination comes from fn_getRetreatDest, so the garrison NEVER retreats to a marker
 // whose line of retreat passes through an enemy-held base - it falls back to the next closest
 // friendly marker instead of driving home through hostile territory.
@@ -13,19 +16,27 @@ MISSION_CORE_fnc_retreatGarrison = {
     // (marker WE LOST), not the squad's mid-retreat position, so the whole escape route stays out
     // of enemy territory.
     private _allyPos = [_locPos, _side, [_locName]] call MISSION_CORE_fnc_getRetreatDest;
-    if (_allyPos distance [0, 0, 0] < 1) exitWith {};
+    // Shape-check before measuring. getRetreatDest answers [0,0,0] for "nowhere to go" and this
+    // function has a defined early-out for it, so a malformed answer should take that same exit
+    // rather than erroring inside distance. Both lines end in a bare exitWith, which is the inline
+    // form and fine as a standalone statement.
+    if (count _allyPos != 3 || { !(_allyPos isEqualType []) } || { count (_allyPos select { _x isEqualType 0 }) != 3 }) exitWith {};
+    if (_allyPos distance2D [0, 0, 0] < 1) exitWith {};
     private _allyIdx = MISSION_CORE_CACHED_POSITIONS findIf { ((_x select 1) isEqualTo _allyPos) && { (_x select 4) == _side } };
     private _ally = if (_allyIdx >= 0) then { (MISSION_CORE_CACHED_POSITIONS select _allyIdx) select 0 } else { "" };
     {
         if (!isNull _x && { (_x getVariable ["MISSION_CORE_ORIGIN_MARKER", ""]) == _locName } && { { alive _x } count units _x > 0 }) then {
-            _x setVariable ["MISSION_CORE_ORDER", "retreat"];
             _x setCombatMode "GREEN";  // hold fire (return fire only) while withdrawing
             _x setBehaviour "AWARE";   // stay in formation (CARELESS breaks ranks and lies down)
             _x setFormation "WEDGE";   // stay in formation
             _x setSpeedMode "FULL";    // run
-            { _x setUnitPos "UP"; } forEach units _x; // stand up
+            { _x setUnitPos "UP"; } forEach units _x;  // stand up
             // Never send the retreat toward the map origin [0,0,0] or into the sea.
             private _dest = [_allyPos, _locPos] call MISSION_CORE_fnc_safeWaypointPos;
+            // ORDER "retreat" plus the destination and the distance-scaled deadline the despawn
+            // sweeper reads, set together in the one place that defines a retreat. The survivors'
+            // manpower and tanks are credited to _ally when they get there.
+            [_x, _dest, _ally] call MISSION_CORE_fnc_beginRetreat;
             [_x] call MISSION_CORE_fnc_clearGroupWaypoints;
             private _wp = _x addWaypoint [_dest, 100];
             _wp setWaypointType "MOVE";

@@ -321,8 +321,7 @@ MISSION_CORE_fnc_spawnArtillery = {
     if (_pos distance [0, 0, 0] < 1) exitWith {
         MISSION_CORE_ARTY set [_sideKey, [grpNull, objNull, time + 300]];
     };
-    private _veh = createVehicle [_vehClass, _pos, [], 5, "CAN_COLLIDE"];
-    _veh setPosATL ([_pos] call MISSION_CORE_fnc_liftSpawn);
+    private _veh = [_vehClass, _pos, false] call MISSION_CORE_fnc_safeVehicleSpawn;
     _veh setVehicleAmmo 1;
     _veh setVehicleAmmoDef 1;
     private _grp = createVehicleCrew _veh;

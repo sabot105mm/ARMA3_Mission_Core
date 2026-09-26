@@ -311,6 +311,11 @@ MISSION_CORE_fnc_spawnLocation = {
                 private _grp = [_grpType, _spawnPos, _owner, _faction, "AWARE", "LIMITED", _importance, _markerCenter, _markerSize] call MISSION_CORE_fnc_spawnGroup;
                 if (!isNull _grp) then {
                     _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _locName];
+                    // GARRISON TAG (casualty tally, PERMANENT RULE): this squad was spawned AS the
+                    // marker's own garrison - its deaths count against the marker's retreat tally.
+                    // Squads dispatched OUTWARD never get this tag, so their deaths are not
+                    // credited back to the source marker.
+                    _grp setVariable ["MISSION_CORE_CASUALTY_MARKER", _locName];
                     diag_log format ["DYNAMIC SPAWN: %1 spawned at %2 imp=%3 (group %4, wps=%5)", _grpType, _loc select 0, _importance, groupId _grp, count (waypoints _grp)];
                 } else {
                     diag_log format ["DYNAMIC SPAWN: %1 at %2 FAILED to spawn", _grpType, _loc select 0];

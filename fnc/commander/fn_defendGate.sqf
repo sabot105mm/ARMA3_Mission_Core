@@ -23,7 +23,14 @@ if (isNil "MISSION_CORE_MARKER_GEOMETRY_CACHE") then { MISSION_CORE_MARKER_GEOME
 
 // Resolve a marker's REAL geometry [pos, sizeA, sizeB, dir, shape] from MISSION_CORE_LOCATIONS
 // (the authoritative map of every location; area is [pos, [a,b], dir, "ELLIPSE"/"RECTANGLE"]).
-// CACHED_POSITIONS has no size, so the legacy getMarkerShape falls back to a fixed 200m ellipse.
+// CACHED_POSITIONS is deliberately NOT read here: it is a different shape (see below) and using
+// the wrong accessor on it is what produced the "isnull/distance2d: Type Number" crash family.
+//
+// TWO ARRAYS, OPPOSITE INDEX MEANINGS - do not mix their accessors:
+//   MISSION_CORE_LOCATIONS      (fn_markers.sqf)  1 = [pos, [a,b], dir]  -> pos: (e select 1) select 0
+//                                                                size: (e select 1) select 1
+//   MISSION_CORE_CACHED_POSITIONS (fn_init.sqf:70) 1 = pos (flat)         -> pos: (e select 1)
+//                                                                size: (e select 8) guarded by count
 // Cached once per marker name - these entries never change mid-session.
 MISSION_CORE_fnc_getMarkerGeometry = {
     params ["_markerName"];

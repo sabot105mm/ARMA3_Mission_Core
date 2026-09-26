@@ -18,9 +18,10 @@ MISSION_CORE_fnc_hasCoveredSpawns = {
         private _ry = _dx * sin _mkrDir + _dy * cos _mkrDir;
         (_rx*_rx)/(_a*_a) + (_ry*_ry)/(_b*_b) <= 1
     };
+    // Trees/forest/bush are subtracted because they are the cover being counted, not an obstacle.
     private _clearOfRocks = {
         params ["_p"];
-        count (nearestTerrainObjects [_p, ["ROCK", "ROCKS", "BOULDER"], 5]) == 0
+        [_p, 5, MISSION_CORE_TERRAIN_COVER] call MISSION_CORE_fnc_isClearOfTerrain
     };
     // Any building inside the marker (clear of rocks) is a safe spawn spot
     {

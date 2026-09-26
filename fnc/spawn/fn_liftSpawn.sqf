@@ -7,5 +7,8 @@
 MISSION_CORE_fnc_liftSpawn = {
     params ["_pos"];
     if !(_pos isEqualType []) exitWith { _pos };
+    // VEHICLE-SPAWN DEAD SWEEP: every AI vehicle creation funnels through this position helper -
+    // sweep the world's dead bodies/wrecks the moment a vehicle spawns (see fn_purgeDeadBodies).
+    [_pos] call MISSION_CORE_fnc_purgeDeadBodies;
     [_pos param [0, 0, [0]], _pos param [1, 0, [0]], _pos param [2, 0, [0]]]
 };

@@ -33,7 +33,7 @@ MISSION_CORE_fnc_houseOccupationInit = {
     private _prioMult = ["housePriorityRadiusMult", 2] call MISSION_CORE_fnc_tune; // bunker/military/guard-post use spawnR x this
 
     while { true } do {
-        sleep 5 + random 3;
+        sleep (5 + random 3);
         if (isNil "MISSION_CORE_CACHED_POSITIONS") then { continue; };
         if (isNil "MISSION_CORE_SPAWNED_LOCATIONS") then { continue; };
         private _players = allPlayers select { alive _x };

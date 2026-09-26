@@ -134,9 +134,26 @@ MISSION_CORE_fnc_applyAssaultWaypointsNet = {
         _firstWp setWaypointBehaviour "AWARE";
     };
     if (count _firstWp > 0) then { _grp setCurrentWaypoint _firstWp; };
+
+    // Stamp the drawn route on the group's AUTHORITATIVE (server) object so both release paths
+    // (assaultServer.sqf:687 and recruit.sqf:1672) prefer THIS drawn route over the stale staging
+    // draft. The commander client's own local setVariable can never reach server-owned squads, which
+    // is exactly why commander-drawn routes were applied-and-visible yet the squad kept marching its
+    // old waypoint after release from staging.
+    _grp setVariable ["MISSION_CORE_RECRUIT_LAST_WPS", +_wps, true];
+    diag_log format ["[MISSION_CORE] fn_snatch.applyAssaultWaypointsNet(server): applied+stamped %1 wps on %2 (netId %3, local %4)", count _wps, groupId _grp, netId _grp, local _grp];
+
     _grp setBehaviour _firstBeh;
     _grp setCombatMode _firstRoe;
     _grp setSpeedMode _firstSpeed;
     _grp setVariable ["MISSION_CORE_ORDER", "attack"];
     _grp setVariable ["MISSION_CORE_ATTACK_TARGET", _targetPos];
+    // Server-authoritative stamp: the commander client only ever writes MISSION_CORE_RECRUIT_LAST_WPS
+    // to its OWN local copy of a server-owned squad, so both release-from-staging paths (fn_recruit.sqf
+    // 1672 and fn_assaultServer.sqf 687) kept falling back to the STALE staging draft -- the drawn
+    // route showed up on the group's waypoint list on the map but the squad never marched it. Writing
+    // the drawn route here, on the machine that actually owns the released/staged squad, is what makes
+    // a release-from-staging pick the commander's freshly drawn route instead of "the same waypoint as
+    // before". Added this session.
+    _grp setVariable ["MISSION_CORE_RECRUIT_LAST_WPS", +_wps, true];
 };
