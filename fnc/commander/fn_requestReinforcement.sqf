@@ -71,16 +71,22 @@ MISSION_CORE_fnc_requestReinforcement = {
     private _receiverBonus = ((_receiverPrio / 100) * 0.5) max 0;
     private _groupCount = (((_importance min _providerImportance) + 1) * (0.5 + _receiverBonus)) min _senderCap;
     _groupCount = round _groupCount;
-    // Diminishing retake: when the players capture a marker, fewer and fewer reinforcements spawn
-    // to take it back. The response scales down across the marker's 20-min retake window until it
-    // reaches zero - then nothing more spawns here and the units already spawned disengage and go
-    // patrol the next closest REDFOR marker instead of feeding a dead zone.
-    if (!isNil "MISSION_CORE_CAPTURED_RETAKE" && { _locName in MISSION_CORE_CAPTURED_RETAKE }) then {
-        private _rv = MISSION_CORE_CAPTURED_RETAKE get _locName;
-        if (count _rv > 1 && { (_rv select 0) == EAST }) then {
-            private _age = time - (_rv select 1);
-            private _frac = (1 - (_age / 1200)) max 0;
-            _groupCount = round (_groupCount * _frac);
+    // Diminishing capture wind-down: when the players take a marker, fewer and fewer reinforcements
+    // spawn to take it back. The response scales down across the occupation hold until it reaches
+    // zero - then nothing more spawns here and the units already spawned disengage and go patrol the
+    // next closest REDFOR marker instead of feeding a dead zone. Clocks off
+    // MISSION_CORE_OCCUPATION's occupied-at timestamp (the authoritative capture record, written in
+    // fn_captureMarkerForPlayers); this used to read the retake table, which no longer exists. It
+    // scales the response DOWN only - it does not create contested state and does not cancel squads
+    // already in flight, so those still run until the zone pool is exhausted or maxed.
+    if (!isNil "MISSION_CORE_OCCUPATION") then {
+        private _occ = MISSION_CORE_OCCUPATION getOrDefault [_locName, []];
+        if (count _occ > 2) then {
+            private _occAge = time - (_occ select 2);
+            private _occWindow = ["captureWindDownWindow", 1200] call MISSION_CORE_fnc_tune;
+            if (_occAge >= 0 && { _occAge < _occWindow } && { (_occ select 1) == EAST }) then {
+                _groupCount = round (_groupCount * ((1 - (_occAge / _occWindow)) max 0));
+            };
         };
     };
     if (_groupCount > count _defenseCandidates) then { _groupCount = count _defenseCandidates; };
@@ -103,11 +109,17 @@ MISSION_CORE_fnc_requestReinforcement = {
             if (!isNull _grp) then {
                 _grp setVariable ["MISSION_CORE_MARKER_CENTER", _locPos];
                 [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-                private _wp = _grp addWaypoint [_locPos, 100];
-                _wp setWaypointType "MOVE";
-                _wp setWaypointSpeed "NORMAL";
-                _wp setWaypointBehaviour "AWARE";
-                _grp setCurrentWaypoint _wp;
+                // Delegate the movement decision to the same path neighborCounterAttack uses.
+                // sendCounterAttack trucks the squad when it is 700m+ out AND a player is actually
+                // near the target, dismounts 100m OUTSIDE the marker edge, drives the road route,
+                // and falls back to a foot advance when either condition fails. The single MOVE
+                // waypoint this replaced walked the whole way - through water, across walls - and
+                // delivered the squad on top of the players instead of onto the approach.
+                //
+                // Side effect worth knowing: on arrival these squads now run footArrival +
+                // footSquadPostAssault, so they patrol and take part in quadrant engagement rather
+                // than sitting on the marker. That is the intended consequence of sharing one path.
+                [_grp, _locPos, _mSize] call MISSION_CORE_fnc_sendCounterAttack;
                 _supplyGiven = _supplyGiven + 1;
                 if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
                 MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
@@ -125,7 +137,7 @@ MISSION_CORE_fnc_requestReinforcement = {
     // recipient only receives supply when the truck actually arrives (or it is lost if destroyed).
     // PERMANENT RULE: a contested recipient never gets a convoy - reinforcements still field men, but
     // no supply trucks roll into a zone the players are actively fighting over (see fn_startConvoy).
-    if (!isNil "MISSION_CORE_CONTESTED_MARKERS" && { _locName in MISSION_CORE_CONTESTED_MARKERS }) then {
+    if (!isNil "MISSION_CORE_CONTESTED" && { _locName in MISSION_CORE_CONTESTED }) then {
         diag_log format ["DYNAMIC SUPPLY REINF: %1 -> %2 supply convoy skipped - recipient contested", _providerName, _locName];
     } else {
         [_providerName, _locName, _supplyGiven] call MISSION_CORE_fnc_startConvoy;

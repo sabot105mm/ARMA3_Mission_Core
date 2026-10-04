@@ -1,5 +1,10 @@
 call compile preprocessFileLineNumbers "fnc\fn_spawnSelector.sqf";
 
+// Compiled on BOTH machines (also from initPlayerLocal.sqf). fn_spawn.sqf, fn_aiCommander.sqf
+// and fn_recruit.sqf all call MISSION_CORE_fnc_normaliseGroupSpeed, and they run on the server
+// while fn_recruit.sqf's editor copy runs on the client - so neither side can own it alone.
+call compile preprocessFileLineNumbers "fnc\fn_groupSpeed.sqf";
+
 if (isServer) then {
     MISSION_CORE_INITIALIZED = false;
     MISSION_CORE_LOCATIONS = [];
@@ -11,6 +16,14 @@ if (isServer) then {
     // Balance tuning: read MISSION_CORE_TUNE into MISSION_CORE_SETTINGS before any loop starts.
     call compile preprocessFileLineNumbers "fnc\fn_tune.sqf";
     call MISSION_CORE_fnc_loadTune;
+
+    // Shared road router for every supply movement system (supply convoys, ammo shipments).
+    // Compiled here, ahead of every consumer, because the polyline helpers it owns are called by
+    // recon and by the tank shipments as well. It defines no state at load time - the route cache
+    // is created on first use - so this costs nothing until something actually moves.
+    // The lazy road-network caches live in their own file so the router stays a router.
+    call compile preprocessFileLineNumbers "fnc\fn_routeCaches.sqf";
+    call compile preprocessFileLineNumbers "fnc\fn_supplyRoutes.sqf";
 
     diag_log "DYNAMIC OPS: Initializing mission core...";
 
@@ -226,6 +239,13 @@ if (isServer) then {
     // start reusing these confirmed flat, clear spots as soon as they are ready.
     [] spawn MISSION_CORE_fnc_buildSafeVehicleSpawns;
 
+    // 3b. Pre-resolve every marker pair's road route in the background, a couple per wake.
+    // The first convoy order of the session would otherwise pay a bounded 25k-node BFS at the
+    // worst possible moment. Spreading it here turns that into a warm cache. Must run after
+    // cacheTerrain and resolvePorts, so the queue covers every marker including the nested
+    // ports; it also waits on CACHED_POSITIONS itself before it starts.
+    [] spawn MISSION_CORE_fnc_routeWarmLoop;
+
     // 4. Initialize supply system for each location
     MISSION_CORE_LOCATION_SUPPLY = createHashMap;
     MISSION_CORE_SUPPLY_COOLDOWN = createHashMap;
@@ -259,7 +279,6 @@ if (isServer) then {
     MISSION_CORE_ZONE_FOCUS = "";
     MISSION_CORE_ZONE_FOCUS_TIME = 0;
     MISSION_CORE_COMMIT = createHashMap;
-    MISSION_CORE_REINF_COOLDOWN = createHashMap;
     MISSION_CORE_MANPOWER = createHashMap;
     MISSION_CORE_MANPOWER_CUTOFF = createHashMap;
     MISSION_CORE_OCCUPATION = createHashMap;
@@ -268,6 +287,12 @@ if (isServer) then {
     MISSION_CORE_MARKER_CASUALTIES = createHashMap;
     MISSION_CORE_RETREATED = createHashMap;
     MISSION_CORE_REINF_EXHAUSTED = createHashMap;
+    // Per-contested-marker reinforcement ledgers. Each contested marker is budgeted on its own -
+    // there is no zone handoff and no shared pool between markers.
+    MISSION_CORE_REINF_SENT = createHashMap;
+    // Pair latches [[provider, contested], true]: a provider that spent its limit on one marker is
+    // out for the rest of THAT contest and is never replaced, but stays free for every other one.
+    MISSION_CORE_REINF_PROVIDER_BLOCKED = createHashMap;
     // DEBUG: draw marker names + capture ellipses + transport unload rings on the map.
     MISSION_CORE_DEBUG_VISUALS = true;
     MISSION_CORE_REPLENISH_SPAWN_INDEX = createHashMap;
@@ -329,6 +354,7 @@ if (isServer) then {
     [] spawn MISSION_CORE_fnc_convoyLoop;
     [] spawn MISSION_CORE_fnc_reconLoop;
     [] spawn MISSION_CORE_fnc_tankOrderLoop;
+    [] spawn MISSION_CORE_fnc_armorOrderLoop;
     if (MISSION_CORE_DEBUG_VISUALS) then { [] spawn MISSION_CORE_fnc_debugVisuals; };
 
     // 6b. Kill event: when a tracked AI unit or vehicle is killed, a foot-squad or MBT cap slot

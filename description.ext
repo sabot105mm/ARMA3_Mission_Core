@@ -369,6 +369,69 @@ class DYNOPS_UnlockMenu
             text = "UNLOCK SELECTED UNIT";
             action = "[] call MISSION_CORE_fnc_unlockUnit;";
         };
+        // ---- tabs: unlock/equip vs move orders ----
+        class TabUnlock: RscButton
+        {
+            idc = 1589;
+            x = 0.22; y = 0.20; w = 0.26; h = 0.03;
+            text = "UNLOCK / EQUIP";
+            action = "[false] call MISSION_CORE_fnc_reconTab;";
+        };
+        class TabMove: RscButton
+        {
+            idc = 1590;
+            x = 0.52; y = 0.20; w = 0.26; h = 0.03;
+            text = "MOVE ORDERS";
+            action = "[true] call MISSION_CORE_fnc_reconTab;";
+        };
+        // ---- move orders panel (hidden until the MOVE tab is active) ----
+        class MovePanel: RscText
+        {
+            idc = 1591;
+            x = 0.22; y = 0.23; w = 0.56; h = 0.62;
+            colorBackground[] = {0,0,0,0};
+        };
+        class MoveSlotLbl: RscText
+        {
+            idc = -1;
+            x = 0.22; y = 0.235; w = 0.26; h = 0.025;
+            text = "RECON UNITS (UNLOCKED)";
+            colorText[] = {0.8,0.75,0.3,1};
+            colorBackground[] = {0,0,0,0};
+            sizeEx = 0.02;
+        };
+        class MoveSlotList: RscListBox
+        {
+            idc = 1593;
+            x = 0.22; y = 0.265; w = 0.26; h = 0.34;
+            onLBSelChanged = "_this call MISSION_CORE_fnc_reconMoveLoad;";
+        };
+        class MovePickBtn: RscButton
+        {
+            idc = 1594;
+            x = 0.22; y = 0.615; w = 0.26; h = 0.04;
+            text = "SET MOVE POINT ON MAP";
+            action = "[] call MISSION_CORE_fnc_reconMoveArm;";
+        };
+        class MoveRecallBtn: RscButton
+        {
+            idc = 1595;
+            x = 0.52; y = 0.615; w = 0.26; h = 0.04;
+            text = "RECALL TO HQ";
+            action = "[] call MISSION_CORE_fnc_reconMoveRecall;";
+        };
+        class MoveInfo: RscStructuredText
+        {
+            idc = 1592;
+            x = 0.52; y = 0.265; w = 0.26; h = 0.35;
+            text = "";
+            colorBackground[] = {0,0,0,0};
+            size = 0.022;
+            class Attributes
+            {
+                font = "PuristaLight";
+            };
+        };
         class EquipLbl: RscText
         {
             idc = -1;
@@ -992,206 +1055,7 @@ class DYNOPS_CommanderPrompt
     };
 };
 
-BLUFOR_FACTION = "BLU_F";
-REDFOR_FACTION = "OPF_F";
-B_MAX_TANKS = 4;
-O_MAX_TANKS = 4;
-DEFENSE_BUILD_POINTS_DEFAULT = 10000;
-DEFENSE_BUILD_POINTS_CAPTURE_REWARD = 50;
-
-class BLACKLIST {
-    class Units {
-        patterns[] = {"unarmed","Unarmed","Civilian","Citizen","Worker","Survivor","Hook"};
-    };
-    class Vehicles {
-        patterns[] = {"unarmed","Civilian","Quadbike","Van_02","Van_01"};
-    };
-    class Weapons {
-        patterns[] = {};
-    };
-};
-
-class LOCATION_TYPES {
-    class HQ        { prefix = "hq_";        type = "HQ";        priority = 1; };
-    class Airfield  { prefix = "airfield_";  type = "Airfield";  priority = 2; };
-    class Factory   { prefix = "factory_";   type = "Factory";   priority = 3; };
-    class Compound  { prefix = "compound_";  type = "Compound";  priority = 3; };
-    class Base      { prefix = "base_";      type = "Base";      priority = 2; };
-    class Town      { prefix = "town_";      type = "Town";      priority = 3; };
-    class Outpost   { prefix = "outpost_";   type = "Outpost";   priority = 4; };
-    class Depot     { prefix = "depot_";     type = "Depot";     priority = 4; };
-    class Port      { prefix = "port_";      type = "Port";      priority = 3; };
-    class Powerplant { prefix = "power_";    type = "Powerplant"; priority = 3; };
-    class Solar     { prefix = "solar_";     type = "Solar";     priority = 4; };
-};
-
-class DETECTION {
-    knowsAboutTrigger = 1.5;
-    detectionRadius = 500;
-    reinforceRadius = 800;
-};
-
-// === BALANCE TUNING (numbers only - tweak here, restart)
-// Mirrored verbatim from config\main.hpp -> read by MISSION_CORE_fnc_tune (fnc\fn_tune.sqf).
-class MISSION_CORE_TUNE {
-    footSquadRefMen = 6;
-    footSquadCapSquads = 10;
-
-    // ----- Marker size-weight (garrison scaling by footprint x importance) -----
-    sizeWeightMinArea = 20000;
-    sizeWeightMaxArea = 250000;
-    sizeWeightImpFloor = 0.2;
-    sizeWeightImpCeil = 1.0;
-    sizeWeightMinMen = 6;
-    sizeWeightMaxMen = 12;
-    vehicleMinImportance = 2;
-
-    proxSpawnRadius = 700;
-    proxDespawnDist = 2500;
-    proxDespawnExhausted = 1500;
-    proxMaxActive = 6;
-    closeMarkerHysteresis = 50;
-
-    defenseRadius = 1800;
-    defenseRingsPerSide = 2;
-    defenseMinSpacing = 25;
-
-    houseSpawnRadius = 80;
-    houseDespawnRadius = 100;
-    houseMaxActive = 6;
-    houseMaxPerHouse = 2;
-    houseOverrideRadius = 20;
-    housePriorityRadiusMult = 2;
-    cargoTowerSpawnRadius = 600;
-    cargoTowerDespawnRadius = 800;
-    cargoTowerMaxCount = 8;
-    cargoTowerCount1 = 4;
-    cargoTowerCount2 = 6;
-    cargoTowerCount3 = 8;
-
-    // ----- Quadrant engagement -----
-    quadrantPerTargetMax = 99;
-    quadrantReleasePerTick = 3;
-    quadrantBatchInterval = 90;
-    quadrantMinSpanDeg = 20;
-    quadrantSpanFalloffSize = 500;
-    quadrantReEvalInterval = 300;
-    quadrantGraceTime = 600;
-
-    huntDetectRange = 1200;
-    huntFaintKnows = 0.1;
-    huntContactKnows = 0.7;
-    huntIntelDecay = 60;
-    huntSweepSeconds = 600;
-    huntReSpotRadius = 30;
-    huntRetargetEvery = 45;
-    huntClearEvery = 120;
-    huntMountDist = 700;
-    huntSpawnMinPlayerDist = 500;
-    huntMaxContingents = 3;
-    huntSourceMaxRange = 2500;
-    huntCurvePace = 4;
-
-    // ----- Assault artillery -----
-    artyBracketSteps = 4;
-
-    armorLocalMbtImp3 = 2;
-    armorLocalMbtLo = 1;
-    armorOutpostMbtMax = 2;
-    armorReserveHold = 20;
-    armorGlobalFallback = 4;
-
-    tankBuildInterval = 600;
-    tankDepotCapSmall = 10;
-    tankDepotCapLarge = 20;
-    tankShipColumnMax = 3;
-    tankTravelSpeed = 18;
-    powerplantGlobalBonus = 0.2;
-    powerplantNeighborBonus = 0.5;
-    powerplantNeighborRange = 1500;
-    solarContribution = 0.25;
-
-    // ----- Manpower economy (ports -> bases -> requesting markers) -----
-    manpowerPerTickBase = 1;         // base manpower a port generates per 10s tick (6 men/min)
-    manpowerPortAccumTicks = 12;     // ticks a port accumulates before shipping to a requesting base
-    manpowerConvoySpeed = 14;        // abstract manpower convoy road speed m/s
-    manpowerPortSmall = 100;         // port full footprint (m) for the 0.3x size multiplier
-    manpowerPortLarge = 300;         // port full footprint (m) for the 0.9x size multiplier
-    manpowerPerUnit = 1;             // 1 manpower per soldier recruited
-    manpowerCaptureMult = 5;         // importance * this = manpower bonus on capture
-    manpowerPortPlayerIncome = 2;    // player pool: manpower per port per tick
-
-    // ----- Start state (recruit testing) -----
-    startManpower = 500;             // initial BLUFOR player-manpower pool on mission start (testing: lots)
-    startTanks = 20;                 // initial BLUFOR armor-pool tank points on mission start (testing: lots)
-
-    captureHoldSeconds = 600;
-    retakeWindowSeconds = 1200;
-    contestedGraceSeconds = 45;
-    neighborRange = 4000;
-    retreatDespawnFallback = 300;
-
-    scareApproachRadius = 2500;
-    scareApproachFrac = 0.5;
-    scareGroupMult = 0.15;
-    scareCasualtyErode = 0.75;
-    scareSizeRef = 400;
-    scareAskSomeFrac = 0.4;
-    scareAskAllFrac = 1.0;
-
-    assaultCooldown = 2400;
-    assaultSupportRange = 1500;
-    assaultTankBase = 2;
-    assaultTankPerImp = 0.5;
-    assaultTankMax = 4;
-    assaultSquadCapture = 1;
-    assaultLeaderQuads = 1;
-    assaultLeaderHunts = 1;
-
-    aggressionStart = 5;
-    aggressionMax = 100;
-    aggressionThreshold = 40;
-    aggressionDriftEvery = 600;
-    aggressionDriftAmt = 2;
-    aggressionCaptureImp = 6;
-    aggressionCaptureSize = 8;
-    aggressionConvoyPerSupply = 0.25;
-    aggressionDrainBase = 4;
-    aggressionDrainPerImp = 2;
-    aggressionDrainPerTank = 3;
-
-    replenishCapPerMarker = 5;
-    replenishRange = 2500;
-
-    objDefendRange = 2500;
-    objAttackNoteRange = 1500;
-    objNoteCooldown = 300;
-    objHouseThreatRadius = 600;
-    intelApproachRange = 400;
-
-    truckUnloadBuffer = 100;
-    truckUnloadPush = 50;
-    truckUnloadMaxPushes = 5;
-
-    // ----- Ordered-vehicle cleanup -----
-    stuckVehicleTime = 240;
-    stuckVehicleRadius = 150;
-    stuckVehicleTick = 30;
-
-    // ----- Drowned armour recovery (fn_vehicleDrowned.sqf) -----
-    // How many times a group may drown before the hull is written off. 1 = rescue
-    // never, write off on the first drowning. 2 = rescue once, then write off if it
-    // drowns again. Player-owned hulls are always rescued and ignore this entirely.
-    drownRescueLimit = 2;
-
-    // BLUFOR AI behavior (0 = disabled, 1 = enabled)
-    bluforAutoAttack = 0;
-    bluforPatrolMarkers = 0;
-
-    // Garrison tanks (player-recruited defenders) stay at their own marker: never pulled to
-    // ally-defend / counter-attack / assault. 1 = stay home (default), 0 = AI can re-task them.
-    garrisonStaysHome = 1;
-};
+#include "config\missionVars.hpp"
 
 class CfgDebriefing {
     class Victory { title = "MISSION COMPLETE"; subtitle = "All objectives secured"; description = "Excellent work"; };

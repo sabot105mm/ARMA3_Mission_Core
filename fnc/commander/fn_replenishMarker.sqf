@@ -54,6 +54,12 @@ MISSION_CORE_fnc_replenishMarker = {
     // Replenished squads converge on the contested marker center (group pos -> contested marker
     // center). The contested marker is the one closest to a player; multiple players attacking
     // different markers means multiple contested markers.
+    // SELF-EXCLUSION (no marker reinforces or counter-attacks itself): a marker may only support a
+    // NEIGHBOR's fight. If this marker's own name is the contested one nearest a player, it must not
+    // be picked - its garrison is already there, defending it. fn_getMarkerNeighbors enforces the
+    // same rule twice (not _locName, and not any contested zone) but this path bypasses that helper
+    // entirely, so it has to exclude itself here. With the origin marker removed, an empty
+    // candidate list correctly falls through to the SAD-to-own-center branch below.
     private _spawnPositions = [_locPos, _markerSize, _farDir, _edgeRadius, _side] call MISSION_CORE_fnc_findCoveredSpawns;
     private _contestedList = [_side] call MISSION_CORE_fnc_getContestedMarkers;
     private _cTarget = [];
@@ -66,7 +72,7 @@ MISSION_CORE_fnc_replenishMarker = {
                 private _pd = 1e10;
                 { private _d = _x distance _mPos; if (_d < _pd) then { _pd = _d; }; } forEach _playersA;
                 if (_pd < _bestPD) then { _bestPD = _pd; _cTarget = _x; };
-            } forEach _contestedList;
+            } forEach (_contestedList select { (_x select 0) != _locName });
         };
     };
     while { _toSpawn > 0 } do {
@@ -99,6 +105,7 @@ MISSION_CORE_fnc_replenishMarker = {
             diag_log format ["DYNAMIC REPLENISH: %1 absorbed +%2 men (%3) into staged counter-attack", _locName, _unitCount, _template select 0];
         } else {
         if (count _cTarget > 0) then {
+            // _cTarget is a getContestedMarkers row [_name,_pos,_size,_owner], so size is index 2.
             [_grp, _cTarget select 1, _cTarget select 2] call MISSION_CORE_fnc_sendCounterAttack;
             diag_log format ["DYNAMIC REPLENISH: %1 +%2 men (%3) -> contested %4 (%5m from group)", _locName, _unitCount, _template select 0, _cTarget select 0, round (_spawnPos distance (_cTarget select 1))];
         } else {

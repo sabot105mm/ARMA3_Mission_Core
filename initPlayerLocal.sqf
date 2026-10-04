@@ -31,6 +31,9 @@ MISSION_CORE_DEFENSE_POINTS_CAPTURE_REWARD = getNumber (missionConfigFile >> "DE
 // scripts (transport_unload.sqf) can run on a player-owned group's client.
 call compile preprocessFileLineNumbers "fnc\commander\fn_stopForDismount.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_playNoteSound.sqf";
+// Shared helper, compiled ahead of its client-side consumer (fn_recruit.sqf calls
+// MISSION_CORE_fnc_normaliseGroupSpeed). The server compiles the same file from fn_init.sqf.
+call compile preprocessFileLineNumbers "fnc\fn_groupSpeed.sqf";
 call compile preprocessFileLineNumbers "fnc\fn_recruit.sqf";
 call compile preprocessFileLineNumbers "fnc\fn_manpower.sqf";
 [] call MISSION_CORE_fnc_initRecruitment;

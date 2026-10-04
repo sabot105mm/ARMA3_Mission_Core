@@ -145,7 +145,7 @@ MISSION_CORE_fnc_applyAssaultWaypointsNet = {
 
     _grp setBehaviour _firstBeh;
     _grp setCombatMode _firstRoe;
-    _grp setSpeedMode _firstSpeed;
+    _grp setSpeedMode ([_firstSpeed] call MISSION_CORE_fnc_normaliseGroupSpeed);
     _grp setVariable ["MISSION_CORE_ORDER", "attack"];
     _grp setVariable ["MISSION_CORE_ATTACK_TARGET", _targetPos];
     // Server-authoritative stamp: the commander client only ever writes MISSION_CORE_RECRUIT_LAST_WPS

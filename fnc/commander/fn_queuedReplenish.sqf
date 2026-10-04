@@ -45,7 +45,9 @@ MISSION_CORE_fnc_queuedReplenish = {
                 private _pd = 1e10;
                 { private _d = _x distance _mPos; if (_d < _pd) then { _pd = _d; }; } forEach _playersA;
                 if (_pd < _bestPD) then { _bestPD = _pd; _cTarget = _x; };
-            } forEach _contestedList;
+            // SELF-EXCLUSION: same rule as fn_replenishMarker - a marker only supports a NEIGHBOR's
+            // fight, never its own. Empty candidate list falls through to SAD-to-own-center.
+            } forEach (_contestedList select { (_x select 0) != _locName });
         };
     };
     // SUPPLY-REUSE HOOK (tried unconditionally, mirroring fn_replenishMarker): while a staged
@@ -57,6 +59,7 @@ MISSION_CORE_fnc_queuedReplenish = {
         diag_log format ["DYNAMIC QUEUE: absorbed +%2 men (%1) into staged counter-attack", _locName, _template select 2];
     } else {
         if (count _cTarget > 0) then {
+            // _cTarget is a getContestedMarkers row [_name,_pos,_size,_owner], so size is index 2.
             [_grp, _cTarget select 1, _cTarget select 2] call MISSION_CORE_fnc_sendCounterAttack;
             diag_log format ["DYNAMIC QUEUE: released queued replenish %1 +%2 men -> contested %3", _locName, _template select 2, _cTarget select 0];
         } else {

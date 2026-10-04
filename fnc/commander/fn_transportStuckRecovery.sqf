@@ -191,10 +191,22 @@ MISSION_CORE_fnc_transportStuckStep = {
     // target the lane falls back to the squad's own order, and at the end of the ladder the cargo
     // keeps its existing order instead of being re-tasked.
     if (count _tgt < 2) then { _tgt = []; };
-    // Target size from the contested list, which is the only source shaped [name, pos, size, side].
+    // TWO SEPARATE QUESTIONS, TWO SEPARATE VARS.
+    // (1) which markers are contested - MISSION_CORE_CONTESTED, written solely by fn_isMarkerContested.
+    // (2) their positions - MISSION_CORE_CACHED_POSITIONS. The 100m match and the size lookup below
+    //     are geometry, not contested state, so the cache answers them.
     private _entry = [];
-    if (count _tgt >= 2) then {
-        _entry = ([side _truck] call MISSION_CORE_fnc_getContestedMarkers) select { (_x select 1) distance2D _tgt <= 100 } param [0, []];
+    if (count _tgt >= 2 && { !isNil "MISSION_CORE_CONTESTED" } && { !isNil "MISSION_CORE_CACHED_POSITIONS" }) then {
+        {
+            private _n = _x;
+            private _i = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _n };
+            if (_i >= 0) then {
+                private _row = MISSION_CORE_CACHED_POSITIONS select _i;
+                if ((_row select 1) distance2D _tgt <= 100) then {
+                    _entry = [_row select 0, _row select 1, (if (count _row > 8) then { _row select 8 } else { [200, 200] })];
+                };
+            };
+        } forEach (keys MISSION_CORE_CONTESTED);
     };
     private _tgtName = if (count _entry > 0) then { _entry select 0 } else { "" };
     private _tgtSize = if (count _entry > 2 && { (_entry select 2) isEqualType [] }) then { _entry select 2 } else { [200, 200] };

@@ -18,7 +18,18 @@ MISSION_CORE_fnc_aiCommanderLoop = {
         // MISSION_CORE_ASSAULT_CONTEST, whose presence radius is ellipse+250m, while this list
         // includes an assault squad at marker-radius+1000m - so a marker read contested for minutes
         // before the commander would act on it.)
-        private _eastZonesTick = [EAST] call MISSION_CORE_fnc_getContestedMarkers;
+        // SINGLE SOURCE OF TRUTH: WHICH markers are contested, computed ONCE per tick from
+        // MISSION_CORE_CONTESTED - written solely by fn_isMarkerContested. The commander asks the
+        // same var the replenish gate, capture path and status log ask, so its go-ahead cannot
+        // disagree with what the player sees as "contested". This is a list of NAMES only; every
+        // positional test in this loop reads _locPos from MISSION_CORE_CACHED_POSITIONS, which is a
+        // separate question, not a contested one.
+        private _eastZonesTick = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
+
+        // Dormant-zone reinforcement budget bleed-back. Once per tick and OUTSIDE the marker sweep
+        // below, so it costs one map pass rather than one per marker. Zones that are actively
+        // contested are skipped, so this only ever touches budget a zone is not currently spending.
+        if (!isNil "MISSION_CORE_fnc_reinforceDecayBudget") then { call MISSION_CORE_fnc_reinforceDecayBudget; };
 
         {
             private _loc = _x;
@@ -115,7 +126,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
             // USER RULE (simple): a marker on the side's CONTESTED ZONE LIST is the go-ahead for the
             // neighbors' counter-attack - no separate contact/knowsAbout requirement. This is the
             // same list the player sees as contested, so the commander acts the instant it is flagged.
-            if (_locOwner == EAST && { _eastZonesTick findIf { (_x select 0) == _markerName } != -1 }) then {
+            if (_locOwner == EAST && { _markerName in _eastZonesTick }) then {
                 _detected = true;
                 if (isNull _nearestPlayer) then {
                     private _maps = [];
@@ -272,7 +283,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                 // mech + tanks) and SADs that zone via the same assemble/transport pipeline. 10min
                 // cooldown per zone. PERMANENT RULE: every contested zone - all of them, no per-player
                 // cap - gets its own support force.
-                private _isZone = (_eastZonesTick findIf { (_x select 0) == _markerName } != -1);
+                private _isZone = _markerName in _eastZonesTick;
                 private _bluforAutoAttack = ["bluforAutoAttack", 0] call MISSION_CORE_fnc_tune;
                 if (_bluforAutoAttack > 0 && { _locOwner == EAST && { _isZone } }) then {
                     if (isNil "MISSION_CORE_BLUFOR_SUPPORT_COOLDOWN") then { MISSION_CORE_BLUFOR_SUPPORT_COOLDOWN = createHashMap; };

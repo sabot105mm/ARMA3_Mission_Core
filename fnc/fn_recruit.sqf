@@ -709,7 +709,9 @@ MISSION_CORE_fnc_recruitMenuPopulateDefend = {
     // All BLUFOR markers, flagged when contested or under AI assault.
     private _markerList = _disp displayCtrl 1623;
     lbClear _markerList;
-    if (isNil "MISSION_CORE_CONTESTED_MARKERS") then { MISSION_CORE_CONTESTED_MARKERS = []; };
+    // Contested state comes from MISSION_CORE_CONTESTED (publicVariable'd in fn_isMarkerContested) - the
+    // one value, the one writer. No local broadcast copy that can lag or disagree with it.
+    if (isNil "MISSION_CORE_CONTESTED") then { MISSION_CORE_CONTESTED = createHashMap; };
     if (isNil "MISSION_CORE_ASSAULT_TARGET") then { MISSION_CORE_ASSAULT_TARGET = ""; };
     private _bluLocs = MISSION_CORE_LOCATIONS select { (_x select 5) == WEST };
     _bluLocs = [_bluLocs, [], { player distance ((_x select 1) select 0) }, "ASCEND"] call BIS_fnc_sortBy;
@@ -719,7 +721,7 @@ MISSION_CORE_fnc_recruitMenuPopulateDefend = {
         private _name = _x select 0;
         private _label = if (count _x > 8 && {(_x select 8) != ""}) then { _x select 8 } else { _name };
         private _imp = _x select 7;
-        private _underAttack = (_name in MISSION_CORE_CONTESTED_MARKERS) || { _name == MISSION_CORE_ASSAULT_TARGET };
+        private _underAttack = (_name in MISSION_CORE_CONTESTED) || { _name == MISSION_CORE_ASSAULT_TARGET };
         private _suffix = if (_underAttack) then { "  [UNDER ATTACK]" } else { "" };
         private _idx = _markerList lbAdd format ["%1 [Imp %2]%3", _label, _imp, _suffix];
         _markerList lbSetData [_idx, _name];
@@ -1182,7 +1184,7 @@ MISSION_CORE_fnc_applyAssaultWaypoints = {
     // waypoints and when released before the staging area.
     _grp setBehaviour _firstBeh;
     _grp setCombatMode _firstRoe;
-    _grp setSpeedMode _firstSpeed;
+    _grp setSpeedMode ([_firstSpeed] call MISSION_CORE_fnc_normaliseGroupSpeed);
 };
 
 // -------------------------------------------------------------------
@@ -1761,7 +1763,8 @@ MISSION_CORE_fnc_monitorBluforStaging = {
             sleep 5;
             if (isNil "MISSION_CORE_BLUFOR_STAGED") then { continue; };
             if (count MISSION_CORE_BLUFOR_STAGED == 0) then { continue; };
-            private _contested = if (!isNil "MISSION_CORE_CONTESTED_MARKERS") then { +MISSION_CORE_CONTESTED_MARKERS } else { [] };
+            // Contested NAMES from MISSION_CORE_CONTESTED (the one value, publicVariable'd server-side).
+            private _contested = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
             if (count _contested > 0) then {
                 [_contested] call MISSION_CORE_fnc_releaseBluforStaged;
             };
@@ -1966,8 +1969,11 @@ MISSION_CORE_fnc_wpPanelUpdateCount = {
     private _roeIdx = ["GREEN","YELLOW","RED"] find MISSION_CORE_RECRUIT_WP_ROE;
     private _roeName = if (_roeIdx >= 0) then { _roeNames select _roeIdx } else { MISSION_CORE_RECRUIT_WP_ROE };
 
+    // Index against MISSION_CORE_GROUP_SPEEDS_SHARED (not a second hand-written list) so this
+    // display can never drift from the editor cycle again - it previously searched for "FAST"
+    // while labelling the same slot "Full", so a FULL speed rendered as the raw "FULL".
     private _speedNames = ["Limited","Normal","Full"];
-    private _speedIdx = ["LIMITED","NORMAL","FAST"] find MISSION_CORE_RECRUIT_WP_SPEED;
+    private _speedIdx = MISSION_CORE_GROUP_SPEEDS_SHARED find MISSION_CORE_RECRUIT_WP_SPEED;
     private _speedName = if (_speedIdx >= 0) then { _speedNames select _speedIdx } else { MISSION_CORE_RECRUIT_WP_SPEED };
 
     private _behNames = ["Careless","Safe","Aware","Combat","Stealth"];
@@ -2046,7 +2052,12 @@ MISSION_CORE_fnc_recruitAttackOpenWP = {
         params ["_disp", "_key"];
         private _typeCycle = ["MOVE","SAD","UNLOAD","GUARD","HOLD"];
         private _roeCycle = ["GREEN","YELLOW","RED"];
-        private _speedCycle = ["LIMITED","NORMAL","FAST"];
+        // Only speeds legal for BOTH setWaypointSpeed and setSpeedMode, owned by
+        // fn_groupSpeed.sqf so this cycle and the HUD label list cannot drift apart. The old
+        // local list was ["LIMITED","NORMAL","FAST"]: "FAST" is in neither enum, and the list
+        // omitted the default (FULL), so `find` returned -1 and R/E wrapped onto an illegal
+        // value that later threw "Unknown enum value" at setSpeedMode.
+        private _speedCycle = MISSION_CORE_GROUP_SPEEDS_SHARED;
         private _behCycle = ["CARELESS","SAFE","AWARE","COMBAT","STEALTH"];
         private _handled = false;
         switch (_key) do {

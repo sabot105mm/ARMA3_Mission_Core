@@ -53,6 +53,20 @@ MISSION_CORE_fnc_cacheTerrain = {
     _cached
 };
 
+// Fast name -> record index into MISSION_CORE_CACHED_POSITIONS, so name lookups
+// (route planning, recon, defense assignment, manpower - roughly a hundred call
+// sites mission-wide) are hashmap hits instead of linear scans. Built lazily on
+// first use. resolvePorts invalidates it (sets nil) after pruning nested ports,
+// so the next call rebuilds from the final list.
+MISSION_CORE_fnc_locIndex = {
+    if (isNil "MISSION_CORE_CACHED_POSITIONS") exitWith { createHashMap; };
+    if (isNil "MISSION_CORE_NAME_INDEX") then {
+        MISSION_CORE_NAME_INDEX = createHashMap;
+        { MISSION_CORE_NAME_INDEX set [_x select 0, _forEachIndex]; } forEach MISSION_CORE_CACHED_POSITIONS;
+    };
+    MISSION_CORE_NAME_INDEX
+};
+
 MISSION_CORE_fnc_checkFlat = {
     private _pos = _this select 0;
     private _flatCount = 0;

@@ -31,6 +31,11 @@ MISSION_CORE_fnc_disengageToNextMarker = {
             if (_headingThere) then {
                 [_x] call MISSION_CORE_fnc_clearGroupWaypoints;
                 _x setVariable ["MISSION_CORE_ORDER", ""];
+    // A squad released to stand by is IDLE - it is available for work. ORDER is cleared above but
+    // IDLE was not, so without this a squad disengaged while committed stayed IDLE=false forever and
+    // was invisible to every subsystem that asks who is free (fn_aiCommanderLoop, and reinforcement's
+    // MISSION_CORE_fnc_claimReinforcementSquad). Hunt is unaffected: it does not read IDLE.
+    _x setVariable ["MISSION_CORE_IDLE", true];
                 _x setVariable ["MISSION_CORE_ATTACK_TARGET", _nextPos];
                 _x setVariable ["MISSION_CORE_MARKER_CENTER", _nextPos];
                 _x setVariable ["MISSION_CORE_MARKER_SIZE", _nextSize];

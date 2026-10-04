@@ -187,7 +187,7 @@ MISSION_CORE_fnc_scanMarkers = {
         if (isNull player) then { [0,0,0] } else { getPos player };
     };
 
-    // Process manually placed markers from description.ext LOCATION_TYPES
+    // Process manually placed markers from missionVars.hpp LOCATION_TYPES
     for "_i" from 0 to (count _locationTypes - 1) do {
         private _type = _locationTypes select _i;
         private _prefix = getText (_type >> "prefix");

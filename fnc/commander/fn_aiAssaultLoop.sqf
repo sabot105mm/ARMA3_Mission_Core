@@ -199,7 +199,11 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                 private _despawnTooFar = [];
                 // Live contested zones for the attacking side - used to judge whether an existing
                 // one-way order is still "live" (actively defending a fought-over marker) or stale.
-                private _contestedList = [EAST] call MISSION_CORE_fnc_getContestedMarkers;
+                // WHICH markers are contested comes ONLY from MISSION_CORE_CONTESTED (written solely by
+                // fn_isMarkerContested). NAMES only - the "am I standing on a live zone" test below
+                // needs positions, which it reads from MISSION_CORE_CACHED_POSITIONS, a separate var
+                // answering a separate question.
+                private _contestedNames = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
                 {
                     if (!(_x getVariable ["MISSION_CORE_REDFOR", false])) then {
                         if ((leader _x) distance _locPos < 3000) then { diag_log format ["AI ASSAULT: %1 skip (not redfor)", groupId _x]; };
@@ -237,7 +241,16 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                                     _stale = true;
                                 } else {
                                     private _onThisAssault = (_at distance2D _targetPos) <= 300;
-                                    private _onLiveZone = (_contestedList findIf { (_x select 1) distance2D _at <= 250 }) != -1;
+                                    // "Am I standing on a contested marker?" - the NAMES come from MISSION_CORE_CONTESTED and the
+                // 250m position test from MISSION_CORE_CACHED_POSITIONS. Two vars, two questions.
+                private _onLiveZone = false;
+                if (!isNil "MISSION_CORE_CACHED_POSITIONS") then {
+                    _onLiveZone = (_contestedNames) findIf {
+                        private _n = _x;
+                        private _zi = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _n };
+                        _zi >= 0 && { ((MISSION_CORE_CACHED_POSITIONS select _zi) select 1) distance2D _at <= 250 }
+                    } != -1;
+                };
                                     _stale = !_onThisAssault && { !_onLiveZone };
                                 };
                             };
@@ -406,6 +419,11 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                     };
                     private _srcLbl2 = [_sourceName] call MISSION_CORE_fnc_getLocationLabel;
                     private _tgtLbl2 = [_targetName] call MISSION_CORE_fnc_getLocationLabel;
+                    // Declared here rather than read from upstream: the only gate on this
+                    // block is the armor wait at L334-337, so _tanksArrived already says
+                    // which of the two conditions released the wave. It was undefined at the
+                    // log line below, which threw every time an assault launched.
+                    private _releaseReason = if (_tanksArrived) then { "armor delivered" } else { "armor deadline" };
                     diag_log format ["AI ASSAULT WAVE: %1 -> %2 arriving now (release: %3)", _srcLbl2, _tgtLbl2, _releaseReason];
                     ["DynOps_AssaultWarn",
                         ["ASSAULT UNDERWAY", format ["Enemy forces from %1 are attacking %2!\nDefend the position!", _srcLbl2, _tgtLbl2]]

@@ -55,7 +55,7 @@ MISSION_CORE_fnc_sendCounterAttack = {
     };
     // Never send the squad to the map origin [0,0,0] or into the sea.
     _targetPos = [_targetPos, getPos (leader _group)] call MISSION_CORE_fnc_safeWaypointPos;
-    if (_blocked) exitWith {};
+    if (_blocked) exitWith { false };
     _group setVariable ["MISSION_CORE_IDLE", false];
     _group setVariable ["MISSION_CORE_PATROLLING", false];
     _group setVariable ["MISSION_CORE_ORDER", _order];
@@ -163,26 +163,14 @@ MISSION_CORE_fnc_sendCounterAttack = {
         } forEach units _group;
         [_group, _targetPos, "GETOUT", _advSpeed, "GREEN", _unloadDist] call _addAssaultWps;
         if (!isNull _drvGrp) then {
-            [_drvGrp] call MISSION_CORE_fnc_clearGroupWaypoints;
-            // CARELESS + GREEN so the truck drives straight to the drop ring instead of stopping
-            // to engage en route (a stationary truck gives passengers a chance to bail out early)
-            _drvGrp setCombatMode "GREEN";
-            _drvGrp setBehaviour "CARELESS";
-            // MOVE first (pre-1.22 rule), then TRANSPORT UNLOAD at the same ring to drop cargo.
-            // The waypoint script lives on the DRIVER's TR UNLOAD (not the passenger GETOUT) so the
-            // truck's own unload event is script-driven and stays in sync with the dismount - a bare
-            // native TR UNLOAD on the driver can desync from the passenger group's scripted dismount.
-            private _wpDrvMove = _drvGrp addWaypoint [_targetPos, _unloadDist];
-            _wpDrvMove setWaypointType "MOVE";
-            _wpDrvMove setWaypointSpeed _advSpeed;
-            _wpDrvMove setWaypointBehaviour "CARELESS";
-            _wpDrvMove setWaypointScript "fnc\commander\transport_assaultUnload.sqf";
-            private _wpUnload = _drvGrp addWaypoint [_targetPos, _unloadDist];
-            _wpUnload setWaypointType "TR UNLOAD";
-            _wpUnload setWaypointSpeed _advSpeed;
-            _wpUnload setWaypointBehaviour "CARELESS";
-            _wpUnload setWaypointScript "fnc\commander\transport_assaultUnload.sqf";
-            _drvGrp setCurrentWaypoint _wpDrvMove;
+            // Staging point near the origin, then the drop ring and its scripted unload. This used
+            // to build a full fn_supplyRoute road path and add every node as a waypoint, but the
+            // driver was then pointed at the drop ring and drove the whole route past unused: the
+            // computed nodes were discarded. One staging waypoint clears the origin marker and the
+            // driver heads straight for the ring from there, which is what the pre-route single MOVE
+            // did. The router itself is untouched - supply, convoy, ammo, port and armor all still
+            // use it; only this combat caller stopped pretending to route.
+            [_drvGrp, getPos _truck, _targetPos, _advSpeed, _unloadDist] call MISSION_CORE_fnc_buildTruckDriverWps;
         };
         [_group, _truck, _side, _targetPos, 1, _unloadDist] spawn MISSION_CORE_fnc_splitAfterDismount;
     };
@@ -192,8 +180,18 @@ MISSION_CORE_fnc_sendCounterAttack = {
         // Already vehicle-mounted
         private _vehHasGun = [_veh] call MISSION_CORE_fnc_hasMountedGun;
         if (_vehHasGun || { !([_veh] call MISSION_CORE_fnc_isSoftTransport) }) then {
-            // Gun vehicle or armor: crew stays in - MOVE to the advance point, then SAD
+            // Gun vehicle or armor: crew stays in - MOVE to the advance point, then SAD.
+            // These self-drive: mountInfantry puts their driver in the SQUAD group, not a dedicated
+            // driver group, so fn_buildTruckDriverWps (which ends in TR UNLOAD) does not apply. They
+            // still get the same staging point, added to the squad group ahead of the assault
+            // waypoints so the crew clears its origin marker before driving the long leg.
+            private _vehStage = [getPos _veh, _dismountPos] call MISSION_CORE_fnc_transportStagePos;
+            private _wpVehStage = _group addWaypoint [_vehStage, 15];
+            _wpVehStage setWaypointType "MOVE";
+            _wpVehStage setWaypointSpeed _advSpeed;
+            _wpVehStage setWaypointBehaviour "CARELESS";
             [_group, _dismountPos, "MOVE", _advSpeed, _combatMode] call _addAssaultWps;
+            _group setCurrentWaypoint _wpVehStage;
         } else {
             // Unarmed truck-mounted foot squad: move to 100m short of the contested center,
             // disembark (GETOUT + TRANSPORT UNLOAD), then SAD. GREEN (hold fire) while riding.
@@ -210,8 +208,16 @@ MISSION_CORE_fnc_sendCounterAttack = {
             if (!isNull _truck) then {
                 diag_log format ["AI COMMAND: %1 foot patrol (%2 men) from %3 boarding %4 -> contested %5", groupId _group, count units _group, _originName, typeOf _truck, _targetPos];
                 if ([_truck] call MISSION_CORE_fnc_hasMountedGun) then {
-                    // Gun truck - fight from the vehicle, crew stays in
+                    // Gun truck - fight from the vehicle, crew stays in. Self-driven (the driver is
+                    // in the squad group), so it gets the staging waypoint on that group ahead of
+                    // the assault waypoints - same treatment as the mounted gun/armor branch above.
+                    private _gtStage = [getPos _truck, _dismountPos] call MISSION_CORE_fnc_transportStagePos;
+                    private _wpGtStage = _group addWaypoint [_gtStage, 15];
+                    _wpGtStage setWaypointType "MOVE";
+                    _wpGtStage setWaypointSpeed _advSpeed;
+                    _wpGtStage setWaypointBehaviour "CARELESS";
                     [_group, _dismountPos, "MOVE", _advSpeed, _combatMode] call _addAssaultWps;
+                    _group setCurrentWaypoint _wpGtStage;
                 } else {
                     // After everyone dismounts, split the foot infantry into a separate group so they
                     // never re-board; the driver stays with the truck and drives it away
@@ -232,4 +238,9 @@ MISSION_CORE_fnc_sendCounterAttack = {
             [_group, _targetPos, _side] spawn MISSION_CORE_fnc_footSquadPostAssault;
         };
     };
+    // Report acceptance. Every refusal above returns false; reaching here means the squad actually
+    // marched. Callers that dispatch a group and ignore the result are unaffected, but a caller that
+    // must know whether the march HAPPENED - claiming a squad off a garrison and falling back to
+    // conjuring one when the claim is refused - otherwise has no way to tell.
+    true
 };

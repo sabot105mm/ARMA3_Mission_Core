@@ -12,7 +12,23 @@ MISSION_CORE_fnc_despawnLocation = {
         MISSION_CORE_TANK_PARK set [_locName, []];
     };
     // The marker left the battle - free its reinforcement spawn slot so a fresh marker can claim it.
-    [_locName] call MISSION_CORE_fnc_releaseSpawnerSlot;
+    // Spawn slots are keyed [_side, markerName], and despawnLocation is called with only a name and
+    // position, so the side is recovered from the cached position row (index 4) - the same lookup
+    // fn_reinforceActions uses. Without it the release would miss and the slot would leak.
+    private _slotSide = sideUnknown;
+    if (!isNil "MISSION_CORE_CACHED_POSITIONS") then {
+        // Prefix `isEqualType [...]` before && is a precedence trap (unary binds tighter than && and the
+        // expression fails to parse). The infix `(_x isEqualType [])` form is the safe one.
+        private _slotRow = MISSION_CORE_CACHED_POSITIONS select {
+            (_x isEqualType []) && { count _x > 4 } && { (_x select 0) == _locName }
+        };
+        if (count _slotRow > 0) then { _slotSide = (_slotRow select 0) select 4; };
+    };
+    if (_slotSide != sideUnknown) then {
+        [_locName, _slotSide] call MISSION_CORE_fnc_releaseSpawnerSlot;
+    } else {
+        diag_log format ["DYNAMIC SPAWNER TRACK: %1 despawn could not resolve side - slot not released", _locName];
+    };
     diag_log format ["DYNAMIC SPAWN: despawning %1", _locName];
     if (_locName in allMapMarkers) then {
         _locName setMarkerAlpha 0;

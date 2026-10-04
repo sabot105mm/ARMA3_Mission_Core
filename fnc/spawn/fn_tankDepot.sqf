@@ -370,3 +370,34 @@ MISSION_CORE_fnc_consumePoolTankForSide = {
 MISSION_CORE_fnc_publishArmorPool = {
     missionNamespace setVariable ["MISSION_CORE_ARMOR_POOL", [WEST] call MISSION_CORE_fnc_poolTanksForSide, true];
 };
+// Destroy an armor shipment. Sits here beside MISSION_CORE_TANK_SHIPMENTS and
+// MISSION_CORE_TANK_INFLIGHT, the reservation the depot takes when an order is
+// placed, so that no system outside the tank pipeline has to know a reservation
+// exists. Recon strike used to delete the record and decrement the reservation
+// itself - the one place in the mission where a foreign system could silently
+// over- or under-book column capacity.
+//
+// A live column is killed where it stands and the order loop resolves it; an
+// abstract one is dropped outright, and that is the case that has to give the
+// reservation back. Clamped at zero because an over-release would hand the depot
+// free capacity it never had.
+MISSION_CORE_fnc_armorShipmentLose = {
+    params ["_index", ["_renown", 0]];
+    if (!(_index isEqualType 1) || { _index < 0 || { _index >= count MISSION_CORE_TANK_SHIPMENTS } }) exitWith { false };
+    if (isNil "MISSION_CORE_TANK_INFLIGHT") then { MISSION_CORE_TANK_INFLIGHT = createHashMap; };
+    private _c = MISSION_CORE_TANK_SHIPMENTS select _index;
+    if (count _c < 10) exitWith { false };
+    private _side = _c select 0;
+    private _colCount = _c select 4;
+    if (!(_colCount isEqualType 1) || { _colCount <= 0 }) exitWith { false };
+    if ((_c select 9) == 0) then {
+        MISSION_CORE_TANK_INFLIGHT set [_side, ((MISSION_CORE_TANK_INFLIGHT getOrDefault [_side, 0]) - _colCount) max 0];
+    } else {
+        { if (!isNull _x && { alive _x }) then { _x setDamage 1; }; } forEach (_c select 10);
+    };
+    if (_renown > 0) then { [_renown] call MISSION_CORE_fnc_awardRenown; };
+    [_colCount, format ["armor convoy %1 -> %2", _c select 1, _c select 2]] call MISSION_CORE_fnc_convoyLossAggression;
+    MISSION_CORE_TANK_SHIPMENTS set [_index, []];
+    diag_log format ["ARMOR: shipment %1 -> %2 lost (column of %3)", _c select 1, _c select 2, _colCount];
+    true
+};

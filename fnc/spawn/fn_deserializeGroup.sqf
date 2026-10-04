@@ -44,7 +44,7 @@ MISSION_CORE_fnc_deserializeGroup = {
     _behaviour = if (_behaviour in ["CARELESS", "SAFE", "AWARE", "COMBAT", "STEALTH"]) then { _behaviour } else { "AWARE" };
     _grp setBehaviour _behaviour;
     _grp setCombatMode _combatMode;
-    _grp setSpeedMode _speed;
+    _grp setSpeedMode ([_speed] call MISSION_CORE_fnc_normaliseGroupSpeed);
 
     _grp setVariable ["MISSION_CORE_REDFOR", true];
     _grp setVariable ["MISSION_CORE_IDLE", _idle];

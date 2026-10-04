@@ -445,13 +445,24 @@ MISSION_CORE_fnc_updateQuadrantsForPlayer = {
     if (isNull _player) exitWith {};
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith {};
     if (isNil "MISSION_CORE_CACHED_POSITIONS") exitWith {};
-    private _zones = [EAST] call MISSION_CORE_fnc_getContestedMarkers;
-    if (count _zones == 0) exitWith {};
-    // The single contested zone this player drives (closest of the side's zones to the sight).
-    private _zone = _zones select 0;
-    private _zd = _zone select 1 distance2D _pos;
-    { private _d = _x select 1 distance2D _pos; if (_d < _zd) then { _zd = _d; _zone = _x; }; } forEach _zones;
-    private _markerName = _zone select 0;
+    // TWO SEPARATE QUESTIONS, TWO SEPARATE VARS.
+    // (1) which markers are contested - MISSION_CORE_CONTESTED, written solely by fn_isMarkerContested.
+    // (2) their positions - MISSION_CORE_CACHED_POSITIONS, for the closest-zone-to-the-sight pick and
+    //     for the size lookup below.
+    if (isNil "MISSION_CORE_CONTESTED") exitWith {};
+    if (isNil "MISSION_CORE_CACHED_POSITIONS") exitWith {};
+    private _markerName = "";
+    private _zd = 1e10;
+    {
+        private _n = _x;
+        private _i = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _n };
+        if (_i >= 0) then {
+            private _d = ((MISSION_CORE_CACHED_POSITIONS select _i) select 1) distance2D _pos;
+            if (_d < _zd) then { _zd = _d; _markerName = _n; };
+        };
+    } forEach (keys MISSION_CORE_CONTESTED);
+    if (_markerName == "") exitWith {};
+    // The single contested zone this player drives (closest contested marker to the sight).
     private _idx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _markerName };
     if (_idx < 0) exitWith {};
     private _loc = MISSION_CORE_CACHED_POSITIONS select _idx;

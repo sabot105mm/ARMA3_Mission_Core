@@ -15,12 +15,17 @@ MISSION_CORE_fnc_replenishLoop = {
         private _has70 = { (_x select 0) == "loc_NameLocal_70" } count _candidates > 0;
         diag_log format ["DYNAMIC CAPTURE FILTER: players=%1 candidates=%2 has70=%3", count _players, count _candidates, _has70];
         // Contested markers (player actively engaging the garrison) get replenished first
-        _candidates = [_candidates, [], { if ([(_x select 1), (_x select 4), (_x select 0)] call MISSION_CORE_fnc_isMarkerContested) then { 0 } else { 1 } }, "ASCEND"] call BIS_fnc_sortBy;
+        _candidates = [_candidates, [], { if ([(_x select 1), (_x select 4), (_x select 0), "replenishLoop"] call MISSION_CORE_fnc_isMarkerContested) then { 0 } else { 1 } }, "ASCEND"] call BIS_fnc_sortBy;
         {
             private _loc = _x;
             private _locName = _loc select 0;
             private _locPos = _loc select 1;
             private _owner = _loc select 4;
+            // Spawn slots are keyed [_side, markerName] (fn_spawnerSlotFree), and this loop never had
+            // a side in scope under that name. _owner IS the side - index 4 of the cached row - so
+            // alias it rather than renaming _owner, which the capture/player-ownership logic below
+            // reads as "who owns this marker".
+            private _side = _owner;
             private _importance = _loc select 7;
             private _nearPD = 99999;
             { private _d = _x distance _locPos; if (_d < _nearPD) then { _nearPD = _d; }; } forEach _players;
@@ -129,11 +134,30 @@ MISSION_CORE_fnc_replenishLoop = {
             // the fight runs (zoneBlock) - they are reinforcement sources, not grind-fodder.
             // PERMANENT RULE: every actually-contested marker is a zone with its own replenish
             // cycle (fn_getContestedMarkers returns all of them, no per-player cap).
-            private _zoneList = [_owner] call MISSION_CORE_fnc_getContestedMarkers;
-            private _contested = (_zoneList findIf { (_x select 0) == _locName } != -1);
-            // A zone freezes its whole neighborhood: same-side markers within reinforce range of a
-            // contested marker also hold their manpower until that fight ends + quiet period.
-            private _zoneBlock = (_zoneList findIf { (_x select 0) != _locName && { ((_x select 1) distance _locPos) < (["neighborRange", 4000] call MISSION_CORE_fnc_tune) } }) != -1;
+            // TWO SEPARATE QUESTIONS, TWO SEPARATE VARS.
+            // (1) "Is _locName contested?" - answered ONLY by MISSION_CORE_CONTESTED, written solely
+            //     by fn_isMarkerContested. Membership in that map IS the verdict.
+            private _contested = (!isNil "MISSION_CORE_CONTESTED") && { _locName in MISSION_CORE_CONTESTED };
+            // (2) "Is some OTHER contested marker within reinforce range?" - this needs contested
+            //     NAMES (var 1) AND distances, so the names come from the same map and the positions
+            //     come from MISSION_CORE_CACHED_POSITIONS. That join holds no contest logic of its
+            //     own, so it cannot disagree with (1).
+            // SIDE SCOPING: per the model above, only a SAME-SIDE contested marker blocks this
+            // marker's manpower. (keys MISSION_CORE_CONTESTED) spans every side, so an enemy-held
+            // marker going contested within neighborRange would otherwise freeze this marker's
+            // supplies across the front line. fn_getContestedMarkers filters on cached owner
+            // (index 4) and pulls geometry from MISSION_CORE_CACHED_POSITIONS, so the contested
+            // NAMES still come solely from MISSION_CORE_CONTESTED - this is a side-filtered
+            // projection of that single authority, not a second verdict, and it guards its own
+            // isNil dependencies so they are not re-checked here.
+            private _zoneBlock = false;
+            if (!isNil "MISSION_CORE_CONTESTED" && { count MISSION_CORE_CONTESTED > 0 }) then {
+                private _nbrR = ["neighborRange", 4000] call MISSION_CORE_fnc_tune;
+                private _sameSideZones = [_owner] call MISSION_CORE_fnc_getContestedMarkers;
+                _zoneBlock = (_sameSideZones findIf {
+                    (_x select 0) != _locName && { ((_x select 1) distance _locPos) < _nbrR }
+                }) != -1;
+            };
             diag_log format ["DYNAMIC REPLENISH GATE: %1 zone=%2 contested=%3 zoneBlock=%4", _locName, _locName, _contested, _zoneBlock];
             // Replenishment grace clock: a marker that is contested (or neighbor to a contested
             // zone) records the moment it last fought, so supplies resume only after the full quiet
@@ -153,17 +177,6 @@ MISSION_CORE_fnc_replenishLoop = {
             // PERMANENT RULE: no more one-zone-per-player cap - supplies flow to whatever is
             // actually contested (bounded only by the max-spawned-troops limits).
             private _supplyOpen = _contested;
-            if (!_supplyOpen) then {
-                if (isNil "MISSION_CORE_HANDOFF_TOPUP") then { MISSION_CORE_HANDOFF_TOPUP = []; };
-                if (_locName in MISSION_CORE_HANDOFF_TOPUP) then {
-                    if (_alive >= _baseline) then {
-                        // Reached full strength: the one-time top-up is spent - go manpower-blocked.
-                        MISSION_CORE_HANDOFF_TOPUP = MISSION_CORE_HANDOFF_TOPUP - [_locName];
-                    } else {
-                        _supplyOpen = true;
-                    };
-                };
-            };
             if (!_supplyOpen && { !_zoneBlock && { _grace != -1e10 } && { (time - _grace) >= _quiet } }) then {
                 _supplyOpen = true;
             };
@@ -228,32 +241,24 @@ MISSION_CORE_fnc_replenishLoop = {
             // the fight), or once it and its neighborhood are not contested and the quiet period
             // since the last fight has elapsed.
             if (_supplyOpen && { _alive > 0 } && { _alive < _baseline } && { !_retreated }) then {
-                // The replenishing marker counts as one of the 4 active spawners while it refills
-                [_locName] call MISSION_CORE_fnc_spawnerSlotFree;
+                // The replenishing marker counts as one of the active spawners on ITS side while it refills.
+                // A lost slot is not an error here - the return value is deliberately ignored, so a
+                // marker that lost the race simply retries on its next pass.
+                [_locName, _side] call MISSION_CORE_fnc_spawnerSlotFree;
                 // PERMANENT RULE (local manpower model): a garrison re-fields ONLY from the marker's
                 // OWN local manpower pool (MISSION_CORE_LOCATION_SUPPLY), 1-for-1 - a marker never
                 // draws base manpower for day-to-day replenish. A contested marker or an ACTIVE
-                // neighbor CANNOT request resupply - it grinds its own allotment. The ONLY base draw
-                // is the handoff top-up EXCEPTION neighbor (a new supporting marker refilled once).
+                // neighbor CANNOT request resupply: it grinds its own allotment. There is no
+                // exception to this - every marker funds its garrison from its own pool.
                 if (isNil "MISSION_CORE_LOCATION_SUPPLY") then { MISSION_CORE_LOCATION_SUPPLY = createHashMap; };
                 private _want = ((_baseline - _alive) min 8) max 1;
-                private _funded = 0;
-                private _baseName = "";
-                if (isNil "MISSION_CORE_HANDOFF_TOPUP") then { MISSION_CORE_HANDOFF_TOPUP = []; };
-                if (_locName in MISSION_CORE_HANDOFF_TOPUP) then {
-                    private _draw = [_owner, _locPos, _want] call MISSION_CORE_fnc_drawBaseManpower;
-                    _funded = _draw select 0;
-                    _baseName = _draw select 1;
-                } else {
-                    private _local = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0];
-                    _funded = _local min _want;
-                    if (_funded > 0) then { MISSION_CORE_LOCATION_SUPPLY set [_locName, _local - _funded]; };
-                };
+                private _local = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0];
+                private _funded = _local min _want;
+                if (_funded > 0) then { MISSION_CORE_LOCATION_SUPPLY set [_locName, _local - _funded]; };
                 if (_funded > 0) then {
                     private _replenished = [_loc, _owner, _importance, _alive, _baseline, _funded] call MISSION_CORE_fnc_replenishMarker;
                     if (_replenished < _funded) then {
-                        if (_baseName == "") then { MISSION_CORE_LOCATION_SUPPLY set [_locName, (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0]) + (_funded - _replenished)]; }
-                        else { [_baseName, _funded - _replenished] call MISSION_CORE_fnc_refundBaseManpower; };
+                        MISSION_CORE_LOCATION_SUPPLY set [_locName, (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0]) + (_funded - _replenished)];
                     };
                     // 5s gap after a marker finishes its whole spawn set before the next marker
                     // replenishes, so the AI never spawns several towns' garrisons back-to-back.
@@ -265,28 +270,19 @@ MISSION_CORE_fnc_replenishLoop = {
             // threshold re-fields and keeps fighting - it is never quietly wiped away.
             if (_supplyOpen && { _alive == 0 } && { !_retreated }) then {
                 diag_log format ["DYNAMIC CAPTURE DEBUG: %1 alive=0 enemyInside=%2", _locName, _enemyInside];
-                [_locName] call MISSION_CORE_fnc_spawnerSlotFree;
+                // Same side-keyed claim as the partial-replenish branch above.
+                [_locName, _side] call MISSION_CORE_fnc_spawnerSlotFree;
                 // Same local-manpower rule as above: a wiped garrison re-fields ONLY from the
-                // marker's OWN local pool, or the handoff top-up EXCEPTION neighbor's base draw.
+                // marker's OWN local pool.
                 if (isNil "MISSION_CORE_LOCATION_SUPPLY") then { MISSION_CORE_LOCATION_SUPPLY = createHashMap; };
                 private _want = ((_baseline - 0) min 8) max 1;
-                private _funded = 0;
-                private _baseName = "";
-                if (isNil "MISSION_CORE_HANDOFF_TOPUP") then { MISSION_CORE_HANDOFF_TOPUP = []; };
-                if (_locName in MISSION_CORE_HANDOFF_TOPUP) then {
-                    private _draw = [_owner, _locPos, _want] call MISSION_CORE_fnc_drawBaseManpower;
-                    _funded = _draw select 0;
-                    _baseName = _draw select 1;
-                } else {
-                    private _local = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0];
-                    _funded = _local min _want;
-                    if (_funded > 0) then { MISSION_CORE_LOCATION_SUPPLY set [_locName, _local - _funded]; };
-                };
+                private _local = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0];
+                private _funded = _local min _want;
+                if (_funded > 0) then { MISSION_CORE_LOCATION_SUPPLY set [_locName, _local - _funded]; };
                 if (_funded > 0) then {
                     private _replenished = [_loc, _owner, _importance, 0, _baseline, _funded] call MISSION_CORE_fnc_replenishMarker;
                     if (_replenished < _funded) then {
-                        if (_baseName == "") then { MISSION_CORE_LOCATION_SUPPLY set [_locName, (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0]) + (_funded - _replenished)]; }
-                        else { [_baseName, _funded - _replenished] call MISSION_CORE_fnc_refundBaseManpower; };
+                        MISSION_CORE_LOCATION_SUPPLY set [_locName, (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_locName, 0]) + (_funded - _replenished)];
                     };
                     if (_replenished > 0) then { sleep 5; };
                 };

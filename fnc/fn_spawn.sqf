@@ -61,6 +61,7 @@ call compile preprocessFileLineNumbers "fnc\spawn\fn_isSoftTransport.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_hasMountedGun.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_mountInfantry.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_clearGroupWaypoints.sqf";
+call compile preprocessFileLineNumbers "fnc\spawn\fn_transportStagePos.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_serializeGroup.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_deserializeGroup.sqf";
 call compile preprocessFileLineNumbers "fnc\spawn\fn_spawnLocation.sqf";

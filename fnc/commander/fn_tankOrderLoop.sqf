@@ -264,7 +264,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
             // neighborRange). Assault/counter-attack tanks are the deliberate exception that
             // fights at contested markers, so they are excluded from this restriction.
             if (!_isAssault) then {
-                if ([_tPos, _orderSide, _tName] call MISSION_CORE_fnc_isMarkerContested) then {
+                if ([_tPos, _orderSide, _tName, "tankOrderLoop"] call MISSION_CORE_fnc_isMarkerContested) then {
                     _keepOrders pushBack _x;
                     continue;
                 };
@@ -618,7 +618,10 @@ MISSION_CORE_fnc_tankOrderLoop = {
                 };
             };
             };
-        } forEach MISSION_CORE_TANK_SHIPMENTS;
+            // Filtered: a record tombstoned by a lost shipment is empty, and every
+        // branch below reads record fields off it. Skipping empties here also
+        // compacts them, since the array is rebuilt from the kept list below.
+    } forEach (MISSION_CORE_TANK_SHIPMENTS select { count _x > 0 });
         MISSION_CORE_TANK_SHIPMENTS = _keepShip;
     };
 };
@@ -658,8 +661,10 @@ MISSION_CORE_fnc_tankDeliverAccount = {
         // captured; the uncontested-neighbor cleanup then retreats them to the nearest friendly
         // marker. Registered with the standard group globals (ORIGIN/REDFOR/ARMOR_SLOT) so the
         // foot budget, armor accounting and retreat paths see them like any committed armor.
-        private _contestedZones = [_sSide] call MISSION_CORE_fnc_getContestedMarkers;
-        private _tContested = (_contestedZones findIf { (_x select 0) == _sTarget }) != -1;
+        // "Is this marker contested?" is answered ONLY by MISSION_CORE_CONTESTED, written solely by
+        // MISSION_CORE_fnc_isMarkerContested. No second verdict, no derived list. Geometry comes from
+        // MISSION_CORE_CACHED_POSITIONS below - that is a different question, not a contested one.
+        private _tContested = (!isNil "MISSION_CORE_CONTESTED") && { _sTarget in MISSION_CORE_CONTESTED };
         if (_tContested && { !isNull _grp } && { count units _grp > 0 }) then {
             private _tl2 = MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _sTarget };
             private _tPos = if (count _tl2 > 0) then { (_tl2 select 0) select 1 } else { getPosATL (leader _grp) };

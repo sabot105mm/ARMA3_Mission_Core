@@ -81,12 +81,18 @@ MISSION_CORE_fnc_assaultRelayLoop = {
     while { true } do {
         sleep 15;
         private _reports = MISSION_CORE_ASSAULT_REPORTS;
+        // Collect the dead keys first, then remove them. Deleting inside the forEach would shift
+        // every later element down one index and make the loop skip the report immediately after
+        // any pruned one - with 2+ players reporting that silently drops a live client's whole
+        // assault mirror for up to 15s.
+        private _dead = [];
         {
             private _rep = _y;
             if ((time - (_rep select 2)) > 90 || { isNull (_rep select 0) } || { !(isPlayer (_rep select 0)) }) then {
-                _reports deleteAt _x;
+                _dead pushBack _x;
             };
         } forEach _reports;
+        { MISSION_CORE_ASSAULT_REPORTS deleteAt _x; } forEach _dead;
         call MISSION_CORE_fnc_assaultRelayRebuild;
     };
 };

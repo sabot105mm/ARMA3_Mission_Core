@@ -35,7 +35,7 @@ MISSION_CORE_fnc_defenseCoordinator = {
                         // Defenses stay while the player is approaching or fighting this marker:
                         // either the marker is actively contested, or a player is still within the
                         // defense radius of it. Once the player leaves both, the ring is despawned.
-                        private _contested = [_locPos, _side, _markerName] call MISSION_CORE_fnc_isMarkerContested;
+                        private _contested = [_locPos, _side, _markerName, "defenseCoordinator:38"] call MISSION_CORE_fnc_isMarkerContested;
                         private _nearPlayer = _players findIf { _x distance _locPos < _defenseRadius } != -1;
                         if (_spawned && { _contested || _nearPlayer }) then {
                             if ({ alive _x } count units _defGrp > 0) then { _keep = true; };
@@ -69,7 +69,7 @@ MISSION_CORE_fnc_defenseCoordinator = {
                 private _lName = _x;
                 private _lEntry = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _lName });
                 private _lPos = if (count _lEntry > 0) then { (_lEntry select 0) select 1 } else { [0, 0, 0] };
-                if (!([_lPos, _side, _lName] call MISSION_CORE_fnc_isMarkerContested)) then { MISSION_CORE_DEFENSE_LOCKED deleteAt _lName; };
+                if (!([_lPos, _side, _lName, "defenseCoordinator:72"] call MISSION_CORE_fnc_isMarkerContested)) then { MISSION_CORE_DEFENSE_LOCKED deleteAt _lName; };
             } forEach (keys MISSION_CORE_DEFENSE_LOCKED);
 
             // --- Assign defenses to the markers a player is approaching or fighting, up to the per-side limit ---
@@ -101,7 +101,7 @@ MISSION_CORE_fnc_defenseCoordinator = {
                         // the objective looks garrisoned from the start; the prune path releases it
                         // once the player leaves the radius or the fight ends.
                         private _playerNear = _players select { _x distance _locPos < _defenseRadius };
-                        if (count _playerNear == 0 && { !([_locPos, _side, _mName] call MISSION_CORE_fnc_isMarkerContested) }) then { continue; };
+                        if (count _playerNear == 0 && { !([_locPos, _side, _mName, "defenseCoordinator:104"] call MISSION_CORE_fnc_isMarkerContested) }) then { continue; };
                         private _aliveDefenders = MISSION_CORE_SPAWNED_GROUPS select {
                             !isNull _x &&
                             { (_x getVariable ["MISSION_CORE_REDFOR", false] || _x getVariable ["MISSION_CORE_BLUFOR", false]) } &&

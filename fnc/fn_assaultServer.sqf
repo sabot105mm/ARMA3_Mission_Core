@@ -471,7 +471,7 @@ MISSION_CORE_fnc_assaultServerRequestNew = {
             _status = "hold";
             _wps = [];
         } else {
-            if (!isNil "MISSION_CORE_CONTESTED_MARKERS" && { _targetName in MISSION_CORE_CONTESTED_MARKERS }) then {
+            if (!isNil "MISSION_CORE_CONTESTED" && { _targetName in MISSION_CORE_CONTESTED }) then {
                 if (!(vehicle (leader _grp) != leader _grp) && { count _wps > 0 }) then {
                     private _usedTransport = [_grp, _wps, _targetPos, _caller] call MISSION_CORE_fnc_serverSpawnTransport;
                     if (!_usedTransport) then {
@@ -838,7 +838,8 @@ MISSION_CORE_fnc_serverMonitorStaging = {
             sleep 5;
             if (isNil "MISSION_CORE_BLUFOR_STAGED") then { continue; };
             if (count MISSION_CORE_BLUFOR_STAGED == 0) then { continue; };
-            private _contested = if (!isNil "MISSION_CORE_CONTESTED_MARKERS") then { +MISSION_CORE_CONTESTED_MARKERS } else { [] };
+            // Contested NAMES from MISSION_CORE_CONTESTED (the one value, publicVariable'd server-side).
+            private _contested = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
             if (count _contested > 0) then {
                 [objNull, _contested] spawn MISSION_CORE_fnc_assaultServerReleaseStaged;
             };

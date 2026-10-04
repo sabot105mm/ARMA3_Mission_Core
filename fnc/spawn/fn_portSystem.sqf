@@ -200,6 +200,9 @@ MISSION_CORE_fnc_resolvePorts = {
             MISSION_CORE_LOCATIONS = MISSION_CORE_LOCATIONS select { !((_x select 0) in _nestedNames) };
         };
     };
+    // The location list just changed structurally - drop the name index so the next
+    // caller rebuilds it from the pruned list instead of indexing stale entries.
+    MISSION_CORE_NAME_INDEX = nil;
     diag_log format ["DYNAMIC PORT: resolved %1 ports (%2 nested, %3 isolated)", count _ports, count _nestedNames, (count _ports) - (count _nestedNames)];
 };
 
@@ -283,18 +286,45 @@ MISSION_CORE_fnc_manpowerTick = {
         };
 private _bName = _needBase select 0;
     private _bPos = _needBase select 1;
-    private _dist = _pPos distance2D _bPos;
+    // Road route, not a straight line. ETA is derived from the real road length, so a port 2km
+    // away over a mountain road no longer "arrives" sooner than one 1.5km away across open
+    // ground. The straight-line lerp this replaced also slid the recon icon through terrain the
+    // convoy was not travelling on.
+    private _pIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _portName };
+    private _pRec = if (_pIdx >= 0) then { MISSION_CORE_CACHED_POSITIONS select _pIdx } else { [] };
+    private _route = [_pPos, _bPos, _portName, _bName, _pRec, _needBase] call MISSION_CORE_fnc_supplyRoute;
+    private _roadPath = _route select 0;
+    private _routed = _route select 1;
+    // Cumulative segments ride with the cache - never re-walked on a repeat port->base pair.
+    private _cum = _route select 2;
+    private _dist = _route select 3;
+    // Never let a degenerate path produce a zero ETA. And when the router could
+    // not find roads, hold the batch for the next port tick rather than shipping
+    // a straight line: the manpower is still at the port, so the next tick
+    // retries with a fresh search instead of a cached failure. The accumulator is
+    // deliberately NOT credited, so the batch keeps accumulating and ships in
+    // full once a route exists.
+    if (!_routed || { _dist < 1 }) then {
+        diag_log format ["DYNAMIC MANPOWER: %1 -> %2 no connected road route - batch held at port for retry", _portName, _bName];
+        continue;
+    };
     private _eta = _dist / _speed;
     if (isNil "MISSION_CORE_CONVOY_ID") then { MISSION_CORE_CONVOY_ID = 0; };
     MISSION_CORE_CONVOY_ID = MISSION_CORE_CONVOY_ID + 1;
-    MISSION_CORE_MANPOWER_CONVOYS pushBack [_portName, _bName, _ship, time + _eta, MISSION_CORE_CONVOY_ID, ""];
-    diag_log format ["DYNAMIC MANPOWER: %1 shipping %2 manpower to base %3 (ETA %4s)", _portName, round (_ship * 10) / 10, _bName, round _eta];
+    // Road data is APPENDED (indices 6-8). Indices 0-5 are untouched, so every existing reader of
+    // this record keeps working and older entries without a path simply fall back to a lerp.
+    MISSION_CORE_MANPOWER_CONVOYS pushBack [_portName, _bName, _ship, time + _eta, MISSION_CORE_CONVOY_ID, "", _roadPath, _cum, _eta];
+    diag_log format ["DYNAMIC MANPOWER: %1 shipping %2 manpower to base %3 (%4m %5, ETA %6s)", _portName, round (_ship * 10) / 10, _bName, round _dist, if (_routed) then { "via road" } else { "direct" }, round _eta];
     } forEach (keys MISSION_CORE_PORTS);
 
-    // ---- Arrive manpower convoys ----
-    {
-        private _c = _x;
-        if (time >= (_c select 3)) then {
+      // ---- Arrive manpower convoys ----
+      {
+          private _c = _x;
+          // A tombstone from an earlier strike can still be in the array: the
+          // compaction at the end of this pass has not run yet. Without this,
+          // "_c select 3" is nil on an empty record and the comparison throws.
+          if (count _c == 0) then { continue; };
+          if (time >= (_c select 3)) then {
             private _bName = _c select 1;
             private _stock = MISSION_CORE_BASE_MANPOWER getOrDefault [_bName, 0];
             MISSION_CORE_BASE_MANPOWER set [_bName, _stock + (_c select 2)];
@@ -404,7 +434,10 @@ MISSION_CORE_fnc_requestManpower = {
     };
     // 2) Neighbor marker local pools, nearest-first, each keeping its retreat-reserve floor.
     if (_need > 0) then {
-        private _zoneNames = ([_side] call MISSION_CORE_fnc_getContestedMarkers) apply { _x select 0 };
+        // Contested marker NAMES come from MISSION_CORE_CONTESTED (written solely by
+        // fn_isMarkerContested). Only names are needed here - the neighbor geometry comes from
+        // MISSION_CORE_CACHED_POSITIONS inside fn_getMarkerNeighbors, which is a separate concern.
+        private _zoneNames = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
         private _neighbors = ([_receiverName, _locPos, _side, _zoneNames] call MISSION_CORE_fnc_getMarkerNeighbors) select {
             // Bases were already drawn above - skip them here.
             !([_x] call MISSION_CORE_fnc_isBaseMarker)
@@ -457,4 +490,42 @@ MISSION_CORE_fnc_refundManpower = {
         diag_log format ["MANPOWER REFUND: %1 returned %2 men to %3 %4", "", round _back, _kind, _name];
         if (_amount <= 0) exitWith {};
     };
+};
+
+// Remove men from a manpower shipment in flight, because something destroyed part
+// of it. Lives here, beside the array it edits, so the port system stays the only
+// writer of MISSION_CORE_MANPOWER_CONVOYS - recon strike calls it instead of
+// reaching into the records itself.
+//
+// Handles a wipe and a partial loss through one path: passing _killed >= the batch
+// tombstones the record, anything less reduces it. _renownTotal is prorated by the
+// fraction lost, and passing 0 awards nothing (a strike that only halves a batch
+// pays no bounty, only anger).
+//
+// Tombstone rather than deleteAt: both this file and the recon strike pass walk
+// the array by index, and splicing an element out from under an index-based loop
+// makes it skip the next shipment. An empty record is inert to both - their count
+// guards drop it - and compaction removes it at the end of the pass.
+MISSION_CORE_fnc_manpowerShipmentLose = {
+    params ["_index", "_killed", ["_renownTotal", 0]];
+    if (!(_index isEqualType 1) || { _index < 0 || { _index >= count MISSION_CORE_MANPOWER_CONVOYS } }) exitWith { false };
+    if (!(_killed isEqualType 1) || { _killed <= 0 }) exitWith { false };
+    private _c = MISSION_CORE_MANPOWER_CONVOYS select _index;
+    if (count _c < 3) exitWith { false };
+    private _batch = _c select 2;
+    if (!(_batch isEqualType 1) || { _batch <= 0 }) exitWith { false };
+    private _label = format ["manpower convoy %1 -> %2", _c select 0, _c select 1];
+    if (_killed >= _batch) then {
+        if (_renownTotal > 0) then { [_renownTotal] call MISSION_CORE_fnc_awardRenown; };
+        [_batch, _label] call MISSION_CORE_fnc_convoyLossAggression;
+        MISSION_CORE_MANPOWER_CONVOYS set [_index, []];
+        diag_log format ["DYNAMIC MANPOWER: %1 lost entirely (%2 of %3 men)", _label, round _batch, round _batch];
+    } else {
+        _c set [2, _batch - _killed];
+        MISSION_CORE_MANPOWER_CONVOYS set [_index, _c];
+        if (_renownTotal > 0) then { [floor (_renownTotal * (_killed / _batch))] call MISSION_CORE_fnc_awardRenown; };
+        [_killed, _label] call MISSION_CORE_fnc_convoyLossAggression;
+        diag_log format ["DYNAMIC MANPOWER: %1 lost %2 of %3 men, %4 remain", _label, round _killed, round _batch, round (_batch - _killed)];
+    };
+    true
 };

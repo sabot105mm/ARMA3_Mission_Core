@@ -9,7 +9,9 @@ MISSION_CORE_fnc_attackStuckWatchdogTick = {
     {
         private _side = _x;
         private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
-        private _contested = [_side] call MISSION_CORE_fnc_getContestedMarkers;
+        // "Is ANY marker contested?" - answered ONLY by MISSION_CORE_CONTESTED (written solely by
+        // fn_isMarkerContested). This gate needs no geometry at all, just whether the map is empty.
+        private _contested = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
         if (count _contested == 0) then { continue; };
         private _groups = MISSION_CORE_SPAWNED_GROUPS select {
             !isNull _x && { count units _x > 0 } && { _x getVariable [_sideVar, false] } &&
@@ -21,9 +23,20 @@ MISSION_CORE_fnc_attackStuckWatchdogTick = {
             if (isNull _ldr || { !(alive _ldr) }) then { continue; };
             private _at = _grp getVariable ["MISSION_CORE_ATTACK_TARGET", []];
             if (count _at == 0) then { continue; };
-            // Match the group to the contested zone it is marching toward.
-            private _cEntry = _contested select { (_x select 1) distance2D _at <= 100 } param [0, []];
-            if (count _cEntry == 0) then {
+            // Match the group to the contested zone it is marching toward. We need a NAME (a string) out
+            // of this, because _cName is matched against cached rows by name further down. Going
+            // through fn_getContestedMarkers gives [_name,_pos,_size,_owner] rows, so the position
+            // is index 1 and the name is index 0. Contested NAMES still come solely from
+            // MISSION_CORE_CONTESTED (the helper filters that map and joins geometry from
+            // MISSION_CORE_CACHED_POSITIONS) - this forms no opinion about contested state.
+            // NOTE: findIf returns an INDEX, not the element, so the name has to be pulled back out
+            // of the row by that index. Assigning the raw findIf result to _cName made it a number,
+            // and the `_cName == ""` test below then raised a type error that killed the file.
+            private _cName = "";
+            private _cRows = [sideUnknown] call MISSION_CORE_fnc_getContestedMarkers;
+            private _cHit = _cRows findIf { ((_x select 1) distance2D _at) <= 100 };
+            if (_cHit >= 0) then { _cName = (_cRows select _cHit) select 0; };
+            if (_cName == "") then {
                 // PERMANENT RULE (STALE-ORDER RELEASE): the group's one-way task has no live
                 // contested target anymore (the marker it was marching on flipped / the fight it
                 // was committed to ended). Such an order would otherwise block the group from ever
@@ -52,8 +65,10 @@ MISSION_CORE_fnc_attackStuckWatchdogTick = {
                 };
                 continue;
             };
-            private _cPos = _cEntry select 1;
-            private _cSize = _cEntry select 2;
+            private _cRow = MISSION_CORE_CACHED_POSITIONS select (MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _cName });
+            private _cPos = _cRow select 1;
+            // Size is index 8 of a cached row (index 2 is typeName).
+            private _cSize = if (count _cRow > 8 && { ((_cRow select 8) isEqualType []) }) then { _cRow select 8 } else { [200, 200, 0] };
             // The group must have had time to move before we call it stuck
             private _born = _grp getVariable ["MISSION_CORE_SPAWN_TIME", -1];
             if (_born < 0 || { time - _born < 90 }) then { continue; };
@@ -92,7 +107,7 @@ MISSION_CORE_fnc_attackStuckWatchdogTick = {
                 } forEach units _grp;
             };
             // Re-commit so it presses the attack from the fresh spot
-            diag_log format ["AI COMMANDER: %1 %2 stuck at spawn - relocated %.0fm to %3", _side, groupId _grp, round (_relocPos distance2D _cPos), _cEntry select 0];
+            diag_log format ["AI COMMANDER: %1 %2 stuck at spawn - relocated %.0fm to %3", _side, groupId _grp, round (_relocPos distance2D _cPos), _cName];
             [_grp, _cPos, _cSize] call MISSION_CORE_fnc_sendCounterAttack;
         } forEach _groups;
     } forEach [WEST, EAST];

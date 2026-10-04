@@ -29,7 +29,7 @@ MISSION_CORE_fnc_debugVisuals = {
             private _mb = _size select 1;
             private _md = if (count _size > 2) then { _size select 2 } else { 0 };
             private _active = MISSION_CORE_SPAWNED_LOCATIONS getOrDefault [_name, false];
-            private _contested = _active && { [_pos, _owner, _name] call MISSION_CORE_fnc_isMarkerContested };
+            private _contested = _active && { [_pos, _owner, _name, "debugVisuals"] call MISSION_CORE_fnc_isMarkerContested };
 
             // Name label - dedicated ICON marker so the text is always readable on the map
             private _lblName = format ["%1_dbg_name", _name];

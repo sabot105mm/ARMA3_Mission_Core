@@ -21,6 +21,10 @@ MISSION_CORE_fnc_spawnAssaultGroup = {
         [_grp, format ["ai assault %1", _tgtName]] call MISSION_CORE_fnc_drownedWatch;
     };
     private _subCat = _tmpl select 3;
+    // Presence-for-contest reads this same flag (fn_assaultGroupEval): a mech/motor column is judged
+    // by its vehicle position, a foot squad by its men. Stamped once from the template here rather
+    // than re-derived on every 1Hz contest pass.
+    _grp setVariable ["MISSION_CORE_MECH_MOTOR", ((_subCat == "mech") || { (_subCat find "motor") > -1 })];
     if (_subCat find "tank" > -1 && { _subCat find "_aa" == -1 }) then {
         _grp setVariable ["MISSION_CORE_ARMOR_SLOT", "mbt"];
         {
@@ -97,5 +101,19 @@ MISSION_CORE_fnc_spawnAssaultGroup = {
         } forEach units _grp;
     };
     MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
+    // CONTEST REGISTRATION. This is an AI assault force group (fn_assaultStaging /
+    // fn_assembleAssault) and it used to be COMPLETELY invisible to isMarkerContested.
+    // MISSION_CORE_ATTACK_GROUPS is only ever written by the recruit and assaultServer flows, so an
+    // AI squad could sit inside its target marker, fight the garrison for minutes, and never mark
+    // that marker contested - the zone read "no longer contested" and its reinforcement stopped.
+    // Registered in its own map deliberately: ATTACK_GROUPS carries _status semantics that the
+    // recruit / staging / release / wipe loops depend on, and injecting AI groups there would
+    // disturb those flows. refreshAssaultContest prunes entries as groups die.
+    if (_tgtName != "") then {
+        if (isNil "MISSION_CORE_ASSAULT_CONTEST_SEQ") then { MISSION_CORE_ASSAULT_CONTEST_SEQ = 0 };
+        if (isNil "MISSION_CORE_ASSAULT_CONTEST_GROUPS") then { MISSION_CORE_ASSAULT_CONTEST_GROUPS = createHashMap };
+        MISSION_CORE_ASSAULT_CONTEST_SEQ = MISSION_CORE_ASSAULT_CONTEST_SEQ + 1;
+        MISSION_CORE_ASSAULT_CONTEST_GROUPS set [["aia", MISSION_CORE_ASSAULT_CONTEST_SEQ], [_grp, _tgtName, _side]];
+    };
     _grp
 };

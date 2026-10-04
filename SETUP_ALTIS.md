@@ -29,18 +29,27 @@ BLUFOR markers (blue color) = player spawn points:
 REDFOR markers (red/opfor color) = enemy locations:
   Same prefixes: factory_1, base_1, compound_1, hq_1, etc.
 
-## 4. Configure Era (optional)
-Edit config/main.hpp:
-  MISSION_CORE_ERA = "MODERN";  // MODERN, COLDWAR, WW2, WW3
+## 4. Choose Factions (optional)
+Edit config/missionVars.hpp:
+  BLUFOR_FACTION = "CUP_B_USMC";   // any configFile faction class
+  REDFOR_FACTION = "CUP_O_RU";
+
+The era is implied by the faction you pick (CUP_B_USMC/CUP_O_RU = modern).
+There is no MISSION_CORE_ERA setting - the old one lived in config\main.hpp,
+which nothing ever loaded; it had no effect and has been removed.
 
 ## 5. Adjust Blacklist (optional)
-Edit config/main.hpp -> BLACKLIST section to exclude unwanted mod classes.
+Edit config\missionVars.hpp -> BLACKLIST section to exclude unwanted mod classes.
 
 ## 6. Add Custom Compositions (optional)
 Export from Eden Editor (right-click composition -> Export Composition) 
 Save as .sqf files in comps/ folder:
   comps\my_custom_base.sqf
-Then add to config/locations.hpp under the appropriate location type.
+Then add to config\missionVars.hpp under `class LOCATION_PRESETS`, in the
+compositions[] list of the appropriate location type.
+
+Compositions only appear at locations that have defender positions assigned, so
+adding a type here does not by itself put objects on the map.
 
 ## 7. Preview / Play
 - SP: Preview in Eden

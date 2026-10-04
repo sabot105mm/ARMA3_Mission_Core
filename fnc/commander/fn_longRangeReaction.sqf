@@ -95,7 +95,7 @@ MISSION_CORE_fnc_longRangeReactionTick = {
                     // No free garrison squad - spawn one at the marker if a spawn slot is open
                     // PERMANENT RULE (global foot budget): the fallback NEVER bypasses the per-side
                     // foot-squad cap - a long-range strike cannot float the map over budget.
-                    if (([_side] call MISSION_CORE_fnc_countFootSquads) < (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) && { [_locName] call MISSION_CORE_fnc_spawnerSlotFree }) then {
+                    if (([_side] call MISSION_CORE_fnc_countFootSquads) < (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) && { [_locName, _side] call MISSION_CORE_fnc_spawnerSlotFree }) then {
                         private _infPool = [(_factionData select 17)] call MISSION_CORE_fnc_getInfTemplates;
                         if (count _infPool > 0) then {
                             private _template = selectRandom _infPool;

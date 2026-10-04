@@ -53,8 +53,10 @@ MISSION_CORE_fnc_advHintDriver = {
 
             // 2) First time a light-infrastructure marker enters the broadcast contested set
             //    (power_ / solar_ markers) -> they fight alone, no neighbours join.
-            if (!_lightInfraSeen && !(isNil "MISSION_CORE_CONTESTED_MARKERS")) then {
-                private _found = MISSION_CORE_CONTESTED_MARKERS findIf {
+            if (!_lightInfraSeen && !(isNil "MISSION_CORE_CONTESTED")) then {
+                // Contested NAMES from the single authority (publicVariable'd from
+                // fn_isMarkerContested), not a separately broadcast copy that could lag it.
+                private _found = (keys MISSION_CORE_CONTESTED) findIf {
                     (_x find "power_" == 0) || { (_x find "solar_" == 0) }
                 };
                 if (_found != -1) then {

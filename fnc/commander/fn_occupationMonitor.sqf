@@ -123,7 +123,6 @@ MISSION_CORE_fnc_occupationMonitor = {
                 // garrisons until its supply network delivers manpower again.
                 [_locName, _prevOwner] call MISSION_CORE_fnc_setMarkerOwner;
                 MISSION_CORE_OCCUPATION deleteAt _locName;
-                if (!isNil "MISSION_CORE_CAPTURED_RETAKE") then { MISSION_CORE_CAPTURED_RETAKE deleteAt _locName; };
                 MISSION_CORE_SPAWNED_LOCATIONS set [_locName, false];
                 if (isNil "MISSION_CORE_MANPOWER") then { MISSION_CORE_MANPOWER = createHashMap; };
                 if (isNil "MISSION_CORE_COMMIT") then { MISSION_CORE_COMMIT = createHashMap; };
@@ -137,7 +136,6 @@ MISSION_CORE_fnc_occupationMonitor = {
                 if (time - _occupiedAt >= (["captureHoldSeconds", 600] call MISSION_CORE_fnc_tune)) then {
                     // Held for 10 minutes - occupier becomes the rightful owner
                     MISSION_CORE_OCCUPATION deleteAt _locName;
-                    if (!isNil "MISSION_CORE_CAPTURED_RETAKE") then { MISSION_CORE_CAPTURED_RETAKE deleteAt _locName; };
                     MISSION_CORE_SPAWNED_LOCATIONS set [_locName, false];
                     diag_log format ["DYNAMIC CAPTURE: %1 secured by %2 (10min hold complete)", _locName, _occupier];
                     private _renownGain = 0;

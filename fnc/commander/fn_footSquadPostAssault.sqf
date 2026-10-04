@@ -24,7 +24,7 @@ MISSION_CORE_fnc_footSquadPostAssault = {
             {
                 if (_ldr knowsAbout _x > 1.2) exitWith { _enemy = _x; };
             } forEach (allUnits select { side _x getFriend _side < 0.6 && { alive _x } });
-            private _contested = [_targetPos, _side, ""] call MISSION_CORE_fnc_isMarkerContested;
+            private _contested = [_targetPos, _side, "", "footSquadPostAssault"] call MISSION_CORE_fnc_isMarkerContested;
             if (!isNull _enemy) then {
                 _lastKnown = getPos _enemy;
                 _lastContact = time;

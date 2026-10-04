@@ -238,10 +238,23 @@ MISSION_CORE_fnc_huntDispatch = {
     // curve as its reinforcement spawns - fast while the zone's pool is fresh, losing steam as
     // it drains. A marker with no counter-attack to support keeps its hunt gate open at the
     // director's normal cadence until it retreats (retreat gate above).
-    private _zoneList = [_side] call MISSION_CORE_fnc_getContestedMarkers;
     if (isNil "MISSION_CORE_REINF_EXHAUSTED") then { MISSION_CORE_REINF_EXHAUSTED = createHashMap; };
     if (isNil "MISSION_CORE_REINF_SENT") then { MISSION_CORE_REINF_SENT = createHashMap; };
-    private _liveZones = _zoneList select { !(MISSION_CORE_REINF_EXHAUSTED getOrDefault [(_x select 0), false]) };
+    // TWO SEPARATE QUESTIONS, TWO SEPARATE VARS.
+    // (1) contested NAMES - MISSION_CORE_CONTESTED only, written solely by fn_isMarkerContested.
+    private _zoneList = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
+    // (2) POSITIONS - MISSION_CORE_CACHED_POSITIONS, joined by name. The nearest-zone math below
+    // needs each contested marker's position; that is geometry, not contested state, so it is read
+    // from the cache rather than from a contested helper. The join forms no opinion about contested.
+    private _liveZones = [];
+    if (!isNil "MISSION_CORE_CACHED_POSITIONS") then {
+        {
+            private _zName = _x;
+            if (MISSION_CORE_REINF_EXHAUSTED getOrDefault [_zName, false]) then { continue; };
+            private _zIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _zName };
+            if (_zIdx >= 0) then { _liveZones pushBack (MISSION_CORE_CACHED_POSITIONS select _zIdx); };
+        } forEach _zoneList;
+    };
     if (isNil "MISSION_CORE_HUNT_COOLDOWN") then { MISSION_CORE_HUNT_COOLDOWN = createHashMap; };
 
     private _dispatched = 0;
@@ -269,7 +282,7 @@ MISSION_CORE_fnc_huntDispatch = {
             if (_idx >= 0) then {
                 private _zp = MISSION_CORE_CACHED_POSITIONS select _idx;
                 private _budgetFrac = ([_zp] call MISSION_CORE_fnc_getMarkerDetermination) select 2;
-                private _nb = [_nearZn, (_zp select 1), _side, _zoneList apply { _x select 0 }] call MISSION_CORE_fnc_getMarkerNeighbors;
+                private _nb = [_nearZn, (_zp select 1), _side, _zoneList] call MISSION_CORE_fnc_getMarkerNeighbors;
                 private _sum = 0;
                 { _sum = _sum + ([(_x select 7)] call MISSION_CORE_fnc_markerCapacity); } forEach _nb;
                 _pool = round (_sum * _budgetFrac);
@@ -280,6 +293,16 @@ MISSION_CORE_fnc_huntDispatch = {
             diag_log format ["PLAYER HUNT: %1 source %2 follows counter-attack curve for %3 (frac=%4 gap=%5s cd=%6s)", _side, _srcName, _nearZn, _frac, _gap, round _pace];
         };
 
+        // PER-MARKER HUNT CAP, checked before anything is queued. huntSpawnContingent re-checks this
+        // (it is the authority - the queue can outlive this tick), but skipping the enqueue here
+        // keeps a saturated marker from filling the queue with jobs that are guaranteed to no-op.
+        private _maxPerMarker = ["huntMaxPerMarker", 3] call MISSION_CORE_fnc_tune;
+        private _liveHunts = [_srcName] call MISSION_CORE_fnc_huntMarkerLive;
+        if (count _liveHunts >= _maxPerMarker) then {
+            diag_log format ["PLAYER HUNT: %1 source %2 skipped - already running %3 live hunt(s), per-marker cap %4", _side, _srcName, count _liveHunts, _maxPerMarker];
+            continue;
+        };
+
         // Curve cooldown gate: while the marker's next allowed hunt time has not arrived it
         // dispatches nothing toward ANY player (the marker is mid-reinforcement-tempo).
         private _cd = MISSION_CORE_HUNT_COOLDOWN getOrDefault [_srcName, -1e10];
@@ -288,32 +311,105 @@ MISSION_CORE_fnc_huntDispatch = {
             continue;
         };
 
-        private _grp = [_player, _lkp, _heading, _side, _sideVar, _factionData, _srcName, _srcPos, _srcSize, _srcImp, _srcD] call MISSION_CORE_fnc_huntSpawnContingent;
-        if (isNull _grp) then { continue; };
-        // Only a SUCCESSFUL dispatch sets the source's next allowed hunt time - a refused or
-        // skipped source stays free to retry on the next director tick.
-        if (_pace > 0) then { MISSION_CORE_HUNT_COOLDOWN set [_srcName, time + _pace]; };
-        // AMMO: dispatching a hunt contingent costs the source marker ammo.
-        [_srcName, ["ammoCostHunt", 2] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_consumeAmmo;
-
-        private _list = MISSION_CORE_HUNT_ACTIVE getOrDefault [_playerKey, []];
-        _list pushBack _grp;
-        MISSION_CORE_HUNT_ACTIVE set [_playerKey, _list];
-        _grp setVariable ["MISSION_CORE_HUNT_TARGET", _player];
-        _grp setVariable ["MISSION_CORE_HUNT_KEY", _playerKey];
-        [_grp, _lkp, _heading, _side, _player, _playerKey, _srcName, _srcPos, _srcD] spawn MISSION_CORE_fnc_huntSweep;
+        // A player hunt is the LOWEST-priority spawn on the map. It used to be spawned inline here,
+        // which meant it bypassed MISSION_CORE_SPAWN_QUEUE completely and could put a fresh MBT or a
+        // conjured squad on the field while a marker reinforcement was already queued and waiting
+        // for those same foot/armor slots. It is now QUEUED at priority -2 (fn_spawnQueueLoop),
+        // below the armor-critical -1 jump, so every other queue spawn trumps it and it only goes
+        // first when the queue is otherwise empty.
+        //
+        // All the bookkeeping that used to follow this call - hunt cooldown, ammo cost, HUNT_ACTIVE
+        // registration, the HUNT_TARGET/HUNT_KEY vars, huntSweep and the dispatch log - has MOVED
+        // into MISSION_CORE_fnc_queuedHuntContingent. It cannot stay here: the group does not exist
+        // at this point any more, so there is nothing to tag or sweep.
+        ["MISSION_CORE_fnc_queuedHuntContingent", format ["hunt_%1_%2", _srcName, _playerKey], [_player, _lkp, _heading, _side, _sideVar, _factionData, _srcName, _srcPos, _srcSize, _srcImp, _srcD, _playerKey, _pace]] call MISSION_CORE_fnc_enqueueSpawn;
         _dispatched = _dispatched + 1;
-        diag_log format ["PLAYER HUNT: %1 dispatching %2 from %3 toward %4 (%.0fm)", _side, groupId _grp, _srcName, _lkp, _srcD];
     } forEach _srcCands;
-    diag_log format ["PLAYER HUNT: %1 dispatched %2 contingent(s) toward %3", _side, _dispatched, _lkp];
+    diag_log format ["PLAYER HUNT: %1 queued %2 contingent(s) toward %3 (lowest priority - trumped by every other queue spawn)", _side, _dispatched, _lkp];
+};
+
+// Live hunt contingents fielded by ONE source marker.
+//
+// huntMaxContingents (above) caps how many SOURCE MARKERS may answer a single dispatch event - it
+// bounds one sweep of the director, not how many hunts one garrison can have running. Without a
+// separate per-marker ceiling the same marker answered every director tick with another contingent
+// and hunts stacked on it indefinitely.
+//
+// The registry is pruned on every READ rather than by an explicit unregister: a contingent that
+// died, or whose sweep finished (fn_huntSweep clears MISSION_CORE_HUNT_KEY when it disbands), frees
+// its slot the next time anyone asks. So there is no path where a finished hunt keeps a slot busy.
+if (isNil "MISSION_CORE_MARKER_HUNTS") then { MISSION_CORE_MARKER_HUNTS = createHashMap; };
+MISSION_CORE_fnc_huntMarkerLive = {
+    params ["_srcName"];
+    if (isNil "MISSION_CORE_MARKER_HUNTS") then { MISSION_CORE_MARKER_HUNTS = createHashMap; };
+    private _list = MISSION_CORE_MARKER_HUNTS getOrDefault [_srcName, []];
+    private _live = [];
+    {
+        private _g = _x;
+        // Alive AND still a hunt. A null handle, a wiped group, or one whose sweep has ended (its
+        // HUNT_KEY was cleared, or it was re-tasked back to garrison duty) is no longer a hunt.
+        private _isHunt = (_g getVariable ["MISSION_CORE_HUNT_KEY", ""]) != "";
+        if (!isNull _g && { count (units _g select { !isNull _x && { alive _x } }) > 0 } && { _isHunt }) then {
+            _live pushBack _g;
+        };
+    } forEach _list;
+    if (count _live > 0) then { MISSION_CORE_MARKER_HUNTS set [_srcName, _live]; } else { MISSION_CORE_MARKER_HUNTS deleteAt _srcName; };
+    _live
+};
+
+MISSION_CORE_fnc_huntMarkerRegister = {
+    params ["_srcName", "_grp"];
+    if (isNil "MISSION_CORE_MARKER_HUNTS") then { MISSION_CORE_MARKER_HUNTS = createHashMap; };
+    private _list = [_srcName] call MISSION_CORE_fnc_huntMarkerLive;
+    _list pushBack _grp;
+    MISSION_CORE_MARKER_HUNTS set [_srcName, _list];
+    count _list
 };
 
 // Spawn the contingent for one hunt. Returns the group (grpNull if nothing could be fielded).
 MISSION_CORE_fnc_huntSpawnContingent = {
     params ["_player", "_lkp", "_heading", "_side", "_sideVar", "_factionData", "_srcName", "_srcPos", "_srcSize", "_srcImp", "_srcD"];
+
+    // ---- REINFORCEMENT TRUMPS THE HUNT: no contingent of any kind while this marker owes a fight ----
+    // This gate sits ABOVE the threat ladder on purpose. A hunt is the lowest-priority use of a
+    // marker's men - discretionary pressure against one player, while a contested marker is the
+    // mission's actual fight - so while the source still owes reinforcement it fields NOTHING toward
+    // a player: no re-tasked garrison squad, no conjured foot squad, no MBT, no APC. Putting the gate
+    // here rather than inside the re-task branch below is what makes the armor answers trump too; a
+    // gate placed at the re-task call would leave MBT/APC ungated, and one placed inside
+    // MISSION_CORE_fnc_claimIdleGarrison would silently become part of the shared garrison rules for
+    // every future commander subsystem that draws squads from that pool.
+    //
+    // fn_markerHasReinforceNeed asks MISSION_CORE_fnc_providerBudget - the dispatcher's own
+    // arithmetic - so this cannot drift from what fn_neighborCounterAttack will decide.
+    //
+    // The source row is re-read from the cache here rather than passed in: the queue outlives the
+    // director tick that queued this job, so any budget read at enqueue time would be stale by the
+    // moment these men were actually spent.
+    private _srcRow = [];
+    if (!isNil "MISSION_CORE_CACHED_POSITIONS") then {
+        _srcRow = MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _srcName };
+    };
+    if (([_srcRow param [0, []], _side] call MISSION_CORE_fnc_markerHasReinforceNeed)) exitWith {
+        diag_log format ["PLAYER HUNT: %1 source %2 held - it still owes reinforcement to a contested marker, so it fields no hunt contingent (no re-task, no foot, no armor)", _side, _srcName];
+        grpNull
+    };
+
     private _vehMap = _factionData select 7;
     private _mbtClasses = _vehMap getOrDefault ["mbt", []];
     private _apcClasses = _vehMap getOrDefault ["apc", []];
+
+    // PER-MARKER HUNT CAP. Sits below the reinforcement gate (a marker owing a fight is still held
+    // for that, which is the stronger rule) and above the threat ladder, so a marker already running
+    // its full allowance spends nothing on armour templates, vehicle-column lookups or a doomed
+    // spawnGroup call. SQF has no `return`, so the exitWith is written out - grpNull is this
+    // function's normal "nothing fielded" value, which the single caller already handles.
+    private _maxPerMarker = ["huntMaxPerMarker", 3] call MISSION_CORE_fnc_tune;
+    private _liveHunts = [_srcName] call MISSION_CORE_fnc_huntMarkerLive;
+    if (count _liveHunts >= _maxPerMarker) exitWith {
+        diag_log format ["PLAYER HUNT: %1 source %2 held - already running %3 live hunt(s), per-marker cap %4", _side, _srcName, count _liveHunts, _maxPerMarker];
+        grpNull
+    };
 
     private _playerVeh = vehicle _player;
     private _inTank = _playerVeh != _player && { _playerVeh isKindOf "Tank" };
@@ -355,22 +451,13 @@ MISSION_CORE_fnc_huntSpawnContingent = {
     //    group rooted at this marker and re-task it to hunt; only if the marker fields no eligible
     //    group do we spawn one as a last resort.
     if (isNull _grp) then {
-        private _idleAtSrc = [];
-        if (!isNil "MISSION_CORE_SPAWNED_GROUPS") then {
-            _idleAtSrc = MISSION_CORE_SPAWNED_GROUPS select {
-                !isNull _x &&
-                { count units _x > 0 } &&
-                { _x getVariable [_sideVar, false] } &&
-                { (_x getVariable ["MISSION_CORE_ORIGIN_MARKER", ""]) == _srcName } &&
-                { (_x getVariable ["MISSION_CORE_ORDER", ""]) in ["", "patrol", "defend", "engage"] } &&
-                { !(_x getVariable ["MISSION_CORE_AA_DEFENSE", false]) } &&
-                { !(_x getVariable ["MISSION_CORE_AA_TANK", false]) } &&
-                { !(_x getVariable ["MISSION_CORE_STATIC_GUARD", false]) } &&
-                { ({ vehicle _x == _x } count units _x) == count units _x }
-            };
-        };
-        if (count _idleAtSrc > 0) then {
-            _grp = selectRandom _idleAtSrc;
+        // Drawing an already-fielded squad off a garrison is the AI COMMANDER's task, not an action
+        // callable script's. MISSION_CORE_fnc_claimIdleGarrison owns the eligibility rules so any
+        // commander subsystem can ask the same question of the same pool. It RE-TASKS and never
+        // spawns: nothing is conjured and no manpower is drawn, which is why a hunt prefers it.
+        _grp = [_sideVar, _srcName] call MISSION_CORE_fnc_claimIdleGarrison;
+        if (!isNull _grp) then {
+            diag_log format ["PLAYER HUNT: %1 re-tasked idle garrison %2 from %3 (re-tasked, not spawned - no manpower cost)", _side, groupId _grp, _srcName];
         } else {
             // Fallback: no eligible spawned garrison at this source - spawn one (respecting the
             // spawn-safety distance already checked above; a source hugging the player fields no
@@ -418,6 +505,7 @@ MISSION_CORE_fnc_huntSpawnContingent = {
     if (isNull _grp) exitWith { grpNull };
     _grp setVariable ["MISSION_CORE_ORDER", "hunt"];
     _grp setVariable ["MISSION_CORE_IDLE", false];
+    _grp setVariable ["MISSION_CORE_HUNT_SOURCE", _srcName];
     _grp
 };
 
@@ -546,13 +634,11 @@ MISSION_CORE_fnc_huntSweep = {
     // this is a plain MOVE for both mounted and on-foot - at arrival _disembark does the unload: a
     // plain truck empties completely (driver included), a gun truck keeps its driver+gunner. No
     // waypoint script is needed and no separate driver group exists to receive a TR UNLOAD.
-    [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-    private _wp = _grp addWaypoint [_lkp, 50];
-    _wp setWaypointType "MOVE";
-    _wp setWaypointSpeed "FULL";
-    _grp setCurrentWaypoint _wp;
-    _grp setBehaviour "AWARE";
-    _grp setCombatMode "RED";
+    // A MOUNTED contingent now stages on a road near _srcPos first, so it clears the source marker
+    // before committing to the drive instead of driving straight through it. On-foot contingents
+    // have no road to clear and go straight to the LKP.
+    private _fromPos = if (!isNil "_srcPos" && { count _srcPos >= 2 }) then { _srcPos } else { getPosATL _grp };
+    [_grp, _fromPos, _lkp] call MISSION_CORE_fnc_buildHuntApproachWps;
 
     // Arrive: wait until the leader reaches the LKP (or timeout).
     private _arrival = time + (["huntSweepSeconds", 600] call MISSION_CORE_fnc_tune);
@@ -746,4 +832,54 @@ MISSION_CORE_fnc_huntSweep = {
     } else {
         if (!isNull _grp) then { [_grp] call MISSION_CORE_fnc_deleteGroupCompletely; };
     };
+};
+
+// QUEUED HUNT CONTINGENT - the player-hunt spawn, released from MISSION_CORE_SPAWN_QUEUE at
+// priority -2, strictly below every other queue spawn including the armor-critical -1 jump.
+//
+// Why it is queued: a hunt used to spawn inline, bypassing the queue entirely, so it could field a
+// fresh MBT or conjured squad while a marker reinforcement sat queued for those same slots. Marker
+// and player-hunt work now contend through one queue and one set of caps, and the hunt loses.
+//
+// Returns TRUE once handled. A hunt is not a cap-gated job that should sit retrying: by the time it
+// is reached the queue is already empty, and if the contingent cannot be fielded even then the
+// source stays un-latched and simply offers itself again on the next director tick. Nothing is lost
+// by consuming the job, and it avoids a dead job occupying the back of the queue forever.
+MISSION_CORE_fnc_queuedHuntContingent = {
+    params ["_player", "_lkp", "_heading", "_side", "_sideVar", "_factionData", "_srcName", "_srcPos", "_srcSize", "_srcImp", "_srcD", "_playerKey", "_pace"];
+
+    // The player this hunt was queued for may be gone by the time its turn comes. Nothing to hunt.
+    if (isNull _player) exitWith {
+        diag_log format ["DYNAMIC QUEUE: dropped hunt from %1 - target player no longer exists", _srcName];
+        true
+    };
+
+    // The spawn itself, with every gate it already had: armor cap, foot cap, spawn safety, and the
+    // source marker's own manpower pool. That pool is debited HERE, at the moment the squad actually
+    // exists - never back at enqueue - so a hunt that waits behind marker work cannot spend men it
+    // never fielded.
+    private _grp = [_player, _lkp, _heading, _side, _sideVar, _factionData, _srcName, _srcPos, _srcSize, _srcImp, _srcD] call MISSION_CORE_fnc_huntSpawnContingent;
+    if (isNull _grp) exitWith {
+        diag_log format ["DYNAMIC QUEUE: hunt from %1 released its turn but fielded nothing (cap/safety/pool) - source stays available", _srcName];
+        true
+    };
+
+    // Only a SUCCESSFUL dispatch sets the source's next allowed hunt time - a refused or skipped
+    // source stays free to retry on the next director tick.
+    if (_pace > 0) then { MISSION_CORE_HUNT_COOLDOWN set [_srcName, time + _pace]; };
+    // AMMO: dispatching a hunt contingent costs the source marker ammo.
+    [_srcName, ["ammoCostHunt", 2] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_consumeAmmo;
+
+    private _list = MISSION_CORE_HUNT_ACTIVE getOrDefault [_playerKey, []];
+    _list pushBack _grp;
+    MISSION_CORE_HUNT_ACTIVE set [_playerKey, _list];
+    _grp setVariable ["MISSION_CORE_HUNT_TARGET", _player];
+    _grp setVariable ["MISSION_CORE_HUNT_KEY", _playerKey];
+    // Register AFTER HUNT_KEY is stamped: that var is how fn_huntMarkerLive tells a live hunt from
+    // one whose sweep has ended, so registering first would let the very next read prune this group
+    // and the marker would never reach its allowance.
+    private _nowLive = [_srcName, _grp] call MISSION_CORE_fnc_huntMarkerRegister;
+    [_grp, _lkp, _heading, _side, _player, _playerKey, _srcName, _srcPos, _srcD] spawn MISSION_CORE_fnc_huntSweep;
+    diag_log format ["PLAYER HUNT: %1 dispatching %2 from %3 toward %4 (%.0fm, %5 live hunt(s) from this marker)", _side, groupId _grp, _srcName, _lkp, _srcD, _nowLive];
+    true
 };

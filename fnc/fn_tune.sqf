@@ -4,7 +4,7 @@
 // Reads the mission-config MISSION_CORE_TUNE class once at server init into the global
 // MISSION_CORE_SETTINGS hashmap. Everything gameplay-critical (spawn radii, foot budget, armor
 // caps, hunt/house radii, tank production, capture windows) is a number here - tweak
-// description.ext / config\main.hpp and restart, no SQF edits needed.
+// config\missionVars.hpp and restart, no SQF edits needed.
 //
 // MISSION_CORE_fn_tune key default -> number from config, falling back to the SQF default so a
 // missing key never silently zeroes a system.

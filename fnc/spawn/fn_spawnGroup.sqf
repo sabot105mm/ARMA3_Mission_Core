@@ -88,7 +88,7 @@ MISSION_CORE_fnc_spawnGroup = {
     { [_x, _grp, _side] call MISSION_CORE_fnc_guardSpawnKill; } forEach _vehList;
 
     _grp setBehaviour _behavior;
-    _grp setSpeedMode _speed;
+    _grp setSpeedMode ([_speed] call MISSION_CORE_fnc_normaliseGroupSpeed);
     _grp setCombatMode "WHITE";
 
     if (_side == WEST) then { _grp setVariable ["MISSION_CORE_BLUFOR", true]; };

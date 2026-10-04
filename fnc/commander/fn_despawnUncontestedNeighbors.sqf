@@ -17,29 +17,21 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
     {
         private _side = _x;
         private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
-        private _contested = [_side] call MISSION_CORE_fnc_getContestedMarkers;
+        // Which markers are contested comes ONLY from MISSION_CORE_CONTESTED (written solely by
+        // fn_isMarkerContested). Only the NAMES are needed here - every geometric test below reads
+        // MISSION_CORE_CACHED_POSITIONS, a separate var answering a separate question.
+        private _contestedNames = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
         // Remember the last time each still-contested marker was contested, so a player briefly
         // stepping out of the ellipse (and back) does not instantly yank every marching squad.
         {
-            MISSION_CORE_CONTESTED_LAST set [_x select 0, time];
-        } forEach _contested;
+            MISSION_CORE_CONTESTED_LAST set [_x, time];
+        } forEach _contestedNames;
 
-        // ZONE HANDOFF RE-EVAL: remember each side's contested zone names from the previous tick.
-        // When a NEW zone appears while an OLD one drops off in the same tick (the player's fight
-        // moved to another marker), the supporting neighborhood follows the fight: neighbors the
-        // new zone would NOT choose are dropped, newly-chosen ones are brought up in their place,
-        // and the replaced marker's manpower/tank ledgers reset to 0. A zone simply ending with no
-        // replacement is left to the existing 45s give-up path further below.
-        if (isNil "MISSION_CORE_ZONE_PREV") then { MISSION_CORE_ZONE_PREV = createHashMap; };
-        private _zonePrev = MISSION_CORE_ZONE_PREV getOrDefault [str _side, []];
-        private _zoneNow = _contested apply { _x select 0 };
-        private _zoneNew = _zoneNow select { !(_x in _zonePrev) };
-        private _zoneGone = _zonePrev select { !(_x in _zoneNow) };
-        MISSION_CORE_ZONE_PREV set [str _side, _zoneNow];
-        if (count _zoneNew > 0 && count _zoneGone > 0 && { !isNil "MISSION_CORE_fnc_reevalZoneNeighbors" }) then {
-            [_side, _zoneNew, _zoneGone] call MISSION_CORE_fnc_reevalZoneNeighbors;
-        };
-        
+        // A marker that was fought but is no longer contested has its reinforcement state reset
+        // (pool back to full for its next contest, exhaustion/gate/cooldown cleared) while it
+        // KEEPS its own manpower. MISSION_CORE_fnc_deactivateNeighborMarkers does this, so the
+        // teardown below and the reset can never drift apart.
+        // A zone simply ending with no replacement is left to the existing 45s give-up path.
         {
             private _grp = _x;
             if (isNull _grp || { count units _grp == 0 }) then { continue; };
@@ -131,8 +123,18 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
         {
             private _cName = _x select 0;
             if ((_x select 4) != _side) then { continue; };
-            if (_contested findIf { (_x select 0) == _cName } != -1) then {
+            // Direct membership in MISSION_CORE_CONTESTED - the single authority. No row list, no findIf over
+            // a derived structure that could disagree with it.
+            if ((!isNil "MISSION_CORE_CONTESTED") && { _cName in MISSION_CORE_CONTESTED }) then {
                 // Still an active fight - a later give-up must be allowed to fire again.
+                MISSION_CORE_NEIGHBOR_GIVEUP deleteAt _cName;
+                continue;
+            };
+            // A released assault group still engaging NEAR this marker holds it open even though
+            // the defending player is dead / gone - the fight is not over. Refresh the quiet timer
+            // so the normal grace applies once that assault actually ends.
+            if ([_cName, _x select 1, _side] call MISSION_CORE_fnc_markerHeldByLiveAssault) then {
+                MISSION_CORE_CONTESTED_LAST set [_cName, time];
                 MISSION_CORE_NEIGHBOR_GIVEUP deleteAt _cName;
                 continue;
             };
@@ -142,8 +144,11 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
             if (_last <= 0 || { time - _last < (["contestedGraceSeconds", 45] call MISSION_CORE_fnc_tune) }) then { continue; };
             if (MISSION_CORE_NEIGHBOR_GIVEUP getOrDefault [_cName, false]) then { continue; };
             MISSION_CORE_NEIGHBOR_GIVEUP set [_cName, true];
-            if (isNil "MISSION_CORE_CONTESTED") then { MISSION_CORE_CONTESTED = createHashMap; };
-            MISSION_CORE_CONTESTED deleteAt _cName;
+            // NOT clearing MISSION_CORE_CONTESTED here. This used to be a second, independent writer of that
+            // map, which meant "is this marker contested" had an answer that did not come from the
+            // function that owns the question. MISSION_CORE_fnc_isMarkerContested is now the only
+            // writer and clears the latch itself after its grace window; all this needs to do is
+            // deactivate the neighborhood, which is a separate decision it already makes.
             diag_log format ["AI COMMANDER: %1 contested ended (player died / walked away) - deactivating neighborhood", _cName];
             [_cName, _x select 1, _side] call MISSION_CORE_fnc_deactivateNeighborMarkers;
         } forEach MISSION_CORE_CACHED_POSITIONS;

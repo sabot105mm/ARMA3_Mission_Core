@@ -14,7 +14,20 @@ MISSION_CORE_fnc_commitToBattle = {
     // far-out foot patrols board trucks and ride to the fight too - not just groups already
     // inside the contested area. Markers within 1500m of the group are preferred, and among the
     // preferred ones the marker closest to a player wins.
-    private _contested = [_side] call MISSION_CORE_fnc_getContestedMarkers;
+    // TWO SEPARATE QUESTIONS, TWO SEPARATE VARS.
+    // (1) which markers are contested - MISSION_CORE_CONTESTED only, written solely by
+    //     fn_isMarkerContested.
+    private _cNames = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
+    if (count _cNames == 0) exitWith { 0 };
+    // (2) where those markers are - MISSION_CORE_CACHED_POSITIONS, for the closest-to-a-player pick.
+    private _contested = [];
+    if (!isNil "MISSION_CORE_CACHED_POSITIONS") then {
+        {
+            private _n = _x;
+            private _i = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _n };
+            if (_i >= 0) then { _contested pushBack (MISSION_CORE_CACHED_POSITIONS select _i); };
+        } forEach _cNames;
+    };
     if (count _contested == 0) exitWith { 0 };
     private _bestGlobal = _contested select 0;
     private _globalPDist = 1e10;
@@ -94,7 +107,11 @@ MISSION_CORE_fnc_commitToBattle = {
                 // its own fight regardless of the filter.
                 if (count _ownZone == 0 && { !([_grp, _bestMkr select 0, _bestMkr select 1] call MISSION_CORE_fnc_canSnatchGroup) }) then { continue; };
                 if ({ vehicle _x == _x } count units _grp == count units _grp) then { _footCount = _footCount + 1; };
-                [_grp, _bestMkr select 1, _bestMkr select 2] call MISSION_CORE_fnc_sendCounterAttack;
+                // _bestMkr is a MISSION_CORE_CACHED_POSITIONS row: [name, pos, typeName, ...,
+                // owner, ..., importance, size]. Size is index 8, NOT index 2 (that is typeName,
+                // and handing that to sendCounterAttack as _targetSize crashed it on `select 0`).
+                private _bmSize = if (count _bestMkr > 8 && { ((_bestMkr select 8) isEqualType []) }) then { _bestMkr select 8 } else { [200, 200, 0] };
+                [_grp, _bestMkr select 1, _bmSize] call MISSION_CORE_fnc_sendCounterAttack;
                 _grp setVariable ["MISSION_CORE_DISPATCH_MARKER", _bestMkr select 0];
                 diag_log format ["AI COMMANDER: committed %1 to contested %2", groupId _grp, _bestMkr select 0];
                 _count = _count + 1;

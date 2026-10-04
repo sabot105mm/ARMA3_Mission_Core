@@ -110,6 +110,162 @@ MISSION_CORE_fnc_unlockMenuRefresh = {
     [] call MISSION_CORE_fnc_unlockMenuLoad;
 };
 
+// ---- MOVE ORDERS TAB ----------------------------------------------------
+// The unlock menu has two tabs. Unlock/Equip is the default view; Move Orders is a
+// separate tab that sends an unlocked recon slot to a destination. Recon is
+// abstract, so nothing spawns: the server draws the steered line from HQ, runs a
+// travel clock at 30 mph, and the spotter reads the destination's ASL once it
+// arrives. A slot on station is one observer.
+
+// Controls shown only in the unlock/equip view.
+MISSION_CORE_RECON_UNLOCK_CTRLS = [1583, 1584, 1585, 1586, 1587];
+// Controls shown only in the move view.
+MISSION_CORE_RECON_MOVE_CTRLS = [1591, 1592, 1593, 1594, 1595];
+
+MISSION_CORE_fnc_reconTab = {
+    params [["_move", false]];
+    private _d = findDisplay 1580;
+    if (isNull _d) exitWith {};
+    {
+        private _c = _d displayCtrl _x;
+        if (isNull _c) then { continue; };
+        _c ctrlShow (if (_move) then { false } else { true });
+    } forEach MISSION_CORE_RECON_UNLOCK_CTRLS;
+    {
+        private _c = _d displayCtrl _x;
+        if (isNull _c) then { continue; };
+        _c ctrlShow _move;
+    } forEach MISSION_CORE_RECON_MOVE_CTRLS;
+    // Both tab buttons stay enabled. They used to grey out whichever tab was
+    // active, which deadlocked the move view: MOVE ORDERS was only enabled while
+    // already on the move view, so from the default unlock tab there was no way
+    // to reach it. Re-clicking the current tab just re-runs this same render.
+    (_d displayCtrl 1589) ctrlEnable true;
+    (_d displayCtrl 1590) ctrlEnable true;
+    if (_move) then { [] call MISSION_CORE_fnc_reconMoveLoad; };
+};
+
+// Populate the move tab: unlocked recon units and where each one currently is.
+MISSION_CORE_fnc_reconMoveLoad = {
+    private _d = findDisplay 1580;
+    if (isNull _d) exitWith {};
+    if (isNil "MISSION_CORE_RECON_UNITS") exitWith {};
+    private _ml = _d displayCtrl 1593;
+    private _prev = lbCurSel _ml;
+    lbClear _ml;
+    {
+        if (typeName _x != "ARRAY") then { continue; };
+        private _slot = _forEachIndex;
+        private _status = "at HQ";
+        if (!isNil "MISSION_CORE_RECON_MOVES") then {
+            private _m = MISSION_CORE_RECON_MOVES getOrDefault [_slot, []];
+            if (_m isEqualType [] && { count _m >= 7 }) then {
+                if (_m select 4) then {
+                    _status = format ["ON STATION - ASL %1m", round (_m select 5)];
+                } else {
+                    _status = format ["en route - ~%1 min", ceil ((_m select 2) / 60)];
+                };
+            };
+        };
+        private _idx = _ml lbAdd format ["Recon %1  -  %2", _slot + 1, _status];
+        _ml lbSetData [_idx, str _slot];
+    } forEach MISSION_CORE_RECON_UNITS;
+    if (lbSize _ml == 0) then { (_d displayCtrl 1592) ctrlSetText "No recon units unlocked yet."; } else {
+        _ml lbSetCurSel (if (_prev >= 0 && { _prev < lbSize _ml }) then { _prev } else { 0 });
+        [] call MISSION_CORE_fnc_reconMoveInfo;
+    };
+};
+
+MISSION_CORE_fnc_reconMoveInfo = {
+    private _d = findDisplay 1580;
+    if (isNull _d) exitWith {};
+    private _ml = _d displayCtrl 1593;
+    private _sel = lbCurSel _ml;
+    if (_sel < 0) exitWith {};
+    private _slot = parseNumber (_ml lbData _sel);
+    private _txt = "";
+    if (!isNil "MISSION_CORE_RECON_MOVES") then {
+        private _m = MISSION_CORE_RECON_MOVES getOrDefault [_slot, []];
+        if (_m isEqualType [] && { count _m >= 7 }) then {
+            if (_m select 4) then {
+                _txt = format ["ON STATION\n\nDestination ASL: %1 m\nSpotting range set by distance + this height.", round (_m select 5)];
+            } else {
+                _txt = format ["EN ROUTE\n\nTravelling at 30 mph.\nArrives in ~%1 min.\n\nRecon starts spotting once it reaches the point.", ceil ((_m select 2) / 60)];
+            };
+        };
+    };
+    if (_txt == "") then { _txt = "At HQ. Pick a destination and recon will move there, steering around enemy markers.\n\nWhen it arrives, its height above sea level sets how far it can see."; };
+    (_d displayCtrl 1592) ctrlSetStructuredText parseText format ["<t color='#CFBF4B'>RECON %1</t><br/><br/>%2", _slot + 1, _txt];
+};
+
+// Arm a map click to set the selected unit's move point.
+MISSION_CORE_fnc_reconMoveArm = {
+    private _d = findDisplay 1580;
+    if (isNull _d) exitWith {};
+    if !([] call MISSION_CORE_fnc_nearHQ) exitWith { hint "You must be at the HQ flag."; };
+    private _ml = _d displayCtrl 1593;
+    private _sel = lbCurSel _ml;
+    if (_sel < 0) exitWith { hint "Select a recon unit first."; };
+    MISSION_CORE_RECON_PICK_SLOT = parseNumber (_ml lbData _sel);
+    if (MISSION_CORE_RECON_PICK_SLOT < 0) exitWith { hint "Select a recon unit first."; };
+    MISSION_CORE_RECON_PICK_ARMED = true;
+    closeDialog 2;
+    openMap true;
+    onMapSingleClick MISSION_CORE_fnc_reconMapPicked;
+    hint format ["Click a destination for Recon %1.\nThe line is drawn from HQ, steering around enemy markers.", MISSION_CORE_RECON_PICK_SLOT + 1];
+};
+
+// Recall the selected unit to HQ: it stops being an observer and returns to the
+// abstract roster.
+MISSION_CORE_fnc_reconMoveRecall = {
+    private _d = findDisplay 1580;
+    if (isNull _d) exitWith {};
+    private _ml = _d displayCtrl 1593;
+    private _sel = lbCurSel _ml;
+    if (_sel < 0) exitWith { hint "Select a recon unit first."; };
+    private _slot = parseNumber (_ml lbData _sel);
+    if (isNil "MISSION_CORE_RECON_MOVES") exitWith {};
+    if (!((MISSION_CORE_RECON_MOVES getOrDefault [_slot, []]) isEqualType [])) exitWith {};
+    if (count (MISSION_CORE_RECON_MOVES getOrDefault [_slot, []]) == 0) exitWith { hint "That unit is already at HQ."; };
+    [player, _slot] remoteExec ["MISSION_CORE_fnc_reconClearMove", 2];
+    [] spawn { sleep 0.7; [] call MISSION_CORE_fnc_reconMoveLoad; };
+};
+
+// Map-click picking, using `onMapSingleClick` - the mechanism the recruit menu
+// and waypoint editor already use. `addMissionEventHandler ["MapClickEvent"]`
+// is NOT valid in this build: the engine rejects the enum with
+// "Unknown enum value: MapClickEvent". The handler is installed when the pick is
+// armed and cleared with `onMapSingleClick ""` once a click lands, so it is
+// inert the rest of the time instead of firing on every map click.
+if (hasInterface) then {
+    MISSION_CORE_fnc_reconMapPicked = {
+        private _slot = MISSION_CORE_RECON_PICK_SLOT;
+        MISSION_CORE_RECON_PICK_ARMED = false;
+        onMapSingleClick "";
+        openMap false;
+        if (_slot < 0) exitWith {};
+        diag_log format ["RENOWN/RECON: slot %1 pick at %2", _slot, mapGridPosition _pos];
+        [_slot, _pos] remoteExec ["MISSION_CORE_fnc_reconSubmitMove", 2];
+        [] spawn { sleep 0.4; [] call MISSION_CORE_fnc_reconMoveLoad; };
+    };
+};
+
+// Client -> server move order. The server re-validates rank, slot and geometry.
+MISSION_CORE_fnc_reconSubmitMove = {
+    params ["_slot", "_pos"];
+    [player, _slot, _pos] remoteExec ["MISSION_CORE_fnc_reconSetMove", 2];
+};
+
+// Called by the server once a move order is accepted or rejected. Both paths send
+// a string: "" for success, the reason for a rejection. The default is belt and
+// braces - an unset _err must never reach the comparison below, because an
+// undefined variable there throws "Generic error in expression".
+MISSION_CORE_fnc_reconMoveResult = {
+    params ["_err"];
+    if !(_err isEqualType "") then { _err = ""; };
+    if (_err != "") then { hint format ["Move order rejected: %1", _err]; } else { hint "Move order sent. Recon is en route."; };
+};
+
 // Populate both lists + the info panel from the broadcast state.
 MISSION_CORE_fnc_unlockMenuLoad = {
     private _d = findDisplay 1580;
@@ -161,6 +317,8 @@ MISSION_CORE_fnc_unlockMenuLoad = {
     };
     diag_log format ["RENOWN/RECON: unlock menu loaded - units=%1 gear=%2", count MISSION_CORE_RECON_UNITS, count MISSION_CORE_RECON_GEAR];
 
+    // Always open on the unlock/equip tab; the move panel stays hidden until picked.
+    [false] call MISSION_CORE_fnc_reconTab;
     [] call MISSION_CORE_fnc_unlockMenuSelect;
 };
 
@@ -220,15 +378,30 @@ MISSION_CORE_fnc_unlockMenuSelect = {
     private _dChance = ((20 + _n * 12 + _det) min 85) max 0;
     private _sChance = ((15 + _n * 10 + _hit) min 90) max 0;
     private _dWeight = 15 + _dest;
+    // On-station observers: an unlocked unit only sees once it has been given a
+    // move point and has arrived there.
+    private _onStation = 0;
+    if (!isNil "MISSION_CORE_RECON_MOVES") then {
+        {
+            private _m = MISSION_CORE_RECON_MOVES getOrDefault [_x, []];
+            if (_m isEqualType [] && { count _m >= 7 }) then { if (_m select 4) then { _onStation = _onStation + 1; }; };
+        } forEach (keys MISSION_CORE_RECON_MOVES);
+    };
     private _renown = if (isNil "MISSION_CORE_RENOWN") then { 0 } else { MISSION_CORE_RENOWN };
     private _info = format [
         "<t align='center' color='#CFBF4B'>MARINE FORCE RECON</t><br/><br/>" +
         "Renown: %1<br/>" +
-        "Recon units: %2 (detection ~%3%5 per convoy cycle, strike ~%4%5, destroy weight %6)<br/><br/>" +
-        "Recon units never spawn or spot - they roll dice. More units and optics reveal supply routes sooner; SPG / MLRS / Paveway exist only as strike dice.<br/>" +
+        "Recon units: %2 (strike ~%4%5 per cycle, destroy weight %6)<br/>" +
+        "On station: %7 of %2 - spotting is by range and height, not a flat roll.<br/>" +
+        "Use the MOVE ORDERS tab: send a unit to a point, it drives there at 30 mph around enemy markers,<br/>" +
+        "and once on station how far it sees is set by that spot's height above sea level.<br/><br/>" +
+        "Fire support rates - Paveway / MLRS / SPG:<br/>" +
+        "  Tank column: 95% / 15% / 10% destroy<br/>" +
+        "  Ammo truck: 99% / 50% / 30% kill<br/>" +
+        "  Manpower truck: 99% kill / 20% kill+40% clip / 20% kill+20% clip<br/><br/>" +
         "Capture markers to earn renown; destroyed convoys also pay renown.<br/><br/>" +
         "<t align='center' color='#808080'>Intel is shared with the whole team.</t>",
-        _renown, _n, _dChance, _sChance, "%", _dWeight
+        _renown, _n, _dChance, _sChance, "%", _dWeight, _onStation
     ];
     (_d displayCtrl 1587) ctrlSetStructuredText parseText _info;
 };

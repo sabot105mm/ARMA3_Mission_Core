@@ -107,7 +107,7 @@ private _order = _grp getVariable ["MISSION_CORE_ORDER", ""];
             if (!_hPlayer && { _oMkr != "" }) then {
                 private _cc = _contestedCache getOrDefault [_oMkr, -1];
                 if (_cc == -1) then {
-                    _cc = if ([_home, side _ldr, _oMkr] call MISSION_CORE_fnc_isMarkerContested) then { 1 } else { 0 };
+                    _cc = if ([_home, side _ldr, _oMkr, "defenseSpotLoop"] call MISSION_CORE_fnc_isMarkerContested) then { 1 } else { 0 };
                     _contestedCache set [_oMkr, _cc];
                 };
                 if (_cc == 0) then { continue; };

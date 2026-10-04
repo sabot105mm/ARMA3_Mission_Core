@@ -374,9 +374,13 @@ MISSION_CORE_fnc_spawnLocation = {
         // one marker's garrison). Powerplants / solar are static tiny garrisons: they never commit
         // ANY fresh garrison off-marker (light-infrastructure markers stay home).
         if (count _freshGroups > 0 && _owner in [WEST, EAST] && { !([_loc] call MISSION_CORE_fnc_isLightInfrastructure) }) then {
-            private _contestedList = [_owner] call MISSION_CORE_fnc_getContestedMarkers;
-            private _selfZone = _contestedList select { (_x select 0) == _locName } param [0, []];
-            if (count _selfZone > 0) then {
+            // "Is this marker contested?" - ONE membership test against MISSION_CORE_CONTESTED (written
+            // solely by fn_isMarkerContested). No derived zone list, no second opinion.
+            // Geometry is NOT a contested question: _loc is this marker's own cached row, already in
+            // hand, so index 1 is its position and index 8 its size.
+            private _selfContested = (!isNil "MISSION_CORE_CONTESTED") && { _locName in MISSION_CORE_CONTESTED };
+            if (_selfContested) then {
+                private _selfZone = [_locName, _loc select 1, (if (count _loc > 8) then { _loc select 8 } else { [50, 50] })];
                 private _committed = 0;
                 {
                     if (!isNull _x &&

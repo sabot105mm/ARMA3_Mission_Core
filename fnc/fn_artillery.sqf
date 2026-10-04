@@ -10,7 +10,19 @@
 
 MISSION_CORE_fnc_artilleryHomePos = {
     params ["_side", ["_isStatic", false]];
-    private _contested = [_side] call MISSION_CORE_fnc_getContestedMarkers;
+    // TWO SEPARATE QUESTIONS, TWO SEPARATE VARS.
+    // (1) contested NAMES - MISSION_CORE_CONTESTED only, written solely by fn_isMarkerContested.
+    private _cNames = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
+    // (2) POSITIONS - MISSION_CORE_CACHED_POSITIONS. The anchor below needs where a contested marker
+    // is, which is geometry, not contested state, so it is read from the cache by name.
+    private _contested = [];
+    if (!isNil "MISSION_CORE_CACHED_POSITIONS") then {
+        {
+            private _n = _x;
+            private _i = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _n };
+            if (_i >= 0) then { _contested pushBack (MISSION_CORE_CACHED_POSITIONS select _i); };
+        } forEach _cNames;
+    };
     private _anchor = [0, 0, 0];
     private _cName = "";
     if (count _contested > 0) then {
@@ -50,10 +62,19 @@ MISSION_CORE_fnc_artilleryDanger = {
     params ["_side", "_refPos"];
     private _best = [0, 0, 0];
     private _bestD = 1e10;
-    {
-        private _d = (_x select 1) distance2D _refPos;
-        if (_d < _bestD) then { _bestD = _d; _best = _x select 1; };
-    } forEach ([_side] call MISSION_CORE_fnc_getContestedMarkers);
+    // Contested NAMES from MISSION_CORE_CONTESTED (written solely by fn_isMarkerContested); the
+    // POSITIONS needed for the nearest-anchor comparison come from MISSION_CORE_CACHED_POSITIONS.
+    // Two separate vars answering two separate questions.
+    if (!isNil "MISSION_CORE_CONTESTED" && { !isNil "MISSION_CORE_CACHED_POSITIONS" }) then {
+        {
+            private _n = _x;
+            private _i = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _n };
+            if (_i >= 0) then {
+                private _d = ((MISSION_CORE_CACHED_POSITIONS select _i) select 1) distance2D _refPos;
+                if (_d < _bestD) then { _bestD = _d; _best = (MISSION_CORE_CACHED_POSITIONS select _i) select 1; };
+            };
+        } forEach (keys MISSION_CORE_CONTESTED);
+    };
     {
         private _d = _x distance2D _refPos;
         if (_d < _bestD) then { _bestD = _d; _best = getPos _x; };
@@ -551,7 +572,9 @@ MISSION_CORE_fnc_artilleryMonitor = {
             if (_hasLive) then { continue; };
             private _respawnAt = if (count _entry > 2) then { _entry select 2 } else { 0 };
             if (time < _respawnAt) then { continue; };
-            if (count ([_side] call MISSION_CORE_fnc_getContestedMarkers) == 0) then { continue; };
+            // Artillery only respawns while something is contested - MISSION_CORE_CONTESTED, written solely by
+            // fn_isMarkerContested. This gate needs no geometry, just whether the map is empty.
+            if ((isNil "MISSION_CORE_CONTESTED") || { count MISSION_CORE_CONTESTED == 0 }) then { continue; };
             [_side] call MISSION_CORE_fnc_spawnArtillery;
         } forEach [[WEST, "BLUFOR"], [EAST, "REDFOR"]];
     };

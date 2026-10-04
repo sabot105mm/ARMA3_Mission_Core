@@ -104,14 +104,22 @@ MISSION_CORE_fnc_releaseStagedAssault = {
 // so this var only feeds the watchdog).
 MISSION_CORE_fnc_snapAttackTargetToZone = {
     params ["_grp", "_side", "_targetPos"];
-    if (isNil "MISSION_CORE_fnc_getContestedMarkers") exitWith {};
-    private _cZones = [_side] call MISSION_CORE_fnc_getContestedMarkers;
+    // TWO SEPARATE QUESTIONS, TWO SEPARATE VARS.
+    // (1) contested NAMES - MISSION_CORE_CONTESTED only, written solely by fn_isMarkerContested.
+    // (2) POSITIONS - MISSION_CORE_CACHED_POSITIONS, for the nearest-contested-marker search.
     private _nearest = [];
     private _bestD = 1e10;
-    {
-        private _d = (_x select 1) distance2D _targetPos;
-        if (_d < _bestD) then { _bestD = _d; _nearest = _x; };
-    } forEach _cZones;
+    if (!isNil "MISSION_CORE_CONTESTED" && { !isNil "MISSION_CORE_CACHED_POSITIONS" }) then {
+        {
+            private _n = _x;
+            private _i = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _n };
+            if (_i >= 0) then {
+                private _row = MISSION_CORE_CACHED_POSITIONS select _i;
+                private _d = (_row select 1) distance2D _targetPos;
+                if (_d < _bestD) then { _bestD = _d; _nearest = _row; };
+            };
+        } forEach (keys MISSION_CORE_CONTESTED);
+    };
     if (count _nearest > 0) then { _grp setVariable ["MISSION_CORE_ATTACK_TARGET", _nearest select 1]; };
 };
 
@@ -264,14 +272,23 @@ MISSION_CORE_fnc_releaseCounterStaged = {
                 [(_l select 0), (_l select 1), _sz]
             };
         };
-        private _zones = [_side] call MISSION_CORE_fnc_getContestedMarkers;
-        if (count _zones == 0) exitWith { [] };
-        private _best = _zones select 0;
-        private _bd = (_best select 1) distance2D _fromPos;
-        {
-            private _d = (_x select 1) distance2D _fromPos;
-            if (_d < _bd) then { _best = _x; _bd = _d; };
-        } forEach _zones;
+        // Contested NAMES from MISSION_CORE_CONTESTED (written solely by fn_isMarkerContested); the
+        // POSITIONS used to find the nearest live objective come from MISSION_CORE_CACHED_POSITIONS.
+        // Two separate vars answering two separate questions.
+        private _best = [];
+        private _bd = 1e10;
+        if (!isNil "MISSION_CORE_CONTESTED" && { !isNil "MISSION_CORE_CACHED_POSITIONS" }) then {
+            {
+                private _n = _x;
+                private _i = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _n };
+                if (_i >= 0) then {
+                    private _row = MISSION_CORE_CACHED_POSITIONS select _i;
+                    private _d = (_row select 1) distance2D _fromPos;
+                    if (_d < _bd) then { _best = _row; _bd = _d; };
+                };
+            } forEach (keys MISSION_CORE_CONTESTED);
+        };
+        if (count _best == 0) exitWith { [] };
         [(_best select 0), (_best select 1), (_best select 2)]
     };
     // RETARGET ACQUISITION (reusable): hold the roster staged and poll for the next live objective,
@@ -366,9 +383,12 @@ MISSION_CORE_fnc_releaseCounterStaged = {
                     private _oNow = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _originName }) param [0, []];
                     if (count _oNow > 0 && { (_oNow select 4) != _side }) then {
                         _converted = true;
-                        private _tgtStillLive = false;
-                        private _zones = [_side] call MISSION_CORE_fnc_getContestedMarkers;
-                        if (_tgtName != "" && { _zones findIf { (_x select 0) == _tgtName } != -1 }) then { _tgtStillLive = true; };
+                        // Contested state comes ONLY from MISSION_CORE_CONTESTED (written solely by
+                        // fn_isMarkerContested). _tgtName is already a marker name, so this is a
+                        // direct membership test - no derived zone list, no independent opinion.
+                        private _tgtStillLive = _tgtName != "" && {
+                            (!isNil "MISSION_CORE_CONTESTED") && { _tgtName in MISSION_CORE_CONTESTED }
+                        };
                         if (_tgtStillLive) then {
                             diag_log format ["COUNTER-ATTACK: %1 origin flipped en route - %2 advancing groups converted to assault posture, keep pressing %3", _originName, count _advancing, _tgtName];
                             [_targetPos, _tgtSize, "attack", _tgtName] call _releaseStaged;
