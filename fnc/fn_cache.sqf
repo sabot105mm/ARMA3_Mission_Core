@@ -50,6 +50,11 @@ MISSION_CORE_fnc_cacheTerrain = {
         _cached pushBack [_markerName, _pos, _typeName, _priority, _owner, _defense, _ambush, _importance];
     } forEach _locations;
     MISSION_CORE_CACHED_POSITIONS = _cached;
+    // The abstract-leg gate memo is keyed by marker name but stores distances measured against a
+    // PREVIOUS marker set. Rebuilding the cache is exactly the moment those measurements stop
+    // describing the map, so the memo is dropped with it. It is rebuilt lazily on the next
+    // dispatch attempt, so nothing is lost but a little recomputation.
+    MISSION_CORE_ABSTRACT_GATE = nil;
     _cached
 };
 

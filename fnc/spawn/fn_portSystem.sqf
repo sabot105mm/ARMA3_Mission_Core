@@ -203,6 +203,9 @@ MISSION_CORE_fnc_resolvePorts = {
     // The location list just changed structurally - drop the name index so the next
     // caller rebuilds it from the pruned list instead of indexing stale entries.
     MISSION_CORE_NAME_INDEX = nil;
+    // Same reasoning for the abstract-leg gate memo: removing nested ports removes markers, so any
+    // distance it holds for a pair touching one was measured against a marker that no longer exists.
+    MISSION_CORE_ABSTRACT_GATE = nil;
     diag_log format ["DYNAMIC PORT: resolved %1 ports (%2 nested, %3 isolated)", count _ports, count _nestedNames, (count _ports) - (count _nestedNames)];
 };
 
@@ -286,10 +289,10 @@ MISSION_CORE_fnc_manpowerTick = {
         };
 private _bName = _needBase select 0;
     private _bPos = _needBase select 1;
-    // Road route, not a straight line. ETA is derived from the real road length, so a port 2km
-    // away over a mountain road no longer "arrives" sooner than one 1.5km away across open
-    // ground. The straight-line lerp this replaced also slid the recon icon through terrain the
-    // convoy was not travelling on.
+    // Road route preferred, not a straight line. ETA is derived from the real road length, so a
+    // port 2km away over a mountain road no longer "arrives" sooner than one 1.5km away across
+    // open ground. The straight-line lerp this replaced also slid the recon icon through terrain
+    // the convoy was not travelling on.
     private _pIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _portName };
     private _pRec = if (_pIdx >= 0) then { MISSION_CORE_CACHED_POSITIONS select _pIdx } else { [] };
     private _route = [_pPos, _bPos, _portName, _bName, _pRec, _needBase] call MISSION_CORE_fnc_supplyRoute;
@@ -298,13 +301,27 @@ private _bName = _needBase select 0;
     // Cumulative segments ride with the cache - never re-walked on a repeat port->base pair.
     private _cum = _route select 2;
     private _dist = _route select 3;
-    // Never let a degenerate path produce a zero ETA. And when the router could
-    // not find roads, hold the batch for the next port tick rather than shipping
-    // a straight line: the manpower is still at the port, so the next tick
-    // retries with a fresh search instead of a cached failure. The accumulator is
-    // deliberately NOT credited, so the batch keeps accumulating and ships in
-    // full once a route exists.
+    private _straight = false;
     if (!_routed || { _dist < 1 }) then {
+        // No road route. Ship a straight line when the tune allows it instead of holding
+        // the batch forever on a pair that may never route - nothing is cached, and
+        // supplyRoute's fail backoff keeps searching, so a later tick upgrades to a real
+        // route if one exists. The accumulator is NOT credited either way: the batch
+        // ships in full now, or keeps accumulating for a retry when the tune is off.
+        if ((["supplyRouteStraightFallback", 1] call MISSION_CORE_fnc_tune) > 0) then {
+            private _flat = [_pPos, _bPos] call MISSION_CORE_fnc_straightPlan;
+            if (count (_flat select 0) >= 2) then {
+                _roadPath = _flat select 0;
+                _cum = _flat select 1;
+                _dist = _flat select 2;
+                _straight = true;
+            };
+        };
+    };
+    // Never let a degenerate path produce a zero ETA. With the fallback on this only
+    // fires for a truly degenerate pair; with it off it still holds the batch for the
+    // next port tick rather than shipping a straight line.
+    if (count _roadPath < 2 || { _dist < 1 }) then {
         diag_log format ["DYNAMIC MANPOWER: %1 -> %2 no connected road route - batch held at port for retry", _portName, _bName];
         continue;
     };
@@ -314,7 +331,7 @@ private _bName = _needBase select 0;
     // Road data is APPENDED (indices 6-8). Indices 0-5 are untouched, so every existing reader of
     // this record keeps working and older entries without a path simply fall back to a lerp.
     MISSION_CORE_MANPOWER_CONVOYS pushBack [_portName, _bName, _ship, time + _eta, MISSION_CORE_CONVOY_ID, "", _roadPath, _cum, _eta];
-    diag_log format ["DYNAMIC MANPOWER: %1 shipping %2 manpower to base %3 (%4m %5, ETA %6s)", _portName, round (_ship * 10) / 10, _bName, round _dist, if (_routed) then { "via road" } else { "direct" }, round _eta];
+    diag_log format ["DYNAMIC MANPOWER: %1 shipping %2 manpower to base %3 (%4m %5, ETA %6s)", _portName, round (_ship * 10) / 10, _bName, round _dist, if (_straight) then { "straight-line fallback" } else { "via road" }, round _eta];
     } forEach (keys MISSION_CORE_PORTS);
 
       // ---- Arrive manpower convoys ----

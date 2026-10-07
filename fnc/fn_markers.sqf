@@ -171,6 +171,47 @@ MISSION_CORE_fnc_isLightInfrastructure = {
     (_t == "powerplant" || _t == "solar")
 };
 
+// PERMANENT RULE (NON-COMBAT-EFFECTIVE MARKERS): a Factory / Powerplant / Solar / Depot is a
+// production and logistics site. Its garrison defends in place and NEVER launches a
+// reinforcement, a counter-attack or an assault. It still captures, still fields its garrison,
+// still fields light infantry, still RECEIVES support from other markers, and its own
+// self-defense is untouched - this rule only ever removes the OFFENSIVE half.
+//
+// Deliberately WIDER than isLightInfrastructure (Powerplant/Solar only) and kept as a separate
+// predicate: the light-infra rule ALSO withholds static defenses (MG bunkers/emplacements), and
+// that half must NOT be extended to factories or depots, which do field static defenses.
+//
+// Enforced in two layers. Layer 1 stops the AI from SELECTING these markers as a source (so no
+// manpower is spent and no log claims a march that will not happen). Layer 2 refuses the dispatch
+// itself. Layer 1 alone would leak through the paths that build their own waypoints instead of
+// calling sendCounterAttack (fn_aiAssaultLoop wave groups, fn_armorCommanderLoop); layer 2 alone
+// would work but waste the marker. Both are required.
+//
+// Tunables: nonCombatEffectiveMarkers (type list) + nonCombatEffectiveGate (1 = enforce).
+MISSION_CORE_fnc_isNonCombatEffective = {
+    params ["_loc"];
+    if (isNil "_loc" || count _loc < 3) exitWith { false };
+    if ((["nonCombatEffectiveGate", 1] call MISSION_CORE_fnc_tune) < 1) exitWith { false };
+    private _types = ["nonCombatEffectiveMarkers", ["factory", "powerplant", "solar", "depot"]] call MISSION_CORE_fnc_tune;
+    if !(_types isEqualType []) exitWith { false };
+    toLower (_loc select 2) in _types
+};
+
+// Group-level form: resolve ORIGIN_MARKER through the live position cache, then defer to the
+// marker predicate. This is the dispatch-layer backstop, used where only a group is in hand.
+// A group whose origin row has been pruned or renamed resolves to FALSE - the cache cannot
+// prove the origin is gated, and refusing every such group would strand units whenever a marker
+// is removed mid-battle. Callers that already hold the marker row should gate on that instead.
+MISSION_CORE_fnc_groupIsNonCombatEffective = {
+    params ["_group"];
+    if (isNull _group) exitWith { false };
+    private _name = _group getVariable ["MISSION_CORE_ORIGIN_MARKER", ""];
+    if (_name == "" || isNil "MISSION_CORE_CACHED_POSITIONS") exitWith { false };
+    private _row = MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _name };
+    if (count _row == 0) exitWith { false };
+    [_row select 0] call MISSION_CORE_fnc_isNonCombatEffective
+};
+
 MISSION_CORE_fnc_scanMarkers = {
     private _locationTypes = missionConfigFile >> "LOCATION_TYPES";
     private _allMarkers = allMapMarkers;

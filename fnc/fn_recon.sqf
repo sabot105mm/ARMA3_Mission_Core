@@ -971,7 +971,7 @@ MISSION_CORE_fnc_reconTickDetect = {
           if (random 100 < _chance) then {
               private _etaMin = ceil (((_x select 3) - time) / 60) max 1;
               [
-                  _cid, _curPos, "o_ammo", "ColorOrange", 0.8,
+                  _cid, _curPos, "o_supply", "ColorOrange", 0.8,
                   format ["AMMO CONVOY: %1 -> %2 | ETA ~%3 min", _x select 0, _x select 1, _etaMin],
                   "AMMO ROUTE REVEALED",
                   format ["%1 -> %2, ETA ~%3 min", _x select 0, _x select 1, _etaMin],

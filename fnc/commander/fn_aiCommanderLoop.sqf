@@ -289,7 +289,7 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                     if (isNil "MISSION_CORE_BLUFOR_SUPPORT_COOLDOWN") then { MISSION_CORE_BLUFOR_SUPPORT_COOLDOWN = createHashMap; };
                     private _bsLast = MISSION_CORE_BLUFOR_SUPPORT_COOLDOWN getOrDefault [_markerName, -99999];
                     if (time - _bsLast >= 600) then {
-                        private _blu = MISSION_CORE_CACHED_POSITIONS select { (_x select 4) == WEST };
+                        private _blu = MISSION_CORE_CACHED_POSITIONS select { (_x select 4) == WEST && { !([_x] call MISSION_CORE_fnc_isNonCombatEffective) } };
                         if (count _blu > 0) then {
                             private _bBest = _blu select 0;
                             private _bBestD = (_bBest select 1) distance2D _locPos;
@@ -311,7 +311,11 @@ MISSION_CORE_fnc_aiCommanderLoop = {
                     // stay on the defensive and do not mount the assault ("assembleAssault").
                     private _canCounter = [_markerName] call MISSION_CORE_fnc_ammoCanAttack;
                     // Full assault: free the cap, then spawn up to 2 tank markers + 1 inf marker
-                    if (_locOwner == EAST && _canCounter) then {
+                    // NON-COMBAT-EFFECTIVE MARKERS MOUNT NO ASSAULT: the origin of this assault is
+                    // _markerName (the contested zone itself, see the assembleAssault call below), so
+                    // a factory / powerplant / solar / depot under attack defends and asks for help
+                    // but never counter-attacks. It is still a valid reinforcement RECIPIENT.
+                    if (_locOwner == EAST && _canCounter && { !([_loc] call MISSION_CORE_fnc_isNonCombatEffective) }) then {
                         if (isNil "MISSION_CORE_COUNTERATTACK_COOLDOWN") then { MISSION_CORE_COUNTERATTACK_COOLDOWN = createHashMap; };
                         if (time > (MISSION_CORE_COUNTERATTACK_COOLDOWN getOrDefault [_markerName, 0])) then {
                             MISSION_CORE_COUNTERATTACK_COOLDOWN set [_markerName, time + 600];

@@ -23,18 +23,23 @@ MISSION_CORE_fnc_requestReinforcement = {
         if (_zIdx >= 0 && { _locPos distance ((MISSION_CORE_CACHED_POSITIONS select _zIdx) select 1) < 4000 }) exitWith {};
     };
 
-    // Find nearest friendly REDFOR location with positive supply. PERMANENT RULE: powerplants /
-    // solar are static tiny garrisons - they never act as reinforcement GIVERS
-    // (no supply dispatched).
+    // Find nearest friendly REDFOR location with positive supply. PERMANENT RULE: non-combat-effective
+    // markers (Factory / Powerplant / Solar / Depot) never act as reinforcement GIVERS - they are
+    // production and logistics sites whose garrison holds in place. They can still RECEIVE
+    // reinforcements. Note this is the WIDER rule; the older light-infrastructure half (which also
+    // withheld static defenses) is unchanged and still enforced separately.
     private _providers = MISSION_CORE_CACHED_POSITIONS select {
         (_x select 4) == EAST &&
         { (_x select 0) != _locName } &&
-        { !([_x] call MISSION_CORE_fnc_isLightInfrastructure) } &&
+        { !([_x] call MISSION_CORE_fnc_isNonCombatEffective) } &&
         { (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_x select 0, 0]) > (_x select 7) * 10 }
     };
     // AMMO-aware provider: when the requesting marker is low on ammo, prefer a provider that also
-    // has ammo stock (a stocked depot) so the reinforcement can pair an ammo top-up. A provider
-    // with >= 10 ammo ranks first; suppliers with none still field men but are de-prioritized.
+    // has ammo stock so the reinforcement can pair an ammo top-up. A neighbor with no ammo cannot
+    // fight, so this ranking is what keeps a supplied-but-unarmed marker from being picked as the
+    // giver. A provider with >= 10 ammo ranks first; suppliers with none still field men but are
+    // de-prioritized. (Was worded "a stocked depot" - depots are non-combat-effective now, so the
+    // qualifying provider is any armed marker. fn_ammo.sqf seeds ammo for every marker.)
     if ([_locName] call MISSION_CORE_fnc_getAmmoFraction < 0.3) then {
         private _stocked = _providers select { MISSION_CORE_LOCATION_AMMO getOrDefault [(_x select 0), 0] >= 10 };
         if (count _stocked > 0) then { _providers = _stocked; } else { diag_log format ["DYNAMIC REINF: %1 low on ammo but no stocked provider found", _locName]; };
@@ -102,27 +107,106 @@ MISSION_CORE_fnc_requestReinforcement = {
         // when a squad is KIA and frees a slot.
         // PERMANENT RULE (global foot budget): the sender cap also respects the per-side foot-squad
         // cap - a reinforcement arm NEVER floats the map over footSquadCapSquads.
-        if (!([EAST, "inf", _locPos] call MISSION_CORE_fnc_townCategoryCanUse) || { ([EAST] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) }) then {
+        // PENDING ABSTRACT LEGS COUNT IN THE CAP. An abstract leg has no group yet, so
+        // fnc_countFootSquads cannot see it, and without this term a provider would mint free
+        // squads indefinitely - nothing debited, nothing counted. This reserves the budget
+        // slot WITHOUT costing anything: no manpower and no ammo move until the squad spawns.
+        // Re-evaluated EVERY iteration, not hoisted: each leg that is accepted adds to the
+        // pending count, so a burst that hoisted this would mint _groupCount legs in one go.
+        private _footCap = ["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune;
+        if (!([EAST, "inf", _locPos] call MISSION_CORE_fnc_townCategoryCanUse) || { (([EAST] call MISSION_CORE_fnc_countFootSquads) + ([] call MISSION_CORE_fnc_countPendingAbstractLegs)) >= _footCap }) then {
             ["MISSION_CORE_fnc_queuedReinforce", format ["reinf_%1_%2", _providerName, _locName], [EAST, _x, _spawnPos, _factionData select 3, _importance, _locPos, _mSize, _providerName]] call MISSION_CORE_fnc_enqueueSpawn;
         } else {
-            private _grp = [_x select 0, _spawnPos, EAST, _factionData select 3, "AWARE", "LIMITED", _importance, _locPos, _mSize] call MISSION_CORE_fnc_spawnGroup;
-            if (!isNull _grp) then {
-                _grp setVariable ["MISSION_CORE_MARKER_CENTER", _locPos];
-                [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
-                // Delegate the movement decision to the same path neighborCounterAttack uses.
-                // sendCounterAttack trucks the squad when it is 700m+ out AND a player is actually
-                // near the target, dismounts 100m OUTSIDE the marker edge, drives the road route,
-                // and falls back to a foot advance when either condition fails. The single MOVE
-                // waypoint this replaced walked the whole way - through water, across walls - and
-                // delivered the squad on top of the players instead of onto the approach.
-                //
-                // Side effect worth knowing: on arrival these squads now run footArrival +
-                // footSquadPostAssault, so they patrol and take part in quadrant engagement rather
-                // than sitting on the marker. That is the intended consequence of sharing one path.
-                [_grp, _locPos, _mSize] call MISSION_CORE_fnc_sendCounterAttack;
-                _supplyGiven = _supplyGiven + 1;
-                if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
-                MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
+// LONG HAUL? Send it as an abstract leg instead of putting a squad on the map.
+            // Only trips at 1500m+ (reinforceAbstractMinDist) and only when both ends are named
+            // markers the road router can plan between; anything else returns false and falls
+            // through to the normal spawn below, unchanged.
+            //
+            // NOT counted in _supplyGiven, because _supplyGiven sizes a convoy that is
+            // dispatched at the END of this function - a leg's squad does not exist yet, and
+            // charging the provider now would take manpower for men still on the road. The
+            // convoy is dispatched from the materialize block below instead, so the supply
+            // follows the squad: nothing is spent until the squad actually spawns.
+            private _legTaken = [
+                "reinf", _providerName, _locName,
+                (_provider select 1), _locPos, _mSize,
+                // payload: everything materialize needs, since an SQF code block does not
+                // close over this scope. 0 template, 1 recipient importance, 2 side,
+                // 3 faction templates, 4 provider name (convoy payer), 5 recipient name
+                // (convoy payee).
+                [_x select 0, _importance, EAST, _factionData select 3, _providerName, _locName],
+                // materialize: raise the squad at the leg's CURRENT point on the route, not
+                // at the provider - that is the whole point of the abstract phase.
+                {
+                    params ["_row", "_frac"];
+                    private _pl = _row select 5;
+                    private _at = [_row select 6, _row select 7, _frac] call MISSION_CORE_fnc_convoyPosAt;
+                    private _g = [_pl select 0, [_at select 0, _at select 1, 0], _pl select 2, _pl select 3, "AWARE", "LIMITED", _pl select 1, _row select 3, _row select 4] call MISSION_CORE_fnc_spawnGroup;
+                    if (!isNull _g) then {
+                        _g setVariable ["MISSION_CORE_MARKER_CENTER", _row select 3];
+                        if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+                        MISSION_CORE_SPAWNED_GROUPS pushBack _g;
+                        // THE SUPPLY FOLLOWS THE MEN. startConvoy debits the provider, so for a
+                        // leg it runs HERE - when the squad exists - and not at leg dispatch.
+                        // One convoy of one, exactly what the direct path contributes per squad
+                        // via _supplyGiven. PERMANENT RULE preserved: a recipient that is
+                        // CONTESTED when the squad appears still gets men but no truck.
+                        // startConvoy returns false and debits nothing if it cannot create a
+                        // record, so a provider whose pool moved on in the meantime simply
+                        // gets no truck - it is never pushed below zero.
+                        if (!isNil "MISSION_CORE_CONTESTED" && { !((_pl select 5) in MISSION_CORE_CONTESTED) }) then {
+                            [_pl select 4, _pl select 5, 1] call MISSION_CORE_fnc_startConvoy;
+                            diag_log format ["ABSTRACT LEG: reinf %1 -> %2 convoy dispatched (1 supply) - squad spawned", _pl select 4, _pl select 5];
+                        } else {
+                            diag_log format ["ABSTRACT LEG: reinf %1 -> %2 supply convoy skipped - recipient contested", _pl select 4, _pl select 5];
+                        };
+                    };
+                    _g
+                },
+                // arrival: hand the last stretch to the same path neighborCounterAttack uses.
+                // It clears the leg waypoints and re-issues the truck / dismount-outside-edge
+                // approach, which is correct - the leg only ever drove the group as far as the
+                // final-approach ring.
+                {
+                    params ["_g", "_row"];
+                    if (isNull _g) exitWith {};
+                    [_g, _row select 3, _row select 4] call MISSION_CORE_fnc_sendCounterAttack;
+                }
+            ] call MISSION_CORE_fnc_abstractLegDispatch;
+            if (!_legTaken) then {
+                // LONG-HAUL GATE: a foot haul at/over the abstraction threshold belongs to the
+                // leg system, not to a truck ride or a multi-km foot slog. If the abstract
+                // dispatch (straight-line fallback included) still declined, skip the conjure -
+                // the pair stays uncounted and a later sweep retries it. Spending a squad on a
+                // doomed ride helps no one.
+                private _skipConjure = false;
+                private _minG = ["reinforceAbstractMinDist", 2000] call MISSION_CORE_fnc_tune;
+                if !(_minG isEqualType 1) then { _minG = 2000; };
+                if (((_provider select 1) distance2D _locPos) >= _minG) then {
+                    _skipConjure = true;
+                    diag_log format ["LONG HAUL REINF: %1 -> %2 is %3m (>= %4m); abstract declined - skipping conjure", _providerName, _locName, round ((_provider select 1) distance2D _locPos), _minG];
+                };
+                if (!_skipConjure) then {
+                private _grp = [_x select 0, _spawnPos, EAST, _factionData select 3, "AWARE", "LIMITED", _importance, _locPos, _mSize] call MISSION_CORE_fnc_spawnGroup;
+                if (!isNull _grp) then {
+                    _grp setVariable ["MISSION_CORE_MARKER_CENTER", _locPos];
+                    [_grp] call MISSION_CORE_fnc_clearGroupWaypoints;
+                    // Delegate the movement decision to the same path neighborCounterAttack uses.
+                    // sendCounterAttack trucks the squad when it is 700m+ out AND a player is actually
+                    // near the target, dismounts 100m OUTSIDE the marker edge, drives the road route,
+                    // and falls back to a foot advance when either condition fails. The single MOVE
+                    // waypoint this replaced walked the whole way - through water, across walls - and
+                    // delivered the squad on top of the players instead of onto the approach.
+                    //
+                    // Side effect worth knowing: on arrival these squads now run footArrival +
+                    // footSquadPostAssault, so they patrol and take part in quadrant engagement rather
+                    // than sitting on the marker. That is the intended consequence of sharing one path.
+                    [_grp, _locPos, _mSize] call MISSION_CORE_fnc_sendCounterAttack;
+                    _supplyGiven = _supplyGiven + 1;
+                    if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+                    MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
+                };
+                };
             };
         };
         // 0.4s gap between reinforcement squads so they arrive staggered

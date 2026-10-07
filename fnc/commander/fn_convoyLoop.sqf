@@ -63,6 +63,9 @@ MISSION_CORE_fnc_resupplyDispatch = {
     private _noStore = count _storers == 0;
     if (_noStore) then { diag_log "DYNAMIC RESUPPLY: no base storer holds enough stock to order"; };
 
+    // Contested zone list derived ONCE per sweep for the assist edge below, not once per marker.
+    private _zoneNames = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };
+
     {
         private _loc = _x;
         private _name = _loc select 0;
@@ -98,25 +101,51 @@ MISSION_CORE_fnc_resupplyDispatch = {
         if (!isNil "MISSION_CORE_fnc_markerWorth") then {
             _worth = ([_loc] call MISSION_CORE_fnc_markerWorth) select 2;
         };
-        private _chance = (((_worth * _urgency * _chanceK) min _chanceMax) max 0);
+        // Same contested-assist edge the ammo channel uses, resolved by the same helper so the two
+        // channels cannot drift apart about who counts as helping a contested zone. Multiplier
+        // applied BEFORE the cap, so it shifts volume and never rank.
+        private _edge = [_loc, "resupplyContestedAssistEdge", _zoneNames] call MISSION_CORE_fnc_contestedAssistEdge;
+        private _chance = (((_worth * _urgency * _chanceK * _edge) min _chanceMax) max 0);
         if (random 1 > _chance) then { continue; };
 
         private _cands = _storers select { (_x select 4) == (_loc select 4) };
         if (count _cands == 0) then { continue; };
         _cands = [_cands, [], { (_x select 1) distance (_loc select 1) }, "ASCEND"] call BIS_fnc_sortBy;
-        private _storerName = ((_cands select 0) select 0);
-        if ((MISSION_CORE_LOCATION_SUPPLY getOrDefault [_storerName, 0]) < _storerFloor) then { continue; };
-
         private _amount = ((_floor - _stock) min _topUp) max 0;
         if (_amount <= 0) then { continue; };
-        private _sent = [_storerName, _name, _amount] call MISSION_CORE_fnc_startConvoy;
+        // MULTI-STORER RETRY, mirroring the ammo channel's ammoRetryDepots. The old code tried
+        // ONLY the nearest storer and, when that exact pair could not route, simply continue'd -
+        // the marker then cooled down and re-picked the SAME base forever. startConvoy already
+        // straight-falls on its own (supplyRouteStraightFallback), so a refusal here is a
+        // genuinely dead pair; the next nearest base may ship the same cargo fine. Walk up to
+        // resupplyRetryStorers candidates, skipping any that have dropped below the floor since
+        // this sweep's storer list was taken (an earlier marker in the same pass may have drained
+        // one). startConvoy charges its cost itself and refunds on failure, so the walk stays
+        // economically neutral between attempts.
+        private _tryMax = (["resupplyRetryStorers", 3] call MISSION_CORE_fnc_tune) max 1;
+        if !(_tryMax isEqualType 1) then { _tryMax = 3; };
+        private _sent = false;
+        private _usedStorer = "";
+        private _i = 0;
+        while { !_sent && { _i < count _cands } && { _i < _tryMax } } do {
+            private _storerName = ((_cands select _i) select 0);
+            if ((MISSION_CORE_LOCATION_SUPPLY getOrDefault [_storerName, 0]) >= _storerFloor) then {
+                _sent = [_storerName, _name, _amount] call MISSION_CORE_fnc_startConvoy;
+                if (_sent) then {
+                    _usedStorer = _storerName;
+                } else {
+                    diag_log format ["DYNAMIC RESUPPLY: %1 could not route %2 supply from base %3 - trying next storer", _name, round _amount, _storerName];
+                };
+            };
+            _i = _i + 1;
+        };
         // Only start the real cooldown if a convoy actually exists. A refused order (contested
         // recipient, route too short, storer too poor) would otherwise burn the cooldown and
         // leave the marker waiting out the full delay for nothing.
         MISSION_CORE_RESUPPLY_CD set [_name, if (_sent) then { time } else { time - _cooldown + 30 }];
         if (_sent) then {
             // worth/chance are logged so the propensity curve can be tuned from the RPT instead of guessed at.
-            diag_log format ["DYNAMIC RESUPPLY: %1 (stock %2, floor %3) ordered %4 supply from base %5 [worth %6, chance %7]", _name, _stock, round _floor, round _amount, _storerName, round (_worth * 10) / 10, round (_chance * 100) / 100];
+            diag_log format ["DYNAMIC RESUPPLY: %1 (stock %2, floor %3) ordered %4 supply from base %5 [worth %6, chance %7]", _name, _stock, round _floor, round _amount, _usedStorer, round (_worth * 10) / 10, round (_chance * 100) / 100];
         };
     } forEach MISSION_CORE_CACHED_POSITIONS;
 };
@@ -165,20 +194,35 @@ MISSION_CORE_fnc_startConvoy = {
     // the roads that actually serve that marker, and so the pair is cached by NAME - a resupply order
     // for the same two markers never re-walks the road network. If the two ends share no connected
     // network the resolver tries a transfer marker, then retries with a wider snap, a deeper node
-    // budget and a longer detour reach before giving up. A pair that still cannot be routed is
-    // refused and refunded, and never cached, so a later order searches again.
+    // budget and a longer detour reach before giving up. A pair that still cannot be routed takes
+    // the straight-line fallback below (or is refused and refunded when that is tuned off), and
+    // never gets cached, so a later order searches again.
       private _route = [_startPos, _endPos, _providerName, _recipientName, _provRec, _recvRec] call MISSION_CORE_fnc_supplyRoute;
       private _roadPath = _route select 0;
+      private _straight = false;
       if !(_route select 1) then {
-          // Unreachable pairs are refused and refunded on the guard below rather
-          // than driven along a straight line, and nothing is cached, so a later
-          // order for the same pair searches again.
-          diag_log format ["DYNAMIC CONVOY: %1 -> %2 no connected road route - order refused and refunded", _providerName, _recipientName];
+          // Unroutable: fall back to a straight line when the tune allows it, so the
+          // order still ships instead of being refunded into a cooldown. Nothing is
+          // cached, and supplyRoute's fail backoff still runs, so a later order for
+          // the same pair searches again and upgrades to a real route if one opens.
+          if ((["supplyRouteStraightFallback", 1] call MISSION_CORE_fnc_tune) > 0) then {
+              private _flat = [_startPos, _endPos] call MISSION_CORE_fnc_straightPlan;
+              if (count (_flat select 0) >= 2) then {
+                  _roadPath = _flat select 0;
+                  _route = [_roadPath, false, (_flat select 1), (_flat select 2)];
+                  _straight = true;
+              };
+          };
       };
-    if (count _roadPath < 2) exitWith { [_providerName, _cost] call _refund; false };
+    if (count _roadPath < 2) exitWith {
+        diag_log format ["DYNAMIC CONVOY: %1 -> %2 no connected road route - order refused and refunded", _providerName, _recipientName];
+        [_providerName, _cost] call _refund;
+        false
+    };
 
-    // Cached with the route itself - the resolver computed it once, so a resupply
-    // order between the same two markers never pays for this walk again.
+    // Solved routes carry their length from the cache - the resolver computed it once, so a
+    // resupply order between the same two markers never pays for this walk again. Straight
+    // fallbacks carry the 2D distance instead, which is what makes their ETA short.
     private _cum = _route select 2;
     private _total = _route select 3;
     if (_total < 50) exitWith { [_providerName, _cost] call _refund; false };
@@ -189,7 +233,11 @@ MISSION_CORE_fnc_startConvoy = {
     if (isNil "MISSION_CORE_CONVOY_ID") then { MISSION_CORE_CONVOY_ID = 0; };
     MISSION_CORE_CONVOY_ID = MISSION_CORE_CONVOY_ID + 1;
     MISSION_CORE_CONVOYS pushBack [_providerName, _recipientName, _roadPath, _cum, _travelTime, time, _supplyAmount, 0, objNull, grpNull, MISSION_CORE_CONVOY_ID, false, "", [], [], -1, _cost];
-    diag_log format ["DYNAMIC CONVOY: %1 -> %2 (%3 supply, %4m via road, ETA %5s)", _providerName, _recipientName, _supplyAmount, round _total, round _travelTime];
+    if (_straight) then {
+        diag_log format ["DYNAMIC CONVOY: %1 -> %2 (%3 supply, %4m straight-line fallback, ETA %5s)", _providerName, _recipientName, _supplyAmount, round _total, round _travelTime];
+    } else {
+        diag_log format ["DYNAMIC CONVOY: %1 -> %2 (%3 supply, %4m via road, ETA %5s)", _providerName, _recipientName, _supplyAmount, round _total, round _travelTime];
+    };
     // Reports whether a convoy actually exists, so a caller like resupplyDispatch can tell a real
     // order from a refused one instead of cooling down a marker that got nothing.
     true
@@ -203,14 +251,26 @@ MISSION_CORE_fnc_convoyLoop = {
     private _resupplyCounter = 0;
     private _resupplyEvery = (["resupplyDispatchEveryTicks", 12] call MISSION_CORE_fnc_tune);
     if (_resupplyEvery < 1) then { _resupplyEvery = 12; };
+    MISSION_CORE_CONVOY_STAGE = "start";
     while { true } do {
+        // Heartbeat BEFORE the 5s sleep, stage markers written before the work that owns them.
+        // If this thread is ever halted by an SQF error, the maintenance loop reports both the
+        // age and the last stage reached - the same blind spot that made the 17:05:05 ammo death
+        // undiagnosable, where only the final line of the last successful pass existed.
+        MISSION_CORE_CONVOY_LOOP_TICK = time;
+        // Boundary marker: without it a halt at the sleep reports the PREVIOUS pass's phase, which
+        // points the investigation at work that already finished. "wait" means the prior pass
+        // completed cleanly and the thread stopped entering the next one.
+        MISSION_CORE_CONVOY_STAGE = "wait";
         sleep 5;
         if (isNil "MISSION_CORE_CONVOYS") then { MISSION_CORE_CONVOYS = []; };
         _resupplyCounter = _resupplyCounter + 1;
         if (_resupplyCounter >= _resupplyEvery) then {
             _resupplyCounter = 0;
+            MISSION_CORE_CONVOY_STAGE = "resupplyDispatch";
             [] call MISSION_CORE_fnc_resupplyDispatch;
         };
+        MISSION_CORE_CONVOY_STAGE = "advance";
         private _players = allPlayers select { alive _x };
         private _keep = [];
         {

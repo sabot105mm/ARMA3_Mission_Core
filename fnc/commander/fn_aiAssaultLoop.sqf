@@ -325,6 +325,25 @@ MISSION_CORE_fnc_aiAssaultLoop = {
 
                 [_targetPos, _locPos, _locName, _targetName, _importance, _defGrp, _targetSize, _assaultTanks, (_loc select 1) select 1] spawn {
                     params ["_targetPos", "_sourcePos", "_sourceName", "_targetName", "_importance", "_defGrp", "_targetSize", "_assaultTanks", "_srcSize"];
+                    // PERMANENT RULE (NON-COMBAT-EFFECTIVE MARKERS): this controller is ONE assault
+                    // released FROM _sourceName, and it never calls sendCounterAttack - the wave
+                    // groups below and the delivered tank columns build their own waypoints and set
+                    // MISSION_CORE_ORDER directly. That makes this path a real bypass of the
+                    // fn_sendCounterAttack backstop, so it needs its own gate. exitWith rather than
+                    // continue, because the unit of refusal is the whole release, not one wave.
+                    // The log and the early return are SEPARATE statements on purpose: a bare
+                    // exitWith nested inside a then block is this mission's documented parse-error
+                    // trap (fn_isMarkerContested.sqf:208), so the return is hoisted to a
+                    // function-scope one-liner and only the diag_log stays in the then block.
+                    private _srcRow = [];
+                    if (!isNil "MISSION_CORE_CACHED_POSITIONS") then {
+                        _srcRow = MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _sourceName };
+                    };
+                    private _srcBlocked = (count _srcRow > 0) && { [_srcRow select 0] call MISSION_CORE_fnc_isNonCombatEffective };
+                    if (_srcBlocked) then {
+                        diag_log format ["NON-COMBAT-EFFECTIVE RULE: %1 mounts no assault on %2 - source marker is non-combat-effective", _sourceName, _targetName];
+                    };
+                    if (_srcBlocked) exitWith {};
                     // Assault waves use proper CfgGroups infantry squad templates (real combat
                     // riflemen); all-men combat groups only as a last resort.
                     private _infPool = [(MISSION_CORE_REDFOR_DATA select 17)] call MISSION_CORE_fnc_getInfTemplates;

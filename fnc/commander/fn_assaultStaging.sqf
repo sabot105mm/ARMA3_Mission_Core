@@ -132,6 +132,28 @@ MISSION_CORE_fnc_snapAttackTargetToZone = {
 // grouped budget from requestManpower is NOT spent on these men (the supply pipeline already paid
 // for them from the marker's local pool); it only tops up the shortfall via the fallback.
 // [_grp, _locName, _locPos, _markerSize, _side] call MISSION_CORE_fnc_tryAbsorbSupply; -> bool
+// Would tryAbsorbSupply take this squad? EXACTLY its first four guards, with no group.
+//
+// fn_tryAbsorbSupply needs a LIVE group - it counts units _grp and pushes _grp onto the staging
+// roster - so a caller cannot ask "is absorption available?" before it has spawned anything. The
+// abstract-leg path must ask exactly that question first, because absorption takes PRIORITY over
+// marching a squad to a contested marker: if a staged assembly is filling here, the squad belongs
+// to the staging roster and must never be turned into a leg. Mirroring the guards here is what lets
+// the caller skip abstraction without changing which branch wins.
+//
+// Kept adjacent to, and deliberately duplicative of, the guards above: if the two ever drift, a
+// squad would silently go to the contested center instead of the staging edge.
+// [_locName, _side] call MISSION_CORE_fnc_hasActiveStaging; -> bool
+MISSION_CORE_fnc_hasActiveStaging = {
+    params ["_locName", "_side"];
+    if (isNil "MISSION_CORE_STAGING_BUDGET") exitWith { false };
+    private _entry = MISSION_CORE_STAGING_BUDGET getOrDefault [_locName, missionNamespace];
+    if (_entry isEqualTo missionNamespace) exitWith { false };
+    if ((_entry get "side") != _side) exitWith { false };
+    if ((_entry get "menNeeded") <= 0) exitWith { false };
+    true
+};
+
 MISSION_CORE_fnc_tryAbsorbSupply = {
     params ["_grp", "_locName", "_locPos", "_markerSize", "_side"];
     if (isNil "MISSION_CORE_STAGING_BUDGET") exitWith { false };

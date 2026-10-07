@@ -52,7 +52,9 @@ MISSION_CORE_fnc_queuedCounterAttackInf = {
     };
     // Global foot-squad cap is hard at 10 enemy groups (PERMANENT RULE) - never bypass it,
     // even for an active battle. A queued squad waits for a slot to free up.
-    if (([_side] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune)) exitWith { false };
+    // PENDING ABSTRACT LEGS COUNT IN THE CAP - this queue is a long-haul pipeline, so most of
+    // its squads are legs, and a cap that cannot see them is no cap at all.
+    if ((([_side] call MISSION_CORE_fnc_countFootSquads) + ([] call MISSION_CORE_fnc_countPendingAbstractLegs)) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune)) exitWith { false };
     // The provider marker may have been captured while this spawn sat in the queue - never
     // spawn a counter-attack out of a marker the players now own.
     private _provNow = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _provName });
@@ -86,7 +88,58 @@ MISSION_CORE_fnc_queuedCounterAttackInf = {
         diag_log format ["DYNAMIC QUEUE: queued counter-attack inf %1 from %2 still waiting - all 5 spawner slots busy", _template select 0, _provName];
         false
     };
-    private _conjured = [_template select 0, _spawnPos, _side, _faction, "AWARE", "NORMAL", _importance, _provPos, _provSize] call MISSION_CORE_fnc_spawnGroup;
+    // LONG HAUL? This queue exists precisely for long-range counter-attacks, so it is the
+    // single biggest producer of legs. Nothing waits on the squad: it is released and sent,
+    // and the self-feed successor is enqueued below on the same basis. Safe to abstract.
+    private _legTaken = [
+        "qcainf", _provName, _targetName,
+        _provPos, _targetPos, _targetSize,
+        [_template select 0, _side, _faction, _importance, _provPos, _provSize, _provName, _template select 2],
+        {
+            params ["_row", "_frac"];
+            private _pl = _row select 5;
+            private _at = [_row select 6, _row select 7, _frac] call MISSION_CORE_fnc_convoyPosAt;
+            private _g = [_pl select 0, [_at select 0, _at select 1, 0], _pl select 1, _pl select 2, "AWARE", "NORMAL", _pl select 3, _pl select 4, _pl select 5] call MISSION_CORE_fnc_spawnGroup;
+            if (!isNull _g) then {
+                _g setVariable ["MISSION_CORE_ORIGIN_MARKER", _pl select 6];
+                _g setVariable ["MISSION_CORE_IMPORTANCE", _pl select 3];
+                if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+                MISSION_CORE_SPAWNED_GROUPS pushBack _g;
+                // MANPOWER IS COMMITTED HERE, ON SPAWN - the same write as line 102 below, moved.
+                // A leg has spent nothing, so the provider is still whole while it travels.
+                MISSION_CORE_COMMIT set [_pl select 6, (MISSION_CORE_COMMIT getOrDefault [_pl select 6, 0]) + _pl select 7];
+            };
+            _g
+        },
+        {
+            params ["_g", "_row"];
+            if (isNull _g) exitWith {};
+            [_g, _row select 3, _row select 4] call MISSION_CORE_fnc_sendCounterAttack;
+        }
+    ] call MISSION_CORE_fnc_abstractLegDispatch;
+    // LONG-HAUL GATE: a queued C/A foot squad at/over the abstraction threshold belongs to the
+    // leg system (this queue is the biggest leg producer), not to a truck-ride or foot slog. The
+    // dispatch above already tried to leg it, straight-line fallback included; only conjure a
+    // squad when the haul is under the threshold, so a far unabstractable pair is never spent on
+    // a doomed conjure.
+    private _skipConjure = false;
+    private _minG = ["reinforceAbstractMinDist", 2000] call MISSION_CORE_fnc_tune;
+    if !(_minG isEqualType 1) then { _minG = 2000; };
+    if (_legTaken) then {
+        // Published against the zone's 200 cap even though nothing spawned - these men are
+        // committed and the cap is a MEN budget. But the provider is NOT charged: that waits
+        // for the spawn above.
+        if (_targetName != "") then {
+            MISSION_CORE_REINF_SENT set [_targetName, (MISSION_CORE_REINF_SENT getOrDefault [_targetName, 0]) + (_template select 2)];
+        };
+        diag_log format ["ABSTRACT LEG: queued counter-attack inf %1 from %2 promised -> %3", _template select 0, _provName, _targetName];
+    } else {
+        if ((_provPos distance2D _targetPos) >= _minG) then {
+            _skipConjure = true;
+            diag_log format ["LONG HAUL REINF: queued C/A inf %1 -> %2 is %3m (>= %4m); abstract declined - skipping conjure", _provName, _targetName, round (_provPos distance2D _targetPos), _minG];
+        };
+        if (!_skipConjure) then {
+        private _conjured = [_template select 0, _spawnPos, _side, _faction, "AWARE", "NORMAL", _importance, _provPos, _provSize] call MISSION_CORE_fnc_spawnGroup;
     if (isNull _conjured) exitWith { false };
     // _conjured, never _grp. On this path the re-task lookup above already failed, so _grp is NULL
     // here; tagging it threw a runtime error that aborted the rest of this function - the squad was
@@ -98,9 +151,12 @@ MISSION_CORE_fnc_queuedCounterAttackInf = {
     MISSION_CORE_SPAWNED_GROUPS pushBack _conjured;
     [_conjured, _targetPos, _targetSize] call MISSION_CORE_fnc_sendCounterAttack;
     MISSION_CORE_COMMIT set [_provName, (MISSION_CORE_COMMIT getOrDefault [_provName, 0]) + (_template select 2)];
+        };
+    };
     // The squad exists now, so it counts against the zone's cap now. Done inside the queue loop's
-    // single thread, where this charge cannot race a dispatch worker's own publish.
-    if (_targetName != "") then {
+    // single thread, where this charge cannot race a dispatch worker's own publish. An abstract leg
+    // published this above instead - either way the cap is charged exactly once per promised squad.
+    if (!_legTaken && { !_skipConjure } && { _targetName != "" }) then {
         MISSION_CORE_REINF_SENT set [_targetName, (MISSION_CORE_REINF_SENT getOrDefault [_targetName, 0]) + (_template select 2)];
     };
     diag_log format ["DYNAMIC QUEUE: released queued counter-attack inf %1 from %2 -> %3", _template select 0, _provName, _targetName];

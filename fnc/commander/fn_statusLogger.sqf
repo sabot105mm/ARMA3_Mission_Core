@@ -50,11 +50,24 @@ MISSION_CORE_fnc_statusLoggerTick = {
     {
         _x params ["_mName", "_mPos", "_mSize", "_mOwner"]; // row assembled above from the cache
         private _cap = [([_mName] call MISSION_CORE_fnc_getCachedImportance)] call MISSION_CORE_fnc_markerCapacity;
-        private _commit = MISSION_CORE_COMMIT getOrDefault [_mName, 0];
-        private _credits = MISSION_CORE_MANPOWER getOrDefault [_mName, []];
+        // TWO DIFFERENT TOTALS, BOTH REAL. MISSION_CORE_COMMIT is the marker's own committed
+        // garrison and is what this line has always printed. MISSION_CORE_REINF_SENT is the
+        // 200-man neighbour-reinforcement budget for this zone, written only by
+        // fn_neighborCounterAttack. Printing COMMIT alone made a zone that had received 22
+        // neighbouring troops read as "commit=0", which looks exactly like a dispatch that
+        // silently did nothing. Both are printed so neither has to be inferred.
+        private _commit = if (isNil "MISSION_CORE_COMMIT") then { 0 } else { MISSION_CORE_COMMIT getOrDefault [_mName, 0] };
+        private _reinfSent = if (isNil "MISSION_CORE_REINF_SENT") then { 0 } else { MISSION_CORE_REINF_SENT getOrDefault [_mName, 0] };
+        private _credits = if (isNil "MISSION_CORE_MANPOWER") then { [] } else { MISSION_CORE_MANPOWER getOrDefault [_mName, []] };
         private _pendingMen = 0;
         { _pendingMen = _pendingMen + (_x select 0); } forEach _credits;
+        // Pending abstract legs are GLOBAL, not per-zone, so this is a mission-wide count. It
+        // is here because a climbing pending against a saturated foot budget starves every
+        // dispatch gate at once and reads from the outside as "the AI stopped reinforcing".
+        private _legs = [] call MISSION_CORE_fnc_countAbstractLegs;
+        private _foot = [_mOwner] call MISSION_CORE_fnc_countFootSquads;
+        private _footCap = ["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune;
         private _alive = [_mName, EAST] call MISSION_CORE_fnc_countMarkerGarrison;
-        diag_log format ["DYNAMIC STATUS: contested %1 cap=%2 commit=%3 pendingMen=%4 alive=%5", _mName, _cap, _commit, _pendingMen, _alive];
+        diag_log format ["DYNAMIC STATUS: contested %1 cap=%2 commit=%3 reinfSent=%4/%2 pendingMen=%5 alive=%6 legs=%7/%8 foot=%9/%10", _mName, _cap, _commit, _reinfSent, _pendingMen, _alive, _legs select 0, _legs select 1, _foot, _footCap];
     } forEach _contestedRows;
 };

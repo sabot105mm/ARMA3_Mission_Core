@@ -2,13 +2,23 @@
 MISSION_CORE_fnc_spawnQueueLoop = {
     diag_log "DYNAMIC QUEUE: started";
     private _lastRun = -1e10;
+    MISSION_CORE_QUEUE_STAGE = "start";
     while { true } do {
         // Cheap wakeable wait. The next pass happens when the SOONEST job in the queue comes due -
-        // each job's own interest decides its own deadline - rather than on one flat 30s for the
+        // each job's own interest decides its own deadline - rather than on one flat 300s for the
         // whole map. The 2s floor keeps the loop responsive, and an MPKilled event still wakes it
         // immediately; a freed cap slot does NOT bypass a job's due time, because the interval IS
         // the pacing. That is deliberate: a casual provider briefly idles a freed slot instead of
         // popping a burst, which is the entire point of the cadence.
+        //
+        // STAGE/HEARTBEAT DISCIPLINE: the tick is stamped BOTH here and on every pass of the idle
+        // wait below. It has to be - this loop is designed to park in that wait for up to 300s when
+        // nothing is queued, so a tick written only on entry would go stale during a legitimately
+        // empty queue and the stale check would report a false death. The stage variable is what
+        // distinguishes the two: "idle" means the wait is intentional or about to run real work,
+        // any other value means that specific phase was in flight when the thread halted.
+        MISSION_CORE_QUEUE_LOOP_TICK = time;
+        MISSION_CORE_QUEUE_STAGE = "idle";
         while { true } do {
             sleep 2;
             if (isNil "MISSION_CORE_SPAWN_QUEUE") then { MISSION_CORE_SPAWN_QUEUE = []; };
@@ -21,9 +31,14 @@ MISSION_CORE_fnc_spawnQueueLoop = {
             // Not yet due -> wait until it is. Nothing due at all -> re-check in 300s.
             private _interval = if (_soonest > 1e9) then { 300 } else { ((_soonest - time) max 2) };
             if (time - _lastRun >= _interval || { _wake > _lastRun }) exitWith {};
+            // Heartbeat inside the wait as well, otherwise a legitimately empty queue parks this
+            // thread for 300s and the stale check reports a false death every time it looks.
+            MISSION_CORE_QUEUE_LOOP_TICK = time;
         };
         if (isNil "MISSION_CORE_SPAWN_QUEUE") then { MISSION_CORE_SPAWN_QUEUE = []; };
         if (count MISSION_CORE_SPAWN_QUEUE == 0) then { _lastRun = time; continue; };
+        MISSION_CORE_QUEUE_LOOP_TICK = time;
+        MISSION_CORE_QUEUE_STAGE = "scoring";
         // Contested markers get first claim on the next freed foot slot. A queued armor job
         // whose side has zero armor left alive jumps the queue entirely (spawn it next). The
         // priority is computed into a scored list first - private variables are unreliable
@@ -79,6 +94,8 @@ MISSION_CORE_fnc_spawnQueueLoop = {
         // would expire in ~2 minutes rather than the intended half hour. Cadence paces the
         // SEQUENCE; this paces a job that is merely blocked.
         private _retryDelay = ["reinfQueueRetryDelay", 20] call MISSION_CORE_fnc_tune;
+        MISSION_CORE_QUEUE_LOOP_TICK = time;
+        MISSION_CORE_QUEUE_STAGE = "dispatch";
         {
             _x params ["_fncName", "_key", "_args", "_attempts"];
             if (isNil "_args") then { _args = []; };
@@ -108,6 +125,8 @@ MISSION_CORE_fnc_spawnQueueLoop = {
             _lastMarker = _marker;
             private _fnc = missionNamespace getVariable [_fncName, {}];
             private _ok = false;
+            MISSION_CORE_QUEUE_LOOP_TICK = time;
+            MISSION_CORE_QUEUE_STAGE = format ["handler:%1", _fncName];
             try {
                 _ok = _args call _fnc;
             } catch {

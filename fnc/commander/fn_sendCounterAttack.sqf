@@ -29,33 +29,57 @@ MISSION_CORE_fnc_sendCounterAttack = {
             _blocked = true;
         };
     };
-    // PERMANENT RULE (LIGHT-INFRASTRUCTURE GARRISONS): a group that spawned from a Powerplant or
-    // Solar marker is a static tiny garrison - it defends ONLY its own marker and is
-    // NEVER re-tasked to a different / contested marker (no hunt, no quadrant patrol, no
-    // counter-attack). Same spirit as the BLUFOR garrisonStaysHome rule, applied to light-infra
-    // origin groups.
-    private _outpostOrigin = false;
-    private _oName = _group getVariable ["MISSION_CORE_ORIGIN_MARKER", ""];
-    if (_oName != "" && { !(isNil "MISSION_CORE_CACHED_POSITIONS") }) then {
-        private _oIdx = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _oName };
-        if (_oIdx >= 0 && { [(MISSION_CORE_CACHED_POSITIONS select _oIdx)] call MISSION_CORE_fnc_isLightInfrastructure }) then {
-            _outpostOrigin = true;
-        };
-    };
-    if (_outpostOrigin) then {
+    // PERMANENT RULE (NON-COMBAT-EFFECTIVE MARKERS): a group that spawned from a Factory, Powerplant,
+    // Solar or Depot holds in place and is NEVER re-tasked off its own marker. Same spirit as the
+    // BLUFOR garrisonStaysHome rule above, widened from the old powerplant/solar-only set.
+    //
+    // This is the dispatch-layer backstop for the whole offensive family: reinforcement
+    // (fn_requestReinforcement), neighbor counter-attack (fn_neighborCounterAttack), replenish
+    // (fn_replenishMarker) and staged-assault release (fn_assaultStaging) all funnel through here,
+    // as do re-tasks from fn_commitToBattle, fn_disengageToNextMarker, fn_attackStuckWatchdog and
+    // fn_armorCommanderLoop. It is WIDENED, not removed - fn_aiCommanderLoop commits EVERY group of
+    // the side with radius 1e10, so deleting this would let power/solar garrisons be dragged into any
+    // fight. The hand-rolled cache lookup it replaces resolved a pruned origin row via findIf >= 0;
+    // the shared helper returns false in that case instead.
+    //
+    // It is kept even though every spawn-side caller now filters these markers out first, because
+    // fn_aiAssaultLoop wave groups and fn_armorCommanderLoop build their own waypoints and never
+    // reach this function. Layer 1 avoids spending the manpower; this makes the rule true.
+    private _nonCombatOrigin = [_group] call MISSION_CORE_fnc_groupIsNonCombatEffective;
+    if (_nonCombatOrigin) then {
         private _home = _group getVariable ["MISSION_CORE_MARKER_CENTER", getPos (leader _group)];
         private _allow = (_targetPos distance2D _home) < 400;
         if (!_allow) then {
             _group setVariable ["MISSION_CORE_ORDER", "defend"];
             _group setVariable ["MISSION_CORE_IDLE", false];
             _group setVariable ["MISSION_CORE_PATROLLING", false];
-            diag_log format ["LIGHT-INFRA RULE: %1 stays defending its light-infrastructure marker (no off-marker re-task)", groupId _group];
+            diag_log format ["NON-COMBAT-EFFECTIVE RULE: %1 stays defending its own marker (no off-marker re-task)", groupId _group];
             _blocked = true;
         };
     };
     // Never send the squad to the map origin [0,0,0] or into the sea.
     _targetPos = [_targetPos, getPos (leader _group)] call MISSION_CORE_fnc_safeWaypointPos;
     if (_blocked) exitWith { false };
+    // FOOT LONG-HAUL -> ABSTRACT LEG. A foot-only squad ordered into a fight reinforceAbstractMinDist
+    // or farther is never marched (or trucked) across the map: it becomes an ABSTRACT LEG
+    // (fn_abstractLeg) carrying THE SAME squad. The squad is parked out of the world while the abstract
+    // position advances along the route, and is only dropped back onto the map once the leg is within
+    // routeLegFinalRadius (1000m) of the target - or earlier if a player gets within
+    // abstractLegPlayerRadius of the abstract position, so a passing player never walks through an
+    // empty column. Vehicle/mounted squads are not foot-only and skip this entirely. Returns whether
+    // the leg layer took the squad: a caller that gets false for a long haul must fall back (conjure)
+    // rather than report a march that never happened.
+    private _minHaul = ["reinforceAbstractMinDist", 2000] call MISSION_CORE_fnc_tune;
+    if !(_minHaul isEqualType 1) then { _minHaul = 2000; };
+    if (count units _group > 0 && { { vehicle _x == _x } count units _group == count units _group } && { ((getPos (leader _group)) distance2D _targetPos) >= _minHaul }) exitWith {
+        private _abstracted = [_group, _targetPos, _targetSize, _combatMode, _order] call MISSION_CORE_fnc_abstractClaimedSquad;
+        if (_abstracted) then {
+            diag_log format ["FOOT LONG-HAUL: %1 abstracted - target %2 is %3m out (>= %4m threshold), squad marches as an abstract leg", groupId _group, _targetPos, round ((getPos (leader _group)) distance2D _targetPos), _minHaul];
+        } else {
+            diag_log format ["FOOT LONG-HAUL: %1 could not abstract target %2 (%3m out) - refused, caller must conjure", groupId _group, _targetPos, round ((getPos (leader _group)) distance2D _targetPos)];
+        };
+        _abstracted
+    };
     _group setVariable ["MISSION_CORE_IDLE", false];
     _group setVariable ["MISSION_CORE_PATROLLING", false];
     _group setVariable ["MISSION_CORE_ORDER", _order];

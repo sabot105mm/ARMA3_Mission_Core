@@ -231,6 +231,17 @@ MISSION_CORE_fnc_armorCommanderLoop = {
                 diag_log format ["AIM ARMOR LOOP: %1 grp=%2 isGarrison=%3 staysHome=%4 order=%5", _side, groupId _grp, _isGarrison, _staysHome, _grp getVariable ["MISSION_CORE_ORDER", ""]];
                 if (_isGarrison && { _staysHome > 0 }) then { continue; };
 
+                // PERMANENT RULE (NON-COMBAT-EFFECTIVE MARKERS): armor fielded from a factory /
+                // powerplant / solar / depot holds in place. Both priority branches below set
+                // MISSION_CORE_ORDER and build their SAD waypoint directly instead of calling
+                // sendCounterAttack, so neither of them passes the dispatch-layer backstop and both
+                // need this gate. Resolved once here and reused by both branches.
+                private _nonCombatArmor = [_grp] call MISSION_CORE_fnc_groupIsNonCombatEffective;
+                if (_nonCombatArmor) then {
+                    diag_log format ["NON-COMBAT-EFFECTIVE RULE: %1 armor %2 holds at its own marker (no counter-attack / attack)", _side, groupId _grp];
+                    continue;
+                };
+
                 // Priority 2 - COUNTER-ATTACK: friendly location under threat
                 private _threatLoc = [0, 0, 0];
                 private _foundThreat = false;

@@ -26,7 +26,7 @@
 // Returns CACHED_POSITIONS loc entries sorted ascending by distance. _zoneNames may be passed to
 // reuse an already-computed contested-zone list; left empty it is derived here.
 MISSION_CORE_fnc_getMarkerNeighbors = {
-    params ["_locName", "_locPos", "_side", ["_zoneNames", []]];
+    params ["_locName", "_locPos", "_side", ["_zoneNames", []], ["_excludeNonCombat", false]];
     if (isNil "MISSION_CORE_CACHED_POSITIONS") exitWith { [] };
     // Contested marker NAMES come from MISSION_CORE_CONTESTED (written solely by
     // fn_isMarkerContested). _side is not needed for the name list - the map is keyed by marker
@@ -40,6 +40,15 @@ MISSION_CORE_fnc_getMarkerNeighbors = {
         { (_x select 0) != _locName } &&
         { !((_x select 0) in _zoneNames) } &&
         { !([_x] call MISSION_CORE_fnc_isLightInfrastructure) } &&
+        // NON-COMBAT-EFFECTIVE EXCLUSION IS OPT-IN, not built in. This helper has four callers and
+        // only ONE of them dispatches troops:
+        //   fn_neighborCounterAttack  - dispatches counter-attacks  -> opts IN (true)
+        //   fn_playerHunt:285         - hunts                      -> user ruled hunts stay untouched
+        //   fn_portSystem:441         - picks who gets RESUPPLIED  -> must keep depots/factories
+        //   fn_deactivateNeighborMarkers - relaxes patrols          -> unrelated to offense
+        // Gating inside the filter unconditionally would have silently removed factories and depots
+        // from port resupply and from hunts, neither of which was asked for.
+        { (!_excludeNonCombat) || { !([_x] call MISSION_CORE_fnc_isNonCombatEffective) } } &&
         { ((_x select 1) distance _locPos) < (["neighborRange", 4000] call MISSION_CORE_fnc_tune) }
     };
     _neighbors = [_neighbors, [], { (_x select 1) distance _locPos }, "ASCEND"] call BIS_fnc_sortBy;
@@ -120,9 +129,27 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     // local _zoneList here and hand it in; that variable no longer exists and referencing it was a
     // compile error that killed this whole file, which is why no neighbor counter-attack was
     // dispatched at all. Deriving it in the helper keeps ONE derivation of the contested-name list.
-    private _neighbors = [_locName, _locPos, _side, []] call MISSION_CORE_fnc_getMarkerNeighbors;
+    // The trailing true opts into the non-combat-effective exclusion: THIS is the one caller that
+    // dispatches troops, so this is the one caller that must not ask a factory/depot to fight.
+    private _neighbors = [_locName, _locPos, _side, [], true] call MISSION_CORE_fnc_getMarkerNeighbors;
     if (count _neighbors == 0) exitWith {
-        diag_log format ["DYNAMIC REINF: %1 verdict %2 but ZERO usable neighbors (%3 in range, overwatch filter applied) - nothing to ask", _locName, _verdict, count _neighbors];
+        // THREE DISTINCT CAUSES, ONE MESSAGE. "No neighbours to ask" used to print a single
+        // line - and a self-contradictory one, because it formatted `count _neighbors` (which
+        // is 0 by definition at this point) next to the words "in range". The real cause was
+        // invisible, which is how a scared marker could sit reinforcement-starved with nothing
+        // in the log to explain it. Ask the helper a second time WITHOUT the exclusion to tell
+        // the non-combat-effective case apart from the geometric ones.
+        private _unfiltered = [_locName, _locPos, _side, []] call MISSION_CORE_fnc_getMarkerNeighbors;
+        private _cause = if (count _unfiltered > 0) then {
+            format ["all %1 in-range neighbour(s) are non-combat-effective (factory/powerplant/solar/depot) - PERMANENT RULE, they cannot contribute", count _unfiltered]
+        } else {
+            if ([_locName] call MISSION_CORE_fnc_isOverwatchMarker) then {
+                "no OTHER overwatch marker in range - the overwatch rule lets only overwatch help overwatch"
+            } else {
+                "no same-side neighbour within neighborRange, or every candidate is itself contested or is light infrastructure"
+            };
+        };
+        diag_log format ["DYNAMIC REINF: %1 verdict %2 but ZERO usable neighbors - %3", _locName, _verdict, _cause];
     };
     // REINFORCE asks only the nearest slice; CRITICAL asks everyone.
     if (_verdict == "REINFORCE" && { _useFrac < 1 }) then {
@@ -272,6 +299,10 @@ private _sentMen = 0;
                         };
                         // ceil/floor/round/sqrt are UNARY prefix operators: `ceil x`, never `x ceil`.
                         private _groups = (ceil (_provBudget / 8)) min 5;
+                        // Did this provider actually put men on the map, or did every squad it tried
+                        // to raise become an abstract leg? Set by the spawn branch below and read by
+                        // the post-loop ammo charge. Reset per provider.
+                        private _onlyAbstract = false;
                         for "_i" from 1 to _groups do {
                             if (_chainQueued) exitWith {};
                             if ((_totalSent + _sentMen + _queuedMen) >= _pool) exitWith {};
@@ -299,7 +330,10 @@ private _sentMen = 0;
                             // infantry there, or when the global foot cap is full - all three are
                             // "not yet", never "never". Hand the rest of this provider's walk to the
                             // queue as ONE job and let it spawn squads one at a time.
-                            if (!_slotNow || {!([_side, "inf", _provPos] call MISSION_CORE_fnc_townCategoryCanUse) || { ([_side] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) }}) then {
+                            // PENDING ABSTRACT LEGS COUNT IN THE CAP - otherwise a provider whose
+                            // every squad abstracts sees a permanently empty fielded army and keeps
+                            // creating legs for free, because no group ever exists to be counted.
+                            if (!_slotNow || {!([_side, "inf", _provPos] call MISSION_CORE_fnc_townCategoryCanUse) || { (([_side] call MISSION_CORE_fnc_countFootSquads) + ([] call MISSION_CORE_fnc_countPendingAbstractLegs)) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) }}) then {
                                 // _notBefore is left at its 0 default: the HEAD squad is due right
                                 // away. The cadence governs the gaps after it, which the handler
                                 // applies when it re-enqueues its own successor.
@@ -321,6 +355,72 @@ private _sentMen = 0;
                                 private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
                                 private _grp = [_sideVar, _provName, _locPos, _cSize] call MISSION_CORE_fnc_claimReinforcementSquad;
                                 if (isNull _grp) then {
+                                    // LONG HAUL? The squad has to be CONJURED either way, so this is a
+                                    // spawn path and can abstract. A RE-TASKED garrison squad (the else
+                                    // branch below) already stands in the world - there is nothing
+                                    // abstract about it and it is never turned into a leg.
+                                    private _legTaken = [
+                                        "cainf", _provName, _locName,
+                                        _provPos, _locPos, _cSize,
+                                        // payload: template, side, faction templates, provider importance,
+                                        // provider pos + size (ORIGIN_MARKER bookkeeping), provider name,
+                                        // and the squad's man count - the last is what gets charged.
+                                        [_template select 0, _side, _factionData select 3, _provImp, _provPos, _provSize, _provName, _template select 2],
+                                        {
+                                            params ["_row", "_frac"];
+                                            private _pl = _row select 5;
+                                            private _at = [_row select 6, _row select 7, _frac] call MISSION_CORE_fnc_convoyPosAt;
+                                            private _g = [_pl select 0, [_at select 0, _at select 1, 0], _pl select 1, _pl select 2, "AWARE", "NORMAL", _pl select 3, _pl select 4, _pl select 5] call MISSION_CORE_fnc_spawnGroup;
+                                            if (!isNull _g) then {
+                                                _g setVariable ["MISSION_CORE_ORIGIN_MARKER", _pl select 6];
+                                                _g setVariable ["MISSION_CORE_IMPORTANCE", _pl select 3];
+                                                if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
+                                                MISSION_CORE_SPAWNED_GROUPS pushBack _g;
+                                                // MANPOWER AND AMMO ARE CHARGED HERE, NOT AT DISPATCH. A leg
+                                                // is a promise of men, not men: until it spawns the provider
+                                                // has spent nothing and holds nothing back. Same two calls,
+                                                // same order, as the direct path below.
+                                                [_pl select 6, _pl select 7] call MISSION_CORE_fnc_commitProviderMen;
+                                                if (!isNil "MISSION_CORE_LOCATION_AMMO") then {
+                                                    [_pl select 6, ["ammoCostCounterAttack", 2] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_consumeAmmo;
+                                                };
+                                            };
+                                            _g
+                                        },
+                                        {
+                                            params ["_g", "_row"];
+                                            if (isNull _g) exitWith {};
+                                            [_g, _row select 3, _row select 4] call MISSION_CORE_fnc_sendCounterAttack;
+                                        }
+] call MISSION_CORE_fnc_abstractLegDispatch;
+                                     if (_legTaken) then {
+                                         // Counted against the zone's 200 cap even though nothing spawned.
+                                         // The cap is a MEN budget, and these men are committed - leaving
+                                         // them out would let one marker walk three providers past the
+                                         // limit. No commitProviderMen here: that is the spawn's job now.
+                                         _sentMen = _sentMen + (_template select 2);
+                                         // This provider has so far produced NOTHING in the world. The
+                                         // post-loop ammo charge reads this flag to stay off the
+                                         // provider's books; set it alongside every abstract dispatch.
+                                         _onlyAbstract = true;
+} else {
+                                        // LONG-HAUL GATE: a neighbor-conjured foot squad at/over the
+                                        // abstraction threshold belongs to the leg system (the
+                                        // dispatch above already tried, straight-line fallback
+                                        // included), not to a truck-ride or foot slog. Skip the
+                                        // conjure so the pair stays uncounted for a later retry.
+                                        // Treated as abstract for the post-loop ammo ledger - nothing
+                                        // real spawned.
+                                        private _minG = ["reinforceAbstractMinDist", 2000] call MISSION_CORE_fnc_tune;
+                                        if !(_minG isEqualType 1) then { _minG = 2000; };
+                                        if ((_provPos distance2D _locPos) >= _minG) then {
+                                            _onlyAbstract = true;
+                                            diag_log format ["LONG HAUL REINF: neighbor C/A %1 -> %2 is %3m (>= %4m); abstract declined - skipping conjure", _provName, _locName, round (_provPos distance2D _locPos), _minG];
+                                            continue;
+                                        };
+                                        // Mixed provider: at least one squad really spawned, so the
+                                        // post-loop ammo charge applies. Clear it again.
+                                        _onlyAbstract = false;
                                     _grp = [_template select 0, _spawnPos, _side, _factionData select 3, "AWARE", "NORMAL", _provImp, _provPos, _provSize] call MISSION_CORE_fnc_spawnGroup;
                                     if (isNull _grp) then { continue; };
                                     _grp setVariable ["MISSION_CORE_ORIGIN_MARKER", _provName];
@@ -334,6 +434,7 @@ private _sentMen = 0;
                                     // provider and shrink its budget against men it never added.
                                     [_provName, (_template select 2)] call MISSION_CORE_fnc_commitProviderMen;
                                     _sentMen = _sentMen + (_template select 2);
+                                    };
                                 } else {
                                     // A re-tasked squad's strength is whatever it actually fields, not
                                     // the template's assumed size - the zone cap must be charged on
@@ -362,7 +463,12 @@ private _sentMen = 0;
                             // so it is charged here against _provName rather than against the
                             // target. consumeAmmo is a no-op if the provider cannot pay, which
                             // keeps a provider from ever being pushed below zero.
-                            if (!isNil "MISSION_CORE_LOCATION_AMMO") then {
+                            //
+                            // An ABSTRACT-ONLY provider has marched nothing yet, so it pays nothing
+                            // here - its men have not spawned and its ammo is still its own. The
+                            // materialize block charges each leg individually on spawn. Charge it
+                            // here as well and every long-haul squad would be billed twice.
+                            if (!isNil "MISSION_CORE_LOCATION_AMMO" && { !_onlyAbstract }) then {
                                 [_provName, ["ammoCostCounterAttack", 2] call MISSION_CORE_fnc_tune] call MISSION_CORE_fnc_consumeAmmo;
                             };
                             _spawnedProviders = _spawnedProviders + 1;

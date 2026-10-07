@@ -24,6 +24,10 @@ if (isServer) then {
     // The lazy road-network caches live in their own file so the router stays a router.
     call compile preprocessFileLineNumbers "fnc\fn_routeCaches.sqf";
     call compile preprocessFileLineNumbers "fnc\fn_supplyRoutes.sqf";
+    // Stride-walk waypoint builder. Compiled here because it calls convoyPosAt from the
+    // router above, and it is consumed by the supply convoys, the tank columns and the
+    // abstract troop legs - all of which need it before they issue a single waypoint.
+    call compile preprocessFileLineNumbers "fnc\fn_routeLegWps.sqf";
 
     diag_log "DYNAMIC OPS: Initializing mission core...";
 
@@ -150,6 +154,8 @@ if (isServer) then {
             _cached pushBack [_markerName, _pos, _typeName, _priority, _owner, _defense, _ambush, _importance, [_size select 0, _size select 1, _mkrDir], _overwatch, _mapLabel];
         } forEach _locations;
         MISSION_CORE_CACHED_POSITIONS = _cached;
+        // Any abstract-leg gate memo measured against the previous marker set is now meaningless.
+        MISSION_CORE_ABSTRACT_GATE = nil;
         _cached
     };
 
@@ -205,6 +211,13 @@ if (isServer) then {
 
     // 3. Analyze terrain and cache valid structure positions
     call compile preprocessFileLineNumbers "fnc\fn_spawn.sqf";
+    // Abstract troop legs (reinforcements / counter-attacks / assaults over 2000m travel as
+    // cargo-like records and only raise a squad near a player). Compiled HERE, not with the
+    // router above, because it calls clearGroupWaypoints from fn_spawn.sqf:63 - placing it
+    // next to fn_supplyRoutes at :26 would put it before that definition exists. The loop is
+    // started here too; it is spawned rather than called so init is never blocked.
+    call compile preprocessFileLineNumbers "fnc\commander\fn_abstractLeg.sqf";
+    [] spawn MISSION_CORE_fnc_abstractLegLoop;
     MISSION_CORE_CACHED_POSITIONS = MISSION_CORE_LOCATIONS call MISSION_CORE_fnc_cacheTerrain;
     // Publish the start-pool armor count immediately (publishArmorPool defined above) so client
     // recruit menus show the bonus tanks before the recruitTankManagerLoop's first 15s publish.
@@ -232,7 +245,18 @@ if (isServer) then {
     // Ammunition system: per-marker ammo resource that drives AI aggression
     call compile preprocessFileLineNumbers "fnc\fn_ammo.sqf";
     [] call MISSION_CORE_fnc_initAmmo;
-    [] spawn MISSION_CORE_fnc_ammoLoop;
+    // Heartbeat tick established BEFORE the first spawn, so a supervisor pass that lands during
+    // init cannot read a missing variable as "the loop already died" and spawn a duplicate.
+    MISSION_CORE_AMMO_LOOP_TICK = time;
+    MISSION_CORE_AMMO_LOOP_HANDLE = [] spawn MISSION_CORE_fnc_ammoLoop;
+    // Delivery has its own fast loop. The main ammo loop runs its production/request sweeps first
+    // and the convoy tick last, and those sweeps can hold it for minutes on a road BFS - so
+    // arrived cargo waited minutes to be credited. This loop only delivers, so it is never behind.
+    MISSION_CORE_AMMO_DELIVERY_HANDLE = [] spawn MISSION_CORE_fnc_ammoDeliveryLoop;
+    // The ammo loop really did die silently once (no restart, no RPT script error, no AMMO line
+    // for 16 min). An SQF error halts a scheduled script with nothing for try/catch to catch, so
+    // recovery has to come from outside the loop.
+    [] spawn MISSION_CORE_fnc_ammoSupervisor;
 
     // 3a. Build the per-marker isFlatEmpty safe vehicle spawn cache (async - isFlatEmpty needs
     // a scheduled scope and is heavy enough that it must not block init). findVehiclePos will
@@ -353,7 +377,8 @@ if (isServer) then {
     [] spawn MISSION_CORE_fnc_orderedVehicleCleanupLoop;
     [] spawn MISSION_CORE_fnc_convoyLoop;
     [] spawn MISSION_CORE_fnc_reconLoop;
-    [] spawn MISSION_CORE_fnc_tankOrderLoop;
+    MISSION_CORE_TANK_LOOP_HANDLE = [] spawn MISSION_CORE_fnc_tankOrderLoop;
+    [] spawn MISSION_CORE_fnc_tankOrderSupervisor;
     [] spawn MISSION_CORE_fnc_armorOrderLoop;
     if (MISSION_CORE_DEBUG_VISUALS) then { [] spawn MISSION_CORE_fnc_debugVisuals; };
 

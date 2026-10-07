@@ -10,6 +10,12 @@ MISSION_CORE_fnc_replenishMarker = {
     private _squadMax = [_loc] call MISSION_CORE_fnc_markerSizeWeightMaxMen;
     private _factionData = if (_side == WEST) then { MISSION_CORE_BLUFOR_DATA } else { MISSION_CORE_REDFOR_DATA };
     private _allGroups = _factionData select 17;
+    // PERMANENT RULE (NON-COMBAT-EFFECTIVE MARKERS): a factory / powerplant / solar / depot still
+    // refills its OWN garrison (the defensive branch below - it must be able to hold what it has),
+    // but it never contributes that garrison to a neighbor's fight and never feeds a staged
+    // counter-attack. This flag gates ONLY those two offensive branches; it deliberately does NOT
+    // exit early, because an early exit would also strip the marker's self-defense.
+    private _blockOffense = [_loc] call MISSION_CORE_fnc_isNonCombatEffective;
     private _nearestP = objNull;
     private _nearestD = 999999;
     {
@@ -46,9 +52,11 @@ MISSION_CORE_fnc_replenishMarker = {
     if (count _poolCapped > 0) then { _pool = _poolCapped; };
     private _spawned = 0;
     // Global foot budget cap or town cap full: queue the replenish to spawn when men free up.
-    if (!([_side, "inf", _locPos] call MISSION_CORE_fnc_townCategoryCanUse) || { ([_side] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) }) then {
+    // Pending abstract legs count toward the cap - they have already reserved their slot, so a
+    // marker must not start a fresh squad on top of them.
+    if (!([_side, "inf", _locPos] call MISSION_CORE_fnc_townCategoryCanUse) || { ((([_side] call MISSION_CORE_fnc_countFootSquads) + ([] call MISSION_CORE_fnc_countPendingAbstractLegs)) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune)) }) then {
         ["MISSION_CORE_fnc_queuedReplenish", format ["repl_%1", _locName], [_side, _loc, _importance, _locPos, _locName, _farDir, _edgeRadius]] call MISSION_CORE_fnc_enqueueSpawn;
-        diag_log format ["DYNAMIC REPLENISH: %1 queued (global foot %2/%3)", _locName, [_side] call MISSION_CORE_fnc_countFootSquads, ["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune];
+        diag_log format ["DYNAMIC REPLENISH: %1 queued (global foot %2/%3, abstract legs pending %4)", _locName, [_side] call MISSION_CORE_fnc_countFootSquads, ["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune, [] call MISSION_CORE_fnc_countPendingAbstractLegs];
         0
     } else {
     // Replenished squads converge on the contested marker center (group pos -> contested marker
@@ -75,11 +83,25 @@ MISSION_CORE_fnc_replenishMarker = {
             } forEach (_contestedList select { (_x select 0) != _locName });
         };
     };
+    // Non-combat-effective marker: clear the offensive destination so the branch below falls
+    // through to the own-center SAD instead of marching the garrison to a neighbor. Clearing the
+    // target rather than duplicating the branch keeps ONE copy of the defensive path.
+    if (_blockOffense && { count _cTarget > 0 }) then {
+        diag_log format ["NON-COMBAT-EFFECTIVE RULE: %1 replenishes its own garrison only - not sending it to contested %2", _locName, _cTarget select 0];
+        _cTarget = [];
+    };
     while { _toSpawn > 0 } do {
-        if (([_side] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune)) exitWith {};
+        // Re-checked every iteration, not hoisted: the pending-leg count is GLOBAL, so it moves as
+        // OTHER paths create and materialise abstract legs mid-loop, not just this one's.
+        if ((([_side] call MISSION_CORE_fnc_countFootSquads) + ([] call MISSION_CORE_fnc_countPendingAbstractLegs)) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune)) exitWith {};
         if ([_locName] call MISSION_CORE_fnc_countReplenishGroups >= (["replenishCapPerMarker", 5] call MISSION_CORE_fnc_tune)) exitWith {};
         private _template = selectRandom _pool;
         private _unitCount = _template select 2;
+        // NO ABSTRACT LEG HERE. Replenishment is a garrison re-fielding its OWN men - the squad
+        // spawns on this marker's own edge and either walks tens of metres to its own centre
+        // or marches to a contested neighbour. It is not a neighbouring force making a long
+        // haul to someone else's fight, and it was never abstracted. Every journey out of
+        // this function is concrete, handled by the direct path below.
         private _total = MISSION_CORE_REPLENISH_SPAWN_INDEX getOrDefault [_locName, 0];
         MISSION_CORE_REPLENISH_SPAWN_INDEX set [_locName, _total + 1];
         private _spawnIdx = floor (_total / 5) mod (count _spawnPositions);
@@ -101,7 +123,7 @@ MISSION_CORE_fnc_replenishMarker = {
         // assembly's manpower need instead of marching to the contested center. Such a squad keeps
         // its ORIGIN/GARRISON accounting; tryAbsorbSupply clears CASUALTY_MARKER so deaths during
         // the counter-attack never drain the marker's retreat tally (dispatched-squad rule).
-        if ([_grp, _locName, _locPos, _markerSize, _side] call MISSION_CORE_fnc_tryAbsorbSupply) then {
+        if ((!_blockOffense) && { ([_grp, _locName, _locPos, _markerSize, _side] call MISSION_CORE_fnc_tryAbsorbSupply) }) then {
             diag_log format ["DYNAMIC REPLENISH: %1 absorbed +%2 men (%3) into staged counter-attack", _locName, _unitCount, _template select 0];
         } else {
         if (count _cTarget > 0) then {

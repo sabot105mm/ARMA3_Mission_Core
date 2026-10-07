@@ -35,11 +35,64 @@ MISSION_CORE_fnc_routeCum = {
     params ["_path"];
     private _cum = [];
     private _total = 0;
+    private _allGood = true;
+    private _badAt = -1;
+    private _badEl = objNull;
+    private _goodSoFar = true;
     for "_i" from 0 to (count _path - 2) do {
-        _total = _total + ((_path select _i) distance2D (_path select (_i + 1)));
-        _cum pushBack _total;
+        private _a = _path select _i;
+        private _b = _path select (_i + 1);
+        if ((_a isEqualType []) && { _b isEqualType [] }) then {
+            if (_goodSoFar) then {
+                _total = _total + (_a distance2D _b);
+                _cum pushBack _total;
+            };
+        } else {
+            if (_goodSoFar) then {
+                _goodSoFar = false;
+                _allGood = false;
+                _badAt = _i;
+                _badEl = if (_b isEqualType []) then { _a } else { _b };
+            };
+        };
     };
-    [_cum, _total]
+    if (!_allGood) then {
+        if (isNil "MISSION_CORE_ROUTE_BADCUM_LOGGED") then { MISSION_CORE_ROUTE_BADCUM_LOGGED = false; };
+        if (!MISSION_CORE_ROUTE_BADCUM_LOGGED) then {
+            MISSION_CORE_ROUTE_BADCUM_LOGGED = true;
+            private _head = [_path select [0, 5] apply { str _x }] joinString " | ";
+            diag_log format ["SUPPLY ROUTE GUARD: routeCum non-array element at segment %1 (%2) in path of %3 - returning empty so the calling loop survives", _badAt, typeName _badEl, count _path];
+            diag_log format ["SUPPLY ROUTE GUARD: path head: %1", _head];
+        };
+        [[], 0]
+    } else {
+        [_cum, _total]
+    };
+};
+
+// Straight-line plan for a pair the road search refused. Returns
+// [_path, _cum, _dist] or [[], [], 0] for a degenerate pair.
+//
+// THREE points, not two: routeCum over a 2-point path yields a cum of length
+// 1, and both the abstract-leg guard (count _cum < 2) and routeLegWps would
+// decline it, so the midpoint keeps every existing consumer working untouched.
+// The midpoint is collinear, so the geometry is unchanged - this is the same
+// straight line, just shaped like the polylines the rest of the code expects.
+//
+// Deliberately NOT cached anywhere: ROUTE_CACHE only ever holds solved road
+// routes, and the caller keeps supplyRoute's fail backoff, so a later order
+// re-searches and upgrades the pair to a real route once one exists.
+MISSION_CORE_fnc_straightPlan = {
+    params ["_startPos", "_endPos"];
+    private _dist = _startPos distance2D _endPos;
+    if (_dist < 1) exitWith { [[], [], 0] };
+    private _mid = [
+        ((_startPos select 0) + (_endPos select 0)) / 2,
+        ((_startPos select 1) + (_endPos select 1)) / 2,
+        0
+    ];
+    private _parts = [_startPos, _mid, _endPos] call MISSION_CORE_fnc_routeCum;
+    [[_startPos, _mid, _endPos], (_parts select 0), (_parts select 1)]
 };
 
 // Position at fraction _frac (0..1) along a polyline. One linear walk.
@@ -176,7 +229,20 @@ MISSION_CORE_fnc_routeExpand = {
     private _links = [];
     private _cur = objNull;
     private _next = objNull;
-    while { !_found && { _qi < count _queue } && { _guard < _budget } } do {
+    // WALL-CLOCK BUDGET. A node budget of 25000 (times the retry ladder's grow cap
+    // of 4) allows 100k road expansions - enough SQF to block a calling loop for
+    // well over the 90s heartbeat the ammo/manpower/queue loops use to detect a
+    // dead worker, so one unreachable pair froze those loops while every OTHER
+    // loop kept logging (the 17:05:05 and 2026-10-06 live deaths). diag_tickTime
+    // is the high-resolution wall clock, so this budget bounds a single search in
+    // seconds no matter how large the node budget lets it get - a bail at the
+    // tuned limit is still far more generous than a warm-cache hit needs, while
+    // an unreachable pair can no longer stall every loop that asks for it. The
+    // node budget stays as the place for map-topology-specific widening.
+    private _timeBudget = (["supplyRouteTimeBudget", 5] call MISSION_CORE_fnc_tune);
+    if (!(_timeBudget isEqualType 1) || { _timeBudget < 0.5 }) then { _timeBudget = 5; };
+    private _t0 = diag_tickTime;
+    while { !_found && { _qi < count _queue } && { _guard < _budget } && { diag_tickTime - _t0 < _timeBudget } } do {
         _guard = _guard + 1;
         _cur = _queue select _qi;
         _qi = _qi + 1;
@@ -291,18 +357,18 @@ MISSION_CORE_fnc_routeCacheKey = {
 // Resolve a road route between two markers (or two raw points).
 //
 // Returns [_roadPath, _routed, _cum, _dist] where _routed is true when the
-// path genuinely follows connected roads, and false when no connected route
-// existed and the straight line was kept. Callers get the flag rather than
-// having to guess, and can decide whether a direct run across open ground is
-// acceptable. _cum/_dist are the polyline's cumulative segment lengths and
-// total, computed ONCE and cached with the path - a cache hit never re-walks
-// the route.
+// path genuinely follows connected roads. On failure the path is EMPTY and
+// _routed is false - this function never returns a straight line, so callers
+// that want to ship across open ground anyway build one themselves from the
+// supplyRouteStraightFallback tune (routePlan, startConvoy, the port tick).
+// _cum/_dist are the polyline's cumulative segment lengths and total, computed
+// ONCE and cached with the path - a cache hit never re-walks the route.
 //
 // Optional detour: when the two ends share no connected road, look for a
 // marker whose road sits inside the origin's road component and is a short
 // hop away, then chain origin -> transfer -> destination. This is what makes
-// an island, a bridge-less river or a divided map routable instead of
-// silently falling back to a straight line over the water.
+// an island, a bridge-less river or a divided map routable instead of giving
+// up and handing the pair to the straight-line fallback.
 // True when a cached location is usable as a transfer point for a detour.
 MISSION_CORE_fnc_detourCandidate = {
     params ["_rec", "_startName", "_endName", "_startPos", "_range", "_component"];
@@ -416,6 +482,183 @@ MISSION_CORE_fnc_supplyDetour = {
     _built
 };
 
+// ---------------------------------------------------------------------
+// Marker relay fallback
+// ---------------------------------------------------------------------
+//
+// When the retry ladder AND the single-transfer detour both fail, a pair is still
+// shippable if a chain of markers near the straight start->end line are road-adjacent
+// to each other. Each such relayed hop is an already-cached route, so the thread is
+// assembled from ROUTE_CACHE only - never a fresh BFS. This upgrades what would have
+// been the callers' straight-line shortcut into a real road path.
+
+// 2D distance from point _p to the segment [_a, _b]. Inline projection, no line
+// intersection command: the engine's parametric methods are wordy here, and the plain
+// AGL [x,y,0] projection is enough to rank marker centres against the start->end line.
+MISSION_CORE_fnc_routePointSegDist = {
+    params ["_p", "_a", "_b"];
+    private _abx = (_b select 0) - (_a select 0);
+    private _aby = (_b select 1) - (_a select 1);
+    private _len = (_abx * _abx) + (_aby * _aby);
+    private _d = 0;
+    if (_len < 1) then {
+        _d = _p distance2D _a;
+    } else {
+        private _apx = (_p select 0) - (_a select 0);
+        private _apy = (_p select 1) - (_a select 1);
+        private _t = (((_apx * _abx) + (_apy * _aby)) / _len);
+        if (_t < 0) then { _t = 0; };
+        if (_t > 1) then { _t = 1; };
+        private _px = (_a select 0) + (_abx * _t);
+        private _py = (_a select 1) + (_aby * _t);
+        _d = _p distance2D [_px, _py, 0];
+    };
+    _d
+};
+
+// Marker names ranked by distance to the start->end segment, capped at
+// supplyRouteRelayCandidates. Prefers the lateral band (supplyRouteRelayLateral); when
+// no marker sits inside it - an ocean crossing, say - the closest few overall still
+// qualify, because markers on opposite coasts can bridge via roads that follow the bay.
+MISSION_CORE_fnc_routeCorridorMarkers = {
+    params ["_startPos", "_endPos"];
+    private _out = [];
+    if (isNil "MISSION_CORE_CACHED_POSITIONS") exitWith { _out };
+    if (!(MISSION_CORE_CACHED_POSITIONS isEqualType [])) exitWith { _out };
+    private _scored = [];
+    {
+        private _rec = _x;
+        if ((_rec isEqualType []) && { count _rec >= 2 }) then {
+            private _d = [_rec select 1, _startPos, _endPos] call MISSION_CORE_fnc_routePointSegDist;
+            _scored pushBack [_d, _rec select 0];
+        };
+    } forEach MISSION_CORE_CACHED_POSITIONS;
+    if (count _scored == 0) exitWith { _out };
+    _scored sort true;
+    private _lateral = (["supplyRouteRelayLateral", 1500] call MISSION_CORE_fnc_tune);
+    if (!(_lateral isEqualType 1) || { _lateral < 0 }) then { _lateral = 1500; };
+    private _cap = (["supplyRouteRelayCandidates", 8] call MISSION_CORE_fnc_tune);
+    if (!(_cap isEqualType 1) || { _cap < 1 }) then { _cap = 8; };
+    private _band = _scored select { (_x select 0) <= _lateral };
+    private _pool = if (count _band > 0) then { _band } else { _scored };
+    private _n = count _pool;
+    if (_n > _cap) then { _n = _cap; };
+    for "_i" from 0 to (_n - 1) do { _out pushBack ((_pool select _i) select 1); };
+    _out
+};
+
+// Breadth-first chain over the adjacency table, but only through corridor markers (plus
+// the two endpoints). Returns [start, c0, ..., end] or []. Depth-capped at
+// supplyRouteRelayMaxHops so a thread is a few real transfers, not a tour of the map.
+// Flag-guarded loops in place of break/exitWith jumps: this build loses local scope on a
+// forEach->break, so every advance sits behind a _found check instead.
+MISSION_CORE_fnc_routeHopChain = {
+    params ["_startName", "_endName", "_corridor"];
+    private _chain = [];
+    if (_startName == "" || { _endName == "" }) exitWith { _chain };
+    if (_startName == _endName) exitWith { _chain };
+    if (isNil "MISSION_CORE_MARKER_ADJACENCY") exitWith { _chain };
+    private _cSet = createHashMap;
+    { _cSet set [_x, true]; } forEach _corridor;
+    _cSet set [_startName, true];
+    _cSet set [_endName, true];
+    private _visited = createHashMap;
+    _visited set [_startName, true];
+    private _parentOf = createHashMap;
+    _parentOf set [_startName, ""];
+    private _maxHops = (["supplyRouteRelayMaxHops", 3] call MISSION_CORE_fnc_tune);
+    if (!(_maxHops isEqualType 1) || { _maxHops < 1 }) then { _maxHops = 3; };
+    private _frontier = [_startName];
+    private _depth = 0;
+    private _found = false;
+    while { !_found && { count _frontier > 0 } && { _depth < _maxHops } } do {
+        _depth = _depth + 1;
+        private _nextF = [];
+        {
+            private _cur = _x;
+            private _links = MISSION_CORE_MARKER_ADJACENCY getOrDefault [_cur, []];
+            private _li = 0;
+            while { !_found && { _li < count _links } } do {
+                private _nxt = _links select _li;
+                _li = _li + 1;
+                if ((_cSet getOrDefault [_nxt, false]) && { !(_visited getOrDefault [_nxt, false]) }) then {
+                    _visited set [_nxt, true];
+                    _parentOf set [_nxt, _cur];
+                    if (_nxt == _endName) then { _found = true; } else { _nextF pushBack _nxt; };
+                };
+            };
+        } forEach _frontier;
+        _frontier = _nextF;
+    };
+    if (_found) then {
+        private _rev = [];
+        private _node = _endName;
+        private _guardH = 0;
+        while { _node != _startName && { _guardH < 500 } } do {
+            _guardH = _guardH + 1;
+            _rev pushBack _node;
+            _node = _parentOf getOrDefault [_node, ""];
+        };
+        _rev pushBack _startName;
+        private _idx = count _rev - 1;
+        while { _idx >= 0 } do {
+            _chain pushBack (_rev select _idx);
+            _idx = _idx - 1;
+        };
+    };
+    _chain
+};
+
+// Threads an unroutable pair through road-adjacent corridor markers. Returns the stitched
+// polyline, or [] when the table is missing or no chain threads (caller keeps the refusal
+// and straight-line fallback). Each leg is read straight out of ROUTE_CACHE - adjacency
+// guarantees the entry exists - so this never re-searches and never recurses into
+// supplyRoute. Legs already begin at their from-marker position and end at their to-marker
+// position, so stitching drops each junction's duplicated point.
+MISSION_CORE_fnc_supplyRouteRelay = {
+    params ["_startName", "_endName", "_startPos", "_endPos"];
+    private _out = [];
+    if (_startName == "" || { _endName == "" }) exitWith { _out };
+    if (isNil "MISSION_CORE_MARKER_ADJACENCY") exitWith { _out };
+    if ((["supplyRouteRelayEnabled", 1] call MISSION_CORE_fnc_tune) <= 0) exitWith { _out };
+    private _corridor = [_startPos, _endPos] call MISSION_CORE_fnc_routeCorridorMarkers;
+    if (count _corridor == 0) exitWith { _out };
+    private _chain = [_startName, _endName, _corridor] call MISSION_CORE_fnc_routeHopChain;
+    if (count _chain < 3) exitWith { _out };
+    if (isNil "MISSION_CORE_ROUTE_CACHE") exitWith { _out };
+    private _legs = [];
+    private _ok = true;
+    private _ci = 0;
+    while { _ci < (count _chain - 1) && { _ok } } do {
+        private _a = _chain select _ci;
+        private _b = _chain select (_ci + 1);
+        private _key = [_a, _b, _startPos, _endPos] call MISSION_CORE_fnc_routeCacheKey;
+        private _entry = MISSION_CORE_ROUTE_CACHE getOrDefault [_key, []];
+        if (count _entry >= 4 && { (_entry select 1) isEqualType true } && { (_entry select 1) }) then {
+            _legs pushBack (_entry select 0);
+        } else {
+            _ok = false;
+        };
+        _ci = _ci + 1;
+    };
+    if (!_ok || { count _legs == 0 }) exitWith { _out };
+    private _path = _legs select 0;
+    private _li = 1;
+    while { _li < count _legs } do {
+        private _seg = _legs select _li;
+        private _si = 1;
+        while { _si < count _seg } do {
+            _path pushBack (_seg select _si);
+            _si = _si + 1;
+        };
+        _li = _li + 1;
+    };
+    private _cumParts = [_path] call MISSION_CORE_fnc_routeCum;
+    if (count (_cumParts select 0) == 0) exitWith { [] };
+    diag_log format ["SUPPLY ROUTE: %1 -> %2 relayed via %3 (%4 legs, %5m, %6 points)", _startName, _endName, ([_chain select [1, (count _chain - 2)]] joinString ", "), count _legs, round (_cumParts select 1), count _path];
+    _path
+};
+
 MISSION_CORE_fnc_supplyRoute = {
     params [
         "_startPos", "_endPos",
@@ -442,16 +685,25 @@ MISSION_CORE_fnc_supplyRoute = {
     // without a backoff a single disconnected pair re-paid that whole search on
     // every tick forever. The entry expires, and each expiry searches HARDER than
     // the last, so a pair blocked by an out-of-range detour marker still resolves
-    // as soon as that marker is reachable. A straight line is never stored here
-    // and never handed back.
+    // as soon as that marker is reachable. Nothing is ever stored here but that
+    // deadline - the straight-line fallback, when enabled, lives in routePlan and
+    // the two direct callers, and is rebuilt fresh on every dispatch.
     private _fail = MISSION_CORE_ROUTE_FAILS getOrDefault [_key, []];
     private _attempts = if (count _fail >= 2) then { _fail select 1 } else { 0 };
     private _failValid = false;
     if (count _fail >= 2) then { _failValid = time < (_fail select 0); };
-    if (_failValid) exitWith { [[], false, [], 0] };
-
     private _direct = [];
     private _routed = false;
+    if (_failValid) then {
+        // The search is deferred on backoff, but the relay is NOT a search: it ranks
+        // corridor markers and reads already-cached leg routes, so a pair refused during
+        // the warm pass (now sitting in backoff) can still be threaded the moment its
+        // corridor routes exist. Without this it would stay refused until the backoff
+        // expires - up to 10 minutes - even though a relay appeared in the meantime.
+        _direct = [_startName, _endName, _startPos, _endPos] call MISSION_CORE_fnc_supplyRouteRelay;
+        if (count _direct >= 2) then { _routed = true; };
+        if (!_routed) exitWith { [[], false, [], 0] };
+    };
 
     // Attempt ladder. A pair that misses the cheap pass is retried with a wider
     // snap radius, a deeper node budget and a longer detour reach before it is
@@ -524,12 +776,25 @@ MISSION_CORE_fnc_supplyRoute = {
         };
     };
 
-    // A straight line is not a deliverable answer. Unreachable pairs return an
-    // explicit failure instead of a two-point "route", and the failure is never
-    // cached AS a route - callers already guard the empty path (convoy refunds,
-    // port holds, ammo and counter-attack bail out). What is recorded is only a
-    // backoff deadline, so the next request in the same tick is cheap while a
-    // later one still gets a fresh, wider search.
+    // A straight line is not a ROAD answer, so this function never returns one.
+    // Unreachable pairs return an explicit failure here, and the failure is never
+    // cached AS a route. What is recorded is only a backoff deadline, so the next
+    // request in the same tick is cheap while a later one still gets a fresh,
+    // wider search. Callers that want to ship anyway take the empty path and
+    // build their own straight line (supplyRouteStraightFallback): routePlan does
+    // it for abstract ammo/legs/armor, startConvoy for supply trucks, and the port
+    // tick for manpower - each one independently, so this stays the pure router.
+    // Marker relay fallback. The retry ladder and the single-transfer detour both failed;
+    // before writing the pair off, try threading it through markers near the straight
+    // start->end line that are road-adjacent to each other (the warm pass's adjacency
+    // table). Only runs once that table exists - during the warm pass it is nil, so a
+    // refused pair keeps today's behaviour until the warm pass finishes. Legs are read
+    // from ROUTE_CACHE, never re-searched, so the attempt is cheap. A pair this cannot
+    // thread falls through to the refusal below and the callers' straight-line fallback.
+    if (!_routed) then {
+        _direct = [_startName, _endName, _startPos, _endPos] call MISSION_CORE_fnc_supplyRouteRelay;
+        if (count _direct >= 2) then { _routed = true; };
+    };
     if (!_routed) exitWith {
         private _backoff = (["supplyRouteFailBackoff", 30] call MISSION_CORE_fnc_tune);
         if (!(_backoff isEqualType 1) || { _backoff < 5 }) then { _backoff = 30; };
@@ -537,22 +802,25 @@ MISSION_CORE_fnc_supplyRoute = {
         if (!(_cap isEqualType 1) || { _cap < _backoff }) then { _cap = _backoff; };
         private _wait = _backoff * (_attempts + 1) min _cap;
         MISSION_CORE_ROUTE_FAILS set [_key, [time + _wait, _attempts + 1]];
-        // Quieted during the pre-warm pass: a map with a few isolated markers
-        // would otherwise emit one line per unreachable pair before anyone has
-        // even spawned, and the pass prints its own routed/unroutable summary.
-        private _quiet = false;
-        if (!isNil "MISSION_CORE_ROUTE_QUIET") then { _quiet = MISSION_CORE_ROUTE_QUIET; };
-        if (!_quiet) then {
-            diag_log format ["SUPPLY ROUTE: %1 -> %2 no connected road route after %3 passes - refused, retrying in %4s", _startName, _endName, count _passes, round _wait];
-        };
+        // Each unroutable pair logs exactly once per run: its first refusal puts
+        // it on the fail backoff, so warm (or a live loop) does not re-log it on
+        // the next tick. That one line is the pair that was freezing the ammo and
+        // manpower loops for 90s+ - the wall-clock guard bounds the search, but a
+        // blocked-for-minutes loop is only diagnosable if the reason is visible.
+        diag_log format ["SUPPLY ROUTE: %1 -> %2 no connected road route after %3 passes - refused, retrying in %4s", _startName, _endName, count _passes, round _wait];
         [[], false, [], 0]
     };
 
     private _cumParts = [_direct] call MISSION_CORE_fnc_routeCum;
     private _cum = _cumParts select 0;
     private _dist = _cumParts select 1;
+    if (count _direct >= 2 && { count _cum == 0 }) exitWith {
+        diag_log format ["SUPPLY ROUTE: %1 -> %2 corrupt path rejected (%3 points)", _startName, _endName, count _direct];
+        [[], false, [], 0]
+    };
     MISSION_CORE_ROUTE_CACHE set [_key, [_direct, true, _cum, _dist]];
     MISSION_CORE_ROUTE_FAILS deleteAt _key;
+    [_startName, _endName] call MISSION_CORE_fnc_routeAdjacentSeed;
 
     // Store the opposite direction from the same search. Roads are bidirectional,
     // so the reverse of a solved A->B polyline IS a valid B->A plan. That halves
@@ -575,6 +843,7 @@ MISSION_CORE_fnc_supplyRoute = {
         };
         private _revCumParts = [_rev] call MISSION_CORE_fnc_routeCum;
         MISSION_CORE_ROUTE_CACHE set [_rkey, [_rev, true, (_revCumParts select 0), (_revCumParts select 1)]];
+        [_endName, _startName] call MISSION_CORE_fnc_routeAdjacentSeed;
     };
     [_direct, true, _cum, _dist]
 };
@@ -642,7 +911,6 @@ MISSION_CORE_fnc_routeWarmLoop = {
     private _t0 = diag_tickTime;
     private _resolved = 0; private _routedN = 0; private _failedN = 0; private _skipped = 0;
     private _qi = 0; private _batchNo = 0;
-    MISSION_CORE_ROUTE_QUIET = true;
     diag_log format ["ROUTE WARM: %1 markers, %2 ordered pairs, %3 per wake", _n, _total, _perWake];
     while { _qi < _total } do {
         private _batch = [];
@@ -675,7 +943,6 @@ MISSION_CORE_fnc_routeWarmLoop = {
         };
         sleep _rest;
     };
-    MISSION_CORE_ROUTE_QUIET = false;
     diag_log format [
         "ROUTE WARM: done - %1/%2 pairs resolved (%3 routed, %4 unroutable, %5 skipped) in %6s",
         _resolved, _total, _routedN, _failedN, _skipped,
@@ -683,8 +950,13 @@ MISSION_CORE_fnc_routeWarmLoop = {
     ];
     // A disconnected island pair is worth seeing explicitly once the pass ends.
     if (_failedN > 0) then {
-        diag_log format ["ROUTE WARM: %1 pair(s) have no connected road route and will be refused until a detour marker is reachable", _failedN];
+        diag_log format ["ROUTE WARM: %1 pair(s) have no connected road route - they relay through near-line markers (or refuse) once the table below is built", _failedN];
     };
+    // Marker relay table. Every pair now has a verdict in the route cache or the fail
+    // backoff, so this pass is the moment the reachable-marker index is FINAL. Built
+    // here so relay routes the warm itself produced are in the table too: from now on a
+    // live refusal can thread through near-line markers instead of shipping straight.
+    call MISSION_CORE_fnc_routeAdjacencyBuild;
 };
 
 // ---------------------------------------------------------------------
@@ -866,13 +1138,18 @@ MISSION_CORE_fnc_spawnConvoyColumn = {
     // The REMAINDER of the road path from where the convoy is right now. A
     // single waypoint at the destination (the old behaviour) made the whole
     // road search cosmetic - the truck drove straight at the target and crossed
-    // whatever lay in the way. It now follows the same nodes the icon traces.
-    private _seg = [_cum, _frac] call MISSION_CORE_fnc_routeSegAt;
-    private _wps = [];
-    for "_i" from (_seg + 1) to (count _path - 1) do {
-        _wps pushBack (_path select _i);
-    };
-    if (count _wps == 0) then { _wps pushBack (_path select (count _path - 1)); };
+    // whatever lay in the way. Taking the remaining ROAD NODES fixed that, but
+    // left waypoint density at the mercy of the road network: two waypoints on one
+    // route and forty on the next, so long shipments crawled while short ones
+    // snapped. A fixed stride walk gives every shipment the same comfortable pace.
+    private _dest = _path select (count _path - 1);
+    private _wps = [_path, _cum, _frac, _dest] call MISSION_CORE_fnc_routeLegWps;
+    // routeLegWps stops emitting legs once the NEXT one lands inside
+    // routeLegFinalRadius, so by construction the destination is never in _wps. It is
+    // always appended as the trailing waypoint - without it the truck exhausts its
+    // waypoint list short of the target and sits there. Appending it also guarantees
+    // _wps is non-empty, which is what _legA below relies on.
+    _wps pushBack _dest;
 
     // Column: a heavy load is split over several trucks echeloned back along
     // the road behind the leader, so a long shipment reads as a real convoy.
@@ -909,15 +1186,21 @@ MISSION_CORE_fnc_spawnConvoyColumn = {
         _drvGrp setBehaviour "CARELESS";
         _drvGrp setCombatMode "GREEN";
         _drvGrp setSpeedMode "FULL";
-        private _firstWp = objNull;
+        // Counted, not isNull-tested: `addWaypoint` returns an ARRAY here, so isNull on a
+        // waypoint is a hard type error ("Type Array, expected Object,Group,..."). The
+        // first waypoint is what the driver group sets current on, so it must be captured,
+        // and _wps is guaranteed non-empty (the destination is always appended above).
+        private _firstWp = [];
+        private _wpCount = 0;
         {
             private _wp = _drvGrp addWaypoint [_x, -1];
             _wp setWaypointType "MOVE";
             _wp setWaypointSpeed "FULL";
             _wp setWaypointBehaviour "CARELESS";
-            if (isNull _firstWp) then { _firstWp = _wp; };
+            _wpCount = _wpCount + 1;
+            if (_wpCount == 1) then { _firstWp = _wp; };
         } forEach _wps;
-        if (!isNull _firstWp) then { _drvGrp setCurrentWaypoint _firstWp; };
+        if (count _firstWp > 0) then { _drvGrp setCurrentWaypoint _firstWp; };
         _trucks pushBack _newTruck;
         _groups pushBack _drvGrp;
     };
@@ -940,10 +1223,12 @@ MISSION_CORE_fnc_spawnConvoyColumn = {
 // _minDist is the "too short to bother shipping" threshold in metres. Below it
 // the caller gets an empty plan and should skip the delivery.
 //
-// A degenerate path (unroutable endpoints that still passed _minDist) degrades
-// to a direct hop with a REAL distance, so the convoy always has a drawable
-// path and a positive ETA. routeCum returns 0 for such a path, and a zero ETA
-// would make the delivery land on the same tick it was dispatched.
+// A pair the road search refused degrades to a straight-line plan (see
+// MISSION_CORE_fnc_straightPlan) when supplyRouteStraightFallback is on, so the
+// caller still gets a drawable path and a positive ETA. supplyRoute's fail
+// backoff keeps running untouched, so a later order re-searches and upgrades
+// the pair to a real route; nothing about the straight line is cached. With the
+// tune off the failure is reported as an empty plan, exactly as it was before.
 MISSION_CORE_fnc_routePlan = {
     params ["_fromName", "_toName", "_speed", ["_minDist", 50]];
     if (_speed <= 0) then { _speed = 14; };
@@ -961,11 +1246,25 @@ MISSION_CORE_fnc_routePlan = {
     private _wasRouted = _planResult select 1;
     private _cum = _planResult select 2;
     private _dist = _planResult select 3;
-    // An unrouted or degenerate plan is reported as the same explicit failure the
-    // other two early exits above use. The old code rebuilt a two-point straight
-    // line here, which silently re-invented the fallback this change removed and
-    // gave ammo and armor orders a path that crossed a mountain.
-    if (!_wasRouted || { _dist < 1 }) exitWith { [[], [], 0, 0, false] };
+    private _straight = false;
+    if (!_wasRouted || { _dist < 1 }) then {
+        // Degenerate is also caught here: a routed plan shorter than 1m would
+        // deliver on the dispatch tick, so it falls back or fails like an
+        // unrouted one rather than shipping instantly.
+        if ((["supplyRouteStraightFallback", 1] call MISSION_CORE_fnc_tune) > 0) then {
+            private _flat = [_startPos, _endPos] call MISSION_CORE_fnc_straightPlan;
+            if (count (_flat select 0) >= 2) then {
+                _roadPath = _flat select 0;
+                _cum = _flat select 1;
+                _dist = _flat select 2;
+                _straight = true;
+            };
+        };
+    };
+    if (count _roadPath < 2 || { _dist < 1 }) exitWith { [[], [], 0, 0, false] };
+    if (_straight) then {
+        diag_log format ["ROUTE PLAN: %1 -> %2 unroutable - straight-line fallback (%3m, ETA %4s)", _fromName, _toName, round _dist, round (_dist / _speed)];
+    };
     [_roadPath, _cum, _dist, (_dist / _speed), _wasRouted]
 };
 

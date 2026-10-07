@@ -157,10 +157,19 @@ MISSION_CORE_fnc_tankDeployAbstract = {
 MISSION_CORE_fnc_tankOrderLoop = {
     diag_log "DYNAMIC TANK: order loop started";
     while { true } do {
+        // HEARTBEAT-FIRST, same idiom as the ammo loop: written at the TOP of the pass so a
+        // crash partway through still leaves a fresh stamp, and the supervisor below can tell
+        // "this loop stopped" from "this loop is busy". This loop has no heartbeat of its own
+        // and STILL died on 2026-10-06 at ~11:50:27 (manpower deliveries stopped at 11:49:54):
+        // the manpower economy shares this tick, so a dead tank loop takes the whole manpower
+        // channel down with it. The stamp and the stage store every pass.
+        MISSION_CORE_TANK_LOOP_TICK = time;
         sleep 10;
         // Manpower economy shares this 10s tick (no second timer): ports accumulate -> ship to
         // bases -> bases distribute 1-for-1 to requesting markers.
+        MISSION_CORE_TANK_LOOP_STAGE = "manpowerTick";
         call MISSION_CORE_fnc_manpowerTick;
+        MISSION_CORE_TANK_LOOP_STAGE = "tankTick";
         if (isNil "MISSION_CORE_TANK_STOCK") then { MISSION_CORE_TANK_STOCK = createHashMap; };
         if (isNil "MISSION_CORE_TANK_PARK") then { MISSION_CORE_TANK_PARK = createHashMap; };
         if (isNil "MISSION_CORE_TANK_PARK_SIDE") then { MISSION_CORE_TANK_PARK_SIDE = createHashMap; };
@@ -533,12 +542,38 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     private _arrLoc = MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _sTarget };
                     private _arrSize = if (count _arrLoc > 0 && { count (_arrLoc select 0) > 8 }) then { (_arrLoc select 0) select 8 } else { [200, 200, 0] };
                     private _arrRadius = (((_arrSize select 0) max (_arrSize select 1)) / 2) max 30;
-                    private _wp = _grp addWaypoint [(_sPath select (count _sPath - 1)), _arrRadius];
+                    // Stride legs along the route the shipment already stored (same _sPath/_sCum the
+                    // icon is tracing - no re-plan). This used to be a SINGLE waypoint at the path end,
+                    // so a tank column drove in a straight line and took whatever terrain lay between it
+                    // and the target. The legs are emitted in front of the arrival waypoint rather than
+                    // through applyRouteLegWps, because that waypoint carries the arrival script and a
+                    // marker-sized completion radius, both of which must be preserved exactly.
+                    private _dest = _sPath select (count _sPath - 1);
+                    private _legs = [_sPath, _sCum, _frac, _dest] call MISSION_CORE_fnc_routeLegWps;
+                    private _firstWp = objNull;
+                    // Counted, not isNull-tested: `addWaypoint` returns an ARRAY here, so isNull on a
+                    // waypoint is a hard type error ("Type Array, expected Object,Group,..."). This
+                    // line is reached on EVERY tank shipment whose route emits at least one leg.
+                    private _legCount = 0;
+                    for "_i" from 0 to (count _legs - 1) do {
+                        private _legWp = _grp addWaypoint [_legs select _i, _arrRadius];
+                        _legWp setWaypointType "MOVE";
+                        _legWp setWaypointSpeed _grpSpd;
+                        _legWp setWaypointBehaviour _grpBeh;
+                        _legCount = _legCount + 1;
+                        if (_legCount == 1) then { _firstWp = _legWp; };
+                    };
+                    private _wp = _grp addWaypoint [_dest, _arrRadius];
                     _wp setWaypointType "MOVE";
                     _wp setWaypointSpeed _grpSpd;
                     _wp setWaypointBehaviour _grpBeh;
                     _wp setWaypointScript "fnc\commander\transport_tankArrival.sqf";
-                    _grp setCurrentWaypoint _wp;
+                    // The arrival waypoint is the last on the list, but the FIRST waypoint is what the
+                    // group actually starts on - and it must be MOVE or an Arma < 1.22 group refuses to
+                    // leave the start line. If the route was too short to emit any legs, the arrival
+                    // waypoint is itself the first.
+                    if (_legCount == 0) then { _firstWp = _wp; };
+                    _grp setCurrentWaypoint _firstWp;
                     // Destroyed-en-route cleanup: if players kill the WHOLE convoy while it drives, the
                     // arrival waypoint never completes so transport_tankArrival.sqf can never write it
                     // off. Stamp the shipment onto the group and watch via a per-vehicle Killed handler -
@@ -623,6 +658,33 @@ MISSION_CORE_fnc_tankOrderLoop = {
         // compacts them, since the array is rebuilt from the kept list below.
     } forEach (MISSION_CORE_TANK_SHIPMENTS select { count _x > 0 });
         MISSION_CORE_TANK_SHIPMENTS = _keepShip;
+        MISSION_CORE_TANK_LOOP_STAGE = "idle";
+    };
+};
+
+// Supervisor: restart the tank order loop if it has not heartbeat in 5 minutes, mirroring the
+// ammo supervisor (fn_ammo.sqf). The manpower economy shares this tick, so a dead loop silently
+// freezes every port->base delivery - exactly what happened on 2026-10-06 when the loop halted at
+// ~11:50 (deliveries stopped at 11:49:54) with no supervisor anywhere to recover it; the ammo
+// loop was being restarted every 90s by its own supervisor while manpower just stopped. Same
+// idiom as ammo: heartbeat at the top of each pass, 5-minute staleness threshold, and the handle
+// deciding - scriptDone true means halted and restartable, false means alive but busy, leave it be.
+MISSION_CORE_fnc_tankOrderSupervisor = {
+    while { true } do {
+        sleep 30;
+        missionNamespace setVariable ["MISSION_CORE_TANK_LOOP_SUPERVISOR_TICK", time];
+        private _stale = time - (missionNamespace getVariable ["MISSION_CORE_TANK_LOOP_TICK", -1e10]);
+        if (_stale > 300) then {
+            private _h = missionNamespace getVariable ["MISSION_CORE_TANK_LOOP_HANDLE", scriptNull];
+            if (scriptDone _h) then {
+                diag_log format ["DYNAMIC TANK: supervisor - order loop DEAD after %1s, restarting (last stage: %2)", round _stale, missionNamespace getVariable ["MISSION_CORE_TANK_LOOP_STAGE", "unknown"]];
+                missionNamespace setVariable ["MISSION_CORE_TANK_LOOP_TICK", time];
+                MISSION_CORE_TANK_LOOP_HANDLE = [] spawn MISSION_CORE_fnc_tankOrderLoop;
+            } else {
+                diag_log format ["DYNAMIC TANK: supervisor - order loop BUSY %1s in stage %2, not restarting", round _stale, missionNamespace getVariable ["MISSION_CORE_TANK_LOOP_STAGE", "unknown"]];
+                missionNamespace setVariable ["MISSION_CORE_TANK_LOOP_TICK", time];
+            };
+        };
     };
 };
 
