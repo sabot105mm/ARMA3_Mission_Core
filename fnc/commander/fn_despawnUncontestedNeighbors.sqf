@@ -151,6 +151,10 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
             // deactivate the neighborhood, which is a separate decision it already makes.
             diag_log format ["AI COMMANDER: %1 contested ended (player died / walked away) - deactivating neighborhood", _cName];
             [_cName, _x select 1, _side] call MISSION_CORE_fnc_deactivateNeighborMarkers;
+            // Ensure spawner slots freed by deactivation/teardown are reflected in the global pool
+            if (!isNil "MISSION_CORE_fnc_reevalSpawnerSlots") then {
+                ["contestedEnded:" + _cName] call MISSION_CORE_fnc_reevalSpawnerSlots;
+            };
         } forEach MISSION_CORE_CACHED_POSITIONS;
     } forEach [WEST, EAST];
 };
