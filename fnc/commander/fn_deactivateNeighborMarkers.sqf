@@ -61,6 +61,10 @@ MISSION_CORE_fnc_deactivateNeighborMarkers = {
         if (_nName == _zoneFocus) then { continue; };
         if (_nName in _keep) then { continue; };
         diag_log format ["DYNAMIC REINF: %1 gave up - deactivating neighbor %2", _locName, _nName];
+        // Release any spawner slot this neighbor may be holding before despawning it.
+        if (!isNil "MISSION_CORE_fnc_releaseSpawnerSlot") then {
+            [_nName, _side] call MISSION_CORE_fnc_releaseSpawnerSlot;
+        };
         [_nName, _n select 1] call MISSION_CORE_fnc_despawnLocation;
     } forEach (MISSION_CORE_CACHED_POSITIONS select {
         (_x select 4) == _side &&
