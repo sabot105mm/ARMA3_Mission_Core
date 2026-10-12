@@ -165,14 +165,20 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     private _poolOut = [_cLoc, _neighbors, _side, _sentTotal] call MISSION_CORE_fnc_zonePoolBudget;
     private _pool = _poolOut select 0;
     private _rows = _poolOut select 1;
+    // Persist the ALREADY-COMPUTED pool for this recipient so fn_isMarkerContested can gate its
+    // "no threat within grace" clear on it without recomputing the provider budget. This is the
+    // same number logged below - no new math. It is a last-committed value: updated only when a
+    // sweep runs for this marker, so the contested gate reads whatever the last sweep left here.
+    if (isNil "MISSION_CORE_REINF_POOL") then { MISSION_CORE_REINF_POOL = createHashMap; };
+    MISSION_CORE_REINF_POOL set [_locName, _pool];
     diag_log format ["DYNAMIC REINF POOL: %1 tier-scar=%2 verdict=%3 sent=%4/%5 pool=%6 providers=%7", _locName, round (_assessOut select 0), _verdict, _sentTotal, _cap, _pool, count _rows];
     {
         private _r = _x;
         diag_log format ["    provider %1: budget=%2 (usable=%3 cVal=%4 asset=%5 taper=%6) effective=%7%8", _r select 0, _r select 1, _r select 2, _r select 3, round (_r select 4), round (_r select 5), _r select 7, if ((_r select 6) != "") then { format [" - %1", _r select 6] } else { "" }];
     } forEach _rows;
 
-    if (_pool <= 0) exitWith {
-        diag_log format ["DYNAMIC REINF POOL: %1 no provider can commit anything (sent=%2/%3)", _locName, _sentTotal, _cap];
+    if (_pool <= 10) exitWith {
+        diag_log format ["DYNAMIC REINF POOL: %1 pool too small (pool=%2 <= 10, sent=%3/%4) - giving up support", _locName, _pool, _sentTotal, _cap];
     };
 
     // ---- AMMO: already applied PER PROVIDER, in fn_reinforceBudget ----
@@ -376,6 +382,10 @@ private _sentMen = 0;
                                                 _g setVariable ["MISSION_CORE_IMPORTANCE", _pl select 3];
                                                 if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
                                                 MISSION_CORE_SPAWNED_GROUPS pushBack _g;
+                                                // Raised over open water (a strait / island hop)?
+                                                // Embark the squad into boats sized to fit it before
+                                                // anyone swims. No-op on dry land.
+                                                [_g, _at] call MISSION_CORE_fnc_mountFootInBoats;
                                                 // MANPOWER AND AMMO ARE CHARGED HERE, NOT AT DISPATCH. A leg
                                                 // is a promise of men, not men: until it spawns the provider
                                                 // has spent nothing and holds nothing back. Same two calls,

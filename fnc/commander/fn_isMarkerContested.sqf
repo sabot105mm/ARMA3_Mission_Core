@@ -320,8 +320,11 @@ MISSION_CORE_fnc_isMarkerContested = {
         // a marker ENTERING the map and a marker LEAVING it. Those are rare; the per-call refresh
         // in between is server-local bookkeeping and must stay off the wire.
         private _wasNew = !(_markerName in _CONTESTED);
-        _CONTESTED set [_markerName, [time, _prev select 1]];
-        if (_wasNew) then { publicVariable "MISSION_CORE_CONTESTED"; };
+        // A live hold means the marker is NOT temp-flipped - something is really holding it right
+        // now. Preserve the third slot as false and re-publish if the flag is changing back.
+        private _wasTemp = (count _prev > 2) && { _prev select 2 };
+        _CONTESTED set [_markerName, [time, _prev select 1, false]];
+        if (_wasNew || _wasTemp) then { publicVariable "MISSION_CORE_CONTESTED"; };
         true
     };
     // DIAGNOSTIC: _sides/_asTarget are hoisted to function scope (they used to be private to the
@@ -497,6 +500,27 @@ MISSION_CORE_fnc_isMarkerContested = {
     private _freshLastSeen = (_CONTESTED getOrDefault [_markerName, [-1e10, []]]) select 0;
     if (_markerName != "" && { (_markerName in _CONTESTED) && { (time - _freshLastSeen) <= _grace } }) exitWith { true };
     if (_markerName != "" && { _markerName in _CONTESTED }) then {
+        // ---- POOL GATE: this "clear" is only a TEMP FLIP while the zone's reinforcement pool is
+        // still solvent. The grace window proves no live REASON holds the marker right now - it does
+        // NOT prove the fight is over. The dynamic-reinforcement sweep may still be able to pour men
+        // in. Read the pool that sweep last committed for this marker (MISSION_CORE_REINF_POOL,
+        // written in fn_neighborCounterAttack at the exact point it already computes it). While it is
+        // > 0 the marker STAYS contested and is flagged temp-flipped (third slot of the value);
+        // recruiting presents a temp-flipped marker as side-changed, but ownership in
+        // MISSION_CORE_LOCATIONS is NEVER touched - this is not a real flip. Only pool == 0 is a
+        // real clear, and that is the one place it happens.
+        private _poolLeft = if (isNil "MISSION_CORE_REINF_POOL") then { 0 } else { MISSION_CORE_REINF_POOL getOrDefault [_markerName, 0] };
+        if (_poolLeft > 10) then {
+            // Do NOT refresh the timestamp - leaving it stale keeps this gate re-evaluating every
+            // tick until the pool actually hits 0 (a refreshed stamp would make the grace check at
+            // the top short-circuit true and mask the gate). Publish only on the flag's rising edge,
+            // so a long-running temp flip stays off the wire.
+            private _prevVal = _CONTESTED getOrDefault [_markerName, [-1e10, []]];
+            private _wasTemp = (count _prevVal > 2) && { _prevVal select 2 };
+            _CONTESTED set [_markerName, [_freshLastSeen, _prevVal select 1, true]];
+            if (!_wasTemp) then { publicVariable "MISSION_CORE_CONTESTED"; };
+            diag_log format ["CONTEST: %1 temp-flipped - no threat within %2s grace but pool=%3 still solvent", _markerName, round _grace, _poolLeft];
+        } else {
         // DIAGNOSTIC: captured BEFORE deleteAt below erases it. The distinction this preserves is
         // the whole point of the block: a stored timestamp of -1e10 means no hold EVER fired for
         // this marker, while a real-but-old timestamp means holds did fire and then lapsed. Those
@@ -587,6 +611,7 @@ MISSION_CORE_fnc_isMarkerContested = {
             // The evidence has served its purpose - drop it so the next clear reports only the holds
             // that happened after this one, not a mixture of two separate fights.
             MISSION_CORE_DEBUG_CONTEST_WHY deleteAt _markerName;
+        };
         };
     };
     false
