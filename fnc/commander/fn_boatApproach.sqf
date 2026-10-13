@@ -70,11 +70,14 @@ MISSION_CORE_fnc_mountFootInBoats = {
         private _placed = false;
         // Try to find a boat with no driver first.
         for "_b" from 0 to ((count _boats) - 1) do {
-            if (!_placed && { !_boatHasDriver select _b }) then {
-                private _bt = _boats select _b;
-                if (_man moveInDriver _bt) then {
-                    _boatHasDriver set [_b, true];
-                    _placed = true;
+            if (!_placed) then {
+                private _hasDrv = _boatHasDriver select _b;
+                if (!_hasDrv) then {
+                    private _bt = _boats select _b;
+                    if (_man moveInDriver _bt) then {
+                        _boatHasDriver set [_b, true];
+                        _placed = true;
+                    };
                 };
             };
         };
