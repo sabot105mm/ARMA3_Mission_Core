@@ -520,7 +520,10 @@ MISSION_CORE_fnc_isMarkerContested = {
         if (isNil "MISSION_CORE_REINF_LAST_SENT_TIME") then { MISSION_CORE_REINF_LAST_SENT_TIME = createHashMap; };
         if (isNil "MISSION_CORE_REINF_CLEAR_TICKS") then { MISSION_CORE_REINF_CLEAR_TICKS = createHashMap; };
         private _lastSent = MISSION_CORE_REINF_LAST_SENT_TIME getOrDefault [_markerName, -1e9];
-        private _enRoute = [_markerName, _side] call MISSION_CORE_fnc_markerHasEnRouteCounterAttacks;
+        private _enRoute = false;
+        if (!isNil "MISSION_CORE_fnc_markerHasEnRouteCounterAttacks") then {
+            _enRoute = [_markerName, _side] call MISSION_CORE_fnc_markerHasEnRouteCounterAttacks;
+        };
         private _canStillReinforce = false;
         if (_poolAct >= _minWave) then { _canStillReinforce = true; };
         if (!_canStillReinforce && { _enRoute }) then { _canStillReinforce = true; };
