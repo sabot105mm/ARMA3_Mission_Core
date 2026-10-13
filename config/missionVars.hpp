@@ -148,7 +148,14 @@ class MISSION_CORE_TUNE {
     // huntMaxContingents bounds a single director tick; this bounds a garrison over time. Without
     // it a marker near the player answered every tick with another contingent and its hunts stacked
     // indefinitely. Counted on live hunts only - a dead group or one whose sweep ended frees its slot.
-    huntSourceMaxRange = 2500;
+    // RANGE GATE (owner rule): a source marker further than this from the point it is hunting
+    // fields nothing. The aim point is the hunt's last known position, so this is "how far from
+    // the thing it wants to hunt may a garrison still be worth sending". At 2500 the gate
+    // admitted a 2373m march, which spends ammo and men to walk a squad across most of the map
+    // toward a player who is long gone by the time it arrives. Lowered to 1500.
+    // Re-checked against the player's LIVE position when the queued job actually spawns, since
+    // the queue can outlive the tick that queued it and the target moves meanwhile.
+    huntSourceMaxRange = 1500;
     huntCurvePace = 4;
 
     // ----- Assault artillery -----
@@ -165,6 +172,17 @@ class MISSION_CORE_TUNE {
     tankDepotCapLarge = 20;
     tankShipColumnMax = 3;
     tankTravelSpeed = 18;
+    // ----- Abstract shipment -> live column (fn_tankOrderLoop.sqf, tankShipmentTick) -----
+    // The materialize trigger fires when the column comes this close to a PLAYER (the old
+    // hard-coded 1200m), or - ASSAULT columns only - to a contested marker, so reinforcements
+    // arrive visibly into the fight they were ordered for even when nobody is standing watch.
+    tankMaterializeRange = 1200;
+    tankMaterializeContestedRange = 800;
+    // Keep-clear: if the trigger fired with the column already nearer to a player than this,
+    // the spawn point is pushed away from that player (plus a column half-width margin)
+    // before anything is created. Without it a player moving along the route gets a tank
+    // dropped in their lap - live at 15:25:07.
+    tankMaterializeClear = 400;
     powerplantGlobalBonus = 0.2;
     powerplantNeighborBonus = 0.5;
     powerplantNeighborRange = 1500;
@@ -373,6 +391,20 @@ class MISSION_CORE_TUNE {
     reinfDecayOrdinary = 1;      // importance 1 - ~30min to fully refund, effectively stays spent
     reinfDecayImportant = 2;     // importance 2 - about twice as fast
     reinfDecayCritical = 6;      // importance 3+ - fastest, so a high-value marker can be re-fought
+    reinfMinSquadMen = 6;           // minimum men to form an actionable reinforcement wave
+    reinfGiveUpActiveWindow = 60;   // fight still "active" if sent reinforcements within this (s)
+    reinfGiveUpHangSeconds = 20;    // short hang after inactivity before clearing
+    reinfGiveUpConsecutiveTicks = 2; // require this many consecutive ticks to clear
+    reinfDecayPauseSeconds = 300; // quiet pause before a dormancy refund starts: a zone never bleeds
+    // while a RELEASED assault group is on it, and after the last assault leaves it holds its budget
+    // for this long before refunding (any assault returning re-arms the pause). Covers the flicker
+    // where a player steps into a different marker mid-fight, dropping the contest latch, while the
+    // AI assault is still pressing.
+    reinfDecayPlayerRadius = 800; // a living player within this range of the marker CENTER is the
+    // SECOND "the fight is still on" signal, alongside a released assault group. While either is
+    // present the quiet pause above is re-armed; the bleed only begins once BOTH are gone for
+    // reinfDecayPauseSeconds. Without it, a fight whose player stepped away but whose AI assault is
+    // still pressing bled its budget out from under it.
     spawnerSlotCap = 5;             // markers per side allowed to spawn troops at once (10 total). An
     // exhausted provider gives its slot back (fn_reevalSpawnerSlots) and the next marker that needs
     // one claims it on demand - a marker that gave up no longer holds its slot forever.
@@ -507,6 +539,15 @@ class MISSION_CORE_TUNE {
     // own travel time forces it into the world at its destination. Generous on purpose: it
     // should only ever fire for a leg the normal logic has lost, never during normal play.
     abstractLegPendingSlack = 180;
+    // Abstract overwatcher (fn_abstractWatcher.sqf). Running cadence for the loop's scan.
+    abstractWatchInterval = 4;
+    // A squad that materialised because a PLAYER crossed nearby is passed back to the
+    // "abstract" state once EVERY living player is this far from the point where it
+    // materialised. Deliberately a bit above abstractLegPlayerRadius (1200): the leg's own
+    // radius triggers at 1200m, so reverting at the same value would flap a squad standing
+    // right on the boundary. Route-reached and deadline materialisations never revert - a
+    // squad about to assault the contested marker stays visible and handoff takes it over.
+    abstractWatchAwayRadius = 1600;
 
     // ----- ROUTE LEG WAYPOINTS (shared by convoys, tank columns and troop legs) -----
     // Stride between generated waypoints. A materialised convoy used to take the remaining
@@ -546,6 +587,9 @@ class MISSION_CORE_TUNE {
     // from fn_assaultStaging.sqf
     counterAttackFlipWatchTTL = 600;
     counterAttackSupplyTTL = 90;
+
+    // from fn_bluforStageTransport.sqf
+    bluforStageTransportDist = 700;
 
     // from fn_proximitySpawner.sqf
     despawnEnemyPastEdge = 500;

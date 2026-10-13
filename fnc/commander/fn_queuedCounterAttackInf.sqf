@@ -105,9 +105,17 @@ MISSION_CORE_fnc_queuedCounterAttackInf = {
                 _g setVariable ["MISSION_CORE_IMPORTANCE", _pl select 3];
                 if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
                 MISSION_CORE_SPAWNED_GROUPS pushBack _g;
+                // Raised over open water (a strait / island hop)? Embark the squad into boats
+                // sized to fit it before anyone swims. No-op on dry land.
+                [_g, _at] call MISSION_CORE_fnc_mountFootInBoats;
                 // MANPOWER IS COMMITTED HERE, ON SPAWN - the same write as line 102 below, moved.
                 // A leg has spent nothing, so the provider is still whole while it travels.
-                MISSION_CORE_COMMIT set [_pl select 6, (MISSION_CORE_COMMIT getOrDefault [_pl select 6, 0]) + _pl select 7];
+                // Parens on BOTH addends: `select` binds LOOSER than `+`, so an unparenthesised
+                // tail parses as `(stored + payload) select 7` - number plus array, which halts
+                // this script with "Generic error in expression" at exactly this line. That is not
+                // a cosmetic difference: the halt aborts the materialise block, so the leg never
+                // gets its group and sits abstract until the slack valve forces it out.
+                MISSION_CORE_COMMIT set [_pl select 6, (MISSION_CORE_COMMIT getOrDefault [_pl select 6, 0]) + (_pl select 7)];
             };
             _g
         },
@@ -131,6 +139,8 @@ MISSION_CORE_fnc_queuedCounterAttackInf = {
         // for the spawn above.
         if (_targetName != "") then {
             MISSION_CORE_REINF_SENT set [_targetName, (MISSION_CORE_REINF_SENT getOrDefault [_targetName, 0]) + (_template select 2)];
+            if (isNil "MISSION_CORE_REINF_LAST_SENT_TIME") then { MISSION_CORE_REINF_LAST_SENT_TIME = createHashMap; };
+            MISSION_CORE_REINF_LAST_SENT_TIME set [_targetName, time];
         };
         diag_log format ["ABSTRACT LEG: queued counter-attack inf %1 from %2 promised -> %3", _template select 0, _provName, _targetName];
     } else {

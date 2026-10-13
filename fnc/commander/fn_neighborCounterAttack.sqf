@@ -165,12 +165,19 @@ MISSION_CORE_fnc_neighborCounterAttack = {
     private _poolOut = [_cLoc, _neighbors, _side, _sentTotal] call MISSION_CORE_fnc_zonePoolBudget;
     private _pool = _poolOut select 0;
     private _rows = _poolOut select 1;
+    private _poolActionable = if (count _poolOut > 2) then { _poolOut select 2 } else { 0 };
+    private _poolCrumbs = if (count _poolOut > 3) then { _poolOut select 3 } else { 0 };
     // Persist the ALREADY-COMPUTED pool for this recipient so fn_isMarkerContested can gate its
     // "no threat within grace" clear on it without recomputing the provider budget. This is the
     // same number logged below - no new math. It is a last-committed value: updated only when a
     // sweep runs for this marker, so the contested gate reads whatever the last sweep left here.
     if (isNil "MISSION_CORE_REINF_POOL") then { MISSION_CORE_REINF_POOL = createHashMap; };
     MISSION_CORE_REINF_POOL set [_locName, _pool];
+    if (isNil "MISSION_CORE_REINF_POOL_ACT") then { MISSION_CORE_REINF_POOL_ACT = createHashMap; };
+    if (isNil "MISSION_CORE_REINF_POOL_CRUMB") then { MISSION_CORE_REINF_POOL_CRUMB = createHashMap; };
+    MISSION_CORE_REINF_POOL_ACT set [_locName, _poolActionable];
+    MISSION_CORE_REINF_POOL_CRUMB set [_locName, _poolCrumbs];
+    if (isNil "MISSION_CORE_REINF_LAST_SENT_TIME") then { MISSION_CORE_REINF_LAST_SENT_TIME = createHashMap; };
     diag_log format ["DYNAMIC REINF POOL: %1 tier-scar=%2 verdict=%3 sent=%4/%5 pool=%6 providers=%7", _locName, round (_assessOut select 0), _verdict, _sentTotal, _cap, _pool, count _rows];
     {
         private _r = _x;
@@ -493,6 +500,8 @@ private _sentMen = 0;
                                 _totalSent = _totalSent + _sentMen;
                                 _sentTotal = _sentTotal + _sentMen;
                                 MISSION_CORE_REINF_SENT set [_locName, _sentTotal];
+                                if (isNil "MISSION_CORE_REINF_LAST_SENT_TIME") then { MISSION_CORE_REINF_LAST_SENT_TIME = createHashMap; };
+                                MISSION_CORE_REINF_LAST_SENT_TIME set [_locName, time];
                             };
                             // Rounding is computed OUTSIDE the format array on purpose. `round` is a
                             // UNARY prefix operator, so `x round 100` is infix and invalid; inside a

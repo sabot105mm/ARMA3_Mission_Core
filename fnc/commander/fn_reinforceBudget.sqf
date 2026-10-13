@@ -158,7 +158,20 @@ MISSION_CORE_fnc_zonePoolBudget = {
 
     // The marker's pool is the sum of its providers' independent decisions, never more than the
     // per-marker ceiling.
-    [_total min _remaining, _rows]
+    private _totalActionable = 0;
+    private _totalCrumbs = 0;
+    {
+        private _r = _x;
+        private _eff = _r select 7;
+        private _minWave = ["reinfMinSquadMen", 6] call MISSION_CORE_fnc_tune;
+        if (_eff >= _minWave) then {
+            _totalActionable = _totalActionable + _eff;
+        } else {
+            if (_eff > 0) then { _totalCrumbs = _totalCrumbs + _eff; };
+        };
+    } forEach _rows;
+
+    [_total min _remaining, _rows, _totalActionable, _totalCrumbs]
 };
 
 // usage - MISSION_CORE_fnc_reinfMenCap:
