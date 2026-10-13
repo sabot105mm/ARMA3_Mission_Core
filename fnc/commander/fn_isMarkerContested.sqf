@@ -510,17 +510,44 @@ MISSION_CORE_fnc_isMarkerContested = {
         // MISSION_CORE_LOCATIONS is NEVER touched - this is not a real flip. Only pool == 0 is a
         // real clear, and that is the one place it happens.
         private _poolLeft = if (isNil "MISSION_CORE_REINF_POOL") then { 0 } else { MISSION_CORE_REINF_POOL getOrDefault [_markerName, 0] };
-        if (_poolLeft > 10) then {
+        private _poolAct = if (isNil "MISSION_CORE_REINF_POOL_ACT") then { 0 } else { MISSION_CORE_REINF_POOL_ACT getOrDefault [_markerName, 0] };
+        private _poolCrumb = if (isNil "MISSION_CORE_REINF_POOL_CRUMB") then { 0 } else { MISSION_CORE_REINF_POOL_CRUMB getOrDefault [_markerName, 0] };
+        private _minWave = ["reinfMinSquadMen", 6] call MISSION_CORE_fnc_tune;
+        private _actWin = ["reinfGiveUpActiveWindow", 60] call MISSION_CORE_fnc_tune;
+        private _hang = ["reinfGiveUpHangSeconds", 20] call MISSION_CORE_fnc_tune;
+        private _ticksNeeded = ["reinfGiveUpConsecutiveTicks", 2] call MISSION_CORE_fnc_tune;
+        if (_ticksNeeded < 1) then { _ticksNeeded = 1; };
+        if (isNil "MISSION_CORE_REINF_LAST_SENT_TIME") then { MISSION_CORE_REINF_LAST_SENT_TIME = createHashMap; };
+        if (isNil "MISSION_CORE_REINF_CLEAR_TICKS") then { MISSION_CORE_REINF_CLEAR_TICKS = createHashMap; };
+        private _lastSent = MISSION_CORE_REINF_LAST_SENT_TIME getOrDefault [_markerName, -1e9];
+        private _enRoute = [_markerName, _side] call MISSION_CORE_fnc_markerHasEnRouteCounterAttacks;
+        private _canStillReinforce = false;
+        if (_poolAct >= _minWave) then { _canStillReinforce = true; };
+        if (!_canStillReinforce && { _enRoute }) then { _canStillReinforce = true; };
+        if (!_canStillReinforce && { (time - _lastSent) < _actWin }) then { _canStillReinforce = true; };
+        if (!_canStillReinforce && { (_poolCrumb >= 1) && { (time - _lastSent) < _actWin } }) then { _canStillReinforce = true; };
+        if (!_canStillReinforce && { (time - _lastSent) < _hang }) then { _canStillReinforce = true; };
+        if (_canStillReinforce) then {
+            MISSION_CORE_REINF_CLEAR_TICKS deleteAt _markerName;
             // Do NOT refresh the timestamp - leaving it stale keeps this gate re-evaluating every
-            // tick until the pool actually hits 0 (a refreshed stamp would make the grace check at
-            // the top short-circuit true and mask the gate). Publish only on the flag's rising edge,
-            // so a long-running temp flip stays off the wire.
+            // tick until conditions change; publish only on flag rising edge for temp flip semantics
             private _prevVal = _CONTESTED getOrDefault [_markerName, [-1e10, []]];
             private _wasTemp = (count _prevVal > 2) && { _prevVal select 2 };
             _CONTESTED set [_markerName, [_freshLastSeen, _prevVal select 1, true]];
             if (!_wasTemp) then { publicVariable "MISSION_CORE_CONTESTED"; };
-            diag_log format ["CONTEST: %1 temp-flipped - no threat within %2s grace but pool=%3 still solvent", _markerName, round _grace, _poolLeft];
+            diag_log format ["CONTEST: %1 temp-flipped - no threat within %2s grace but actionable=%3 crumbs=%4 enRoute=%5 lastSentAgo=%6s -> held", _markerName, round _grace, _poolAct, _poolCrumb, _enRoute, round (time - _lastSent)];
         } else {
+            private _ticks = MISSION_CORE_REINF_CLEAR_TICKS getOrDefault [_markerName, 0];
+            _ticks = _ticks + 1;
+            MISSION_CORE_REINF_CLEAR_TICKS set [_markerName, _ticks];
+            if (_ticks < _ticksNeeded) then {
+                diag_log format ["CONTEST: %1 give-up pending (%2/%3) - actionable=%4 crumbs=%5 enRoute=%6 lastSentAgo=%7s", _markerName, _ticks, _ticksNeeded, _poolAct, _poolCrumb, _enRoute, round (time - _lastSent)];
+                private _prevVal = _CONTESTED getOrDefault [_markerName, [-1e10, []]];
+                private _wasTemp = (count _prevVal > 2) && { _prevVal select 2 };
+                _CONTESTED set [_markerName, [_freshLastSeen, _prevVal select 1, true]];
+                if (!_wasTemp) then { publicVariable "MISSION_CORE_CONTESTED"; };
+            } else {
+                MISSION_CORE_REINF_CLEAR_TICKS deleteAt _markerName;
         // DIAGNOSTIC: captured BEFORE deleteAt below erases it. The distinction this preserves is
         // the whole point of the block: a stored timestamp of -1e10 means no hold EVER fired for
         // this marker, while a real-but-old timestamp means holds did fire and then lapsed. Those
@@ -532,7 +559,7 @@ MISSION_CORE_fnc_isMarkerContested = {
         // [UNDER ATTACK] flag in the recruit menu and what the staged-squad auto-release loop watches
         // - without this the client would keep showing a contested marker the server already cleared.
         publicVariable "MISSION_CORE_CONTESTED";
-        diag_log format ["CONTEST: %1 cleared - no threat within %2s grace", _markerName, round _grace];
+        diag_log format ["CONTEST: %1 cleared - no threat within %2s grace (actionable=%3 crumbs=%4 enRoute=%5 lastSentAgo=%6s)", _markerName, round _grace, _poolAct, _poolCrumb, _enRoute, round (time - _lastSent)];
         // ---- DIAGNOSTIC: why did it clear? ----
         // The question this block exists to answer is "was it an AI group that died, or something
         // else", and the registries CANNOT answer it at this point: a group with no living member is
