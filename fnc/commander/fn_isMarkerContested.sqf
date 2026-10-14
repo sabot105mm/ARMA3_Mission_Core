@@ -642,6 +642,7 @@ MISSION_CORE_fnc_isMarkerContested = {
             // that happened after this one, not a mixture of two separate fights.
             MISSION_CORE_DEBUG_CONTEST_WHY deleteAt _markerName;
         };
+            };
         };
     };
     false
