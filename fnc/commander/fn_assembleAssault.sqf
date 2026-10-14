@@ -9,7 +9,8 @@
 // instant-march behavior (_staged = false default).
 MISSION_CORE_fnc_assembleAssault = {
     params ["_side", "_originPos", "_targetPos", "_importance", ["_originName", ""], ["_staged", false], ["_tgtName", ""]];
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    private _sideVar = "";
+    if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
     private _factionData = if (_side == WEST) then { MISSION_CORE_BLUFOR_DATA } else { MISSION_CORE_REDFOR_DATA };
     private _allGroups = _factionData select 17;
     private _faction = _factionData select 3;

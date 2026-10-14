@@ -8,7 +8,8 @@
 // to the same total manpower a set of full squads would have used.
 MISSION_CORE_fnc_countFootSquads = {
     params ["_side"];
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    private _sideVar = "";
+    if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith { 0 };
     private _c = 0;
     {

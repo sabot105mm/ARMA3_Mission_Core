@@ -8,7 +8,8 @@ MISSION_CORE_fnc_attackStuckWatchdogTick = {
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith {};
     {
         private _side = _x;
-        private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+        private _sideVar = "";
+        if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
         // "Is ANY marker contested?" - answered ONLY by MISSION_CORE_CONTESTED (written solely by
         // fn_isMarkerContested). This gate needs no geometry at all, just whether the map is empty.
         private _contested = if (isNil "MISSION_CORE_CONTESTED") then { [] } else { keys MISSION_CORE_CONTESTED };

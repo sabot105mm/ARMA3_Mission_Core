@@ -4,7 +4,8 @@
 MISSION_CORE_fnc_despawnAATanks = {
     params ["_side"];
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith {};
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    private _sideVar = "";
+    if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
     private _players = allPlayers select { alive _x };
     {
         if (_x getVariable [_sideVar, false] && { _x getVariable ["MISSION_CORE_AA_TANK", false] } && { count units _x > 0 }) then {

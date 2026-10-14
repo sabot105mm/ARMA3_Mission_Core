@@ -15,7 +15,8 @@ MISSION_CORE_fnc_longRangeReactionTick = {
     if (isNil "MISSION_CORE_LONG_RANGE_COOLDOWN") then { MISSION_CORE_LONG_RANGE_COOLDOWN = createHashMap; };
     {
         private _side = _x;
-        private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+        private _sideVar = "";
+        if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
         private _factionData = if (_side == WEST) then { MISSION_CORE_BLUFOR_DATA } else { MISSION_CORE_REDFOR_DATA };
         {
             private _loc = _x;

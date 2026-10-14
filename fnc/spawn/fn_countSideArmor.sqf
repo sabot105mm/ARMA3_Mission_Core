@@ -1,7 +1,8 @@
 
 MISSION_CORE_fnc_countSideArmor = {
     params ["_side"];
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    private _sideVar = "";
+    if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
     private _mbt = 0;
     private _mech = 0;
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith { [0, 0] };

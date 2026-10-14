@@ -29,7 +29,8 @@ MISSION_CORE_fnc_armorCommanderLoop = {
         };
         {
             private _side = _x;
-            private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+            private _sideVar = "";
+            if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
             private _enemySide = if (_side == WEST) then { EAST } else { WEST };
             private _armorGroups = _allGroups select {
                 _x getVariable [_sideVar, false] &&

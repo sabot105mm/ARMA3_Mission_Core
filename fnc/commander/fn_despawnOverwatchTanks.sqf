@@ -4,7 +4,8 @@
 MISSION_CORE_fnc_despawnOverwatchTanks = {
     params ["_side", "_targetPos", ["_holdDist", 800]];
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith {};
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    private _sideVar = "";
+    if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
     private _players = allPlayers select { alive _x };
     // PERMANENT RULE (BLUFOR GARRISONS): player-recruited garrison tanks are never despawned or
     // re-tasked to attack to free an armor cap - the player owns them and expects them to hold

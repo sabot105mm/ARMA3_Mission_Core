@@ -6,7 +6,8 @@
 // so foot squads ride trucks and vehicle crews keep fighting from their mounts.
 MISSION_CORE_fnc_commitToBattle = {
     params ["_side", "_targetPos", "_targetSize", ["_radius", 4000]];
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    private _sideVar = "";
+    if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
     private _players = allPlayers select { alive _x };
     if (count _players == 0) exitWith { 0 };
     // Contested markers = the side's markers a player is actively attacking. A player can attack

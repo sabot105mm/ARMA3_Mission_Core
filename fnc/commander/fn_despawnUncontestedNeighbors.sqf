@@ -16,7 +16,8 @@ MISSION_CORE_fnc_despawnUncontestedNeighborsTick = {
     if (isNil "MISSION_CORE_CONTESTED_LAST") then { MISSION_CORE_CONTESTED_LAST = createHashMap; };
     {
         private _side = _x;
-        private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+        private _sideVar = "";
+        if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
         // Which markers are contested comes ONLY from MISSION_CORE_CONTESTED (written solely by
         // fn_isMarkerContested). Only the NAMES are needed here - every geometric test below reads
         // MISSION_CORE_CACHED_POSITIONS, a separate var answering a separate question.

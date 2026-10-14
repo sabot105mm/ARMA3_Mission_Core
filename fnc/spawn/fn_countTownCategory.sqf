@@ -18,7 +18,8 @@ MISSION_CORE_fnc_countTownCategory = {
         diag_log format ["ARMOR OUTPOSTS: countTownCategory refused side %1 (type %2)", _side, typeName _side];
         0
     };
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    private _sideVar = "";
+    if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
     private _homes = [];
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith { 0 };
     {

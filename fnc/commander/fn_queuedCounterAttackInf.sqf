@@ -27,7 +27,8 @@ MISSION_CORE_fnc_queuedCounterAttackInf = {
     // squad), and spends no manpower (so providerCanAfford is irrelevant). Putting this after any of
     // them would mean a provider that has idle men but no supply left could never use them - exactly
     // backwards, and the whole point of preferring a re-task.
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    private _sideVar = "";
+    if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
     private _grp = [_sideVar, _provName, _targetPos, _targetSize] call MISSION_CORE_fnc_claimReinforcementSquad;
     if (!isNull _grp) exitWith {
         // Men really do arrive at the zone, so the zone's 200 cap is charged on the squad's ACTUAL

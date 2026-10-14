@@ -124,7 +124,8 @@ MISSION_CORE_fnc_markerCombatAssessment = {
     // the marker MORE scared, so help-asking ramps up before it is overrun.
     private _defW = 0;
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
-    private _sideVar = if (_owner == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    private _sideVar = "";
+    if (_owner == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
     {
         if (!isNull _x && { _x getVariable [_sideVar, false] } && { (_x getVariable ["MISSION_CORE_ORIGIN_MARKER", ""]) == _locName }) then {
             private _b = [_x, _insideR, 1e10, _locPos] call _bucketGroup;

@@ -5,7 +5,8 @@
 MISSION_CORE_fnc_countSideComposition = {
     params ["_side"];
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") exitWith { [0, 0, 0, 0] };
-    private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+    private _sideVar = "";
+    if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
     private _out = [0, 0, 0, 0];
     {
         private _grp = _x;

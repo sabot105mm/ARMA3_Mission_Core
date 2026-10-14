@@ -365,7 +365,8 @@ private _sentMen = 0;
                                 // does not. The AI commander decides - MISSION_CORE_fnc_claimIdleGarrison
                                 // owns the eligibility rules, so reinforcement and the player hunt now
                                 // draw from the same pool under the same definition of "available".
-                                private _sideVar = if (_side == WEST) then { "MISSION_CORE_BLUFOR" } else { "MISSION_CORE_REDFOR" };
+                                private _sideVar = "";
+                                if (_side == WEST) then { _sideVar = "MISSION_CORE_BLUFOR"; } else { _sideVar = "MISSION_CORE_REDFOR"; };
                                 private _grp = [_sideVar, _provName, _locPos, _cSize] call MISSION_CORE_fnc_claimReinforcementSquad;
                                 if (isNull _grp) then {
                                     // LONG HAUL? The squad has to be CONJURED either way, so this is a
