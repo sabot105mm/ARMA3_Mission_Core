@@ -487,7 +487,10 @@ MISSION_CORE_fnc_requestManpower = {
 
 // Refund unused pooled manpower back to its donors, LAST-IN-FIRST-OUT (refunds the most
 // recently drawn donor first, which refunds longer-distance draws preferentially).
-MISSION_CORE_fnc_refundManpower = {
+// NOTE: distinct name from the global-pool MISSION_CORE_fnc_refundManpower in fn_manpower.sqf -
+// both used to share the name, so whichever file compiled last silently overrode the other and
+// one caller set always broke with "Type Array, expected Number".
+MISSION_CORE_fnc_refundManpowerToDonors = {
     params ["_donors", "_amount"];
     if (_amount <= 0 || { count _donors == 0 }) exitWith {};
     for "_i" from (count _donors - 1) to 0 step -1 do {

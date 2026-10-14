@@ -248,7 +248,7 @@ MISSION_CORE_fnc_releaseCounterStaged = {
             sleep 0.4;
         };
     };
-    if (_funded > 0) then { [_donors, _funded] call MISSION_CORE_fnc_refundManpower; };
+    if (_funded > 0) then { [_donors, _funded] call MISSION_CORE_fnc_refundManpowerToDonors; };
     if (_aborted) exitWith {
         diag_log format ["COUNTER-ATTACK: %1 staging aborted - pooled budget refunded", _originName];
         MISSION_CORE_STAGING_BUDGET deleteAt _originName;
