@@ -21,10 +21,14 @@ MISSION_CORE_fnc_guardSpawnKill = {
                 if (_enemyNear > 0) exitWith {};
                 diag_log format ["MISSION CORE: %1 exploded on spawn at %2 - respawning in a safer clearing", typeOf _veh, _spawnPos];
                 [_spawnPos, 60, 900] call MISSION_CORE_fnc_markUnsafeVehicleSpawn;
-                // Armor that carries a REINF_TARGET already triggers requestArmorReinforcement on
-                // death (a replacement drives in from a provider). Respawn only vehicles that have
-                // no self-replacement so we never double the armor stack.
-                private _hasReinf = count (_veh getVariable ["MISSION_CORE_REINF_TARGET", [0, 0, 0]]) > 0;
+                // A vehicle that still carries a REINF_TARGET has its own replacement pipeline - a
+                // Killed handler calling requestArmorReinforcement (assault tanks, player-purchased
+                // garrison tanks). Rebuild in place ONLY vehicles with NO self-replacement, so we
+                // never double the armor stack. The [] default matters: the old [0,0,0] default made
+                // `count` 3 for an unset variable, so this test was always true and no vehicle was
+                // ever rebuilt. Garrison tanks/APCs no longer set REINF_TARGET (their death->order
+                // handlers were removed), so they now correctly take this rebuild path.
+                private _hasReinf = count (_veh getVariable ["MISSION_CORE_REINF_TARGET", []]) > 0;
                 if (_hasReinf) exitWith {
                     diag_log format ["MISSION CORE: %1 spawn-kill - armor reinforcement will replace it instead", typeOf _veh];
                 };
@@ -37,6 +41,9 @@ MISSION_CORE_fnc_guardSpawnKill = {
                 if (count _newPos < 2) then { _newPos = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
                 if (count _newPos == 2) then { _newPos pushBack 0; };
                 private _newVeh = [_vehClass, _newPos, false] call MISSION_CORE_fnc_safeVehicleSpawn;
+                if (isNull _newVeh) then {
+                    diag_log format ["MISSION CORE: %1 spawn-kill - no safe respawn spot found, not rebuilt (waiting)", _vehClass];
+                } else {
                 _grp addVehicle _newVeh;
                 // Re-seat surviving crew, then top up with fresh crew
                 private _crewClass = if (_side == WEST) then { "B_crew_F" } else { "O_crew_F" };
@@ -58,17 +65,8 @@ MISSION_CORE_fnc_guardSpawnKill = {
                 if (!isNull _d && isNull (driver _newVeh)) then { _d moveInDriver _newVeh; };
                 if (!isNull _g && isNull (gunner _newVeh)) then { _g moveInGunner _newVeh; };
                 if (!isNull _c && isNull (commander _newVeh)) then { _c moveInCommander _newVeh; };
-                // Re-apply the standard armor reinforcement Killed handler
-                _newVeh setVariable ["MISSION_CORE_REINF_TARGET", _spawnPos];
-                _newVeh addEventHandler ["Killed", {
-                    params ["_v"];
-                    private _s = _side;
-                    private _t = _v getVariable ["MISSION_CORE_REINF_TARGET", [0, 0, 0]];
-                    private _l = getPos _v call MISSION_CORE_fnc_getLocByPos;
-                    private _n = if (count _l > 0) then { _l select 0 } else { "" };
-                    [_s, _t, _n] call MISSION_CORE_fnc_requestArmorReinforcement;
-                }];
                 diag_log format ["MISSION CORE: %1 respawned at %2 after spawn-kill", _vehClass, _newPos];
+                };
             };
         };
     };

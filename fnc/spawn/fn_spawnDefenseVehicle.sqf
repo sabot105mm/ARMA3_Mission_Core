@@ -6,19 +6,15 @@ MISSION_CORE_fnc_spawnDefenseVehicle = {
     // Full safe-spawn check (dry, not flagged-unsafe, no parked vehicle within 40m, clear of
     // geometry AND terrain objects): re-roll through findVehiclePos when the caller's spot fails.
     _pos = [_pos, _targetPos, [200, 200]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
-    if (count _pos < 2) then { _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos; };
+    if (count _pos < 2) then { _pos = [_targetPos] call MISSION_CORE_fnc_ensureLandPos; };
     if (count _pos == 2) then { _pos pushBack 0; };
     private _crewClass = if (_side == WEST) then { "B_crew_F" } else { "O_crew_F" };
     private _veh = [_vehClass, _pos] call MISSION_CORE_fnc_safeVehicleSpawn;
-    _veh setVariable ["MISSION_CORE_REINF_TARGET", _targetPos];
-    _veh addEventHandler ["Killed", {
-        params ["_v"];
-        private _s = _side;
-        private _t = _v getVariable ["MISSION_CORE_REINF_TARGET", [0, 0, 0]];
-        private _l = getPos _v call MISSION_CORE_fnc_getLocByPos;
-        private _n = if (count _l > 0) then { _l select 0 } else { "" };
-        [_s, _t, _n] call MISSION_CORE_fnc_requestArmorReinforcement;
-    }];
+    if (isNull _veh) exitWith {
+        // No clean spot - give the armor-cap hold back and let the calling system retry later.
+        if (!isNil "MISSION_CORE_fnc_armorCapRelease") then { [_side, _vehSlot] call MISSION_CORE_fnc_armorCapRelease; };
+        grpNull
+    };
     private _grp = createGroup _side;
     _grp addVehicle _veh;
     private _vehCrew = [];

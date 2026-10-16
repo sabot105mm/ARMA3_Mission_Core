@@ -327,18 +327,9 @@ MISSION_CORE_fnc_spawnLocation = {
                     _grp setVariable ["MISSION_CORE_ORDER", "defend"];
                     _grp setVariable ["MISSION_CORE_IDLE", false];
                     leader _grp setVariable ["MISSION_CORE_PATROLLING", false];
-                    {
-                        private _v = vehicle _x;
-                        if (_v != _x && { _v isKindOf "Tank" || _v isKindOf "Wheeled_APC" || _v isKindOf "Tracked_APC" }) then {
-                            _v addEventHandler ["Killed", {
-                                params ["_killerVeh"];
-                                private _s = _owner;
-                                private _l = getPos _killerVeh call MISSION_CORE_fnc_getLocByPos;
-                                private _n = if (count _l > 0) then { _l select 0 } else { "" };
-                                [_s, _markerCenter, _n] call MISSION_CORE_fnc_requestArmorReinforcement;
-                            }];
-                        };
-                    } forEach units _grp;
+                    // A garrison tank/APC never orders its own replacement on death. Its marker's
+                    // armor allowance is refilled only by the garrison replenish loop
+                    // (fn_replenishLoop), as a request, and only while the marker is not contested.
                 } else {
                     if (_subCat find "_aa" > -1) then {
                         // AA stays on defense/overwatch - never pulled into assaults
@@ -349,13 +340,15 @@ MISSION_CORE_fnc_spawnLocation = {
                         leader _grp setVariable ["MISSION_CORE_PATROLLING", false];
                     };
                     if (_isArty) then {
-                        // Overwatch artillery holds its marker and shells spotted enemy armor.
+                        // Overwatch artillery holds its marker and shells KNOWN enemies inside its
+                        // footprint - registered into the per-side arty controller as a GARRISON
+                        // piece (that loop, not a per-group script, drives its fire).
                         _grp setVariable ["MISSION_CORE_ORDER", "artillery"];
                         _grp setVariable ["MISSION_CORE_ARMOR_SLOT", "arty"];
                         _grp setVariable ["MISSION_CORE_ARTILLERY", true];
                         private _veh = vehicle (leader _grp);
                         if (!isNull _veh && { _veh != leader _grp }) then {
-                            [_grp, _veh, _owner] spawn MISSION_CORE_fnc_overwatchArtillery;
+                            [_veh, _grp, _owner, "garrison", _locName, []] call MISSION_CORE_fnc_artyRegister;
                             diag_log format ["DYNAMIC SPAWN: overwatch artillery %1 armed", groupId _grp];
                         };
                     };

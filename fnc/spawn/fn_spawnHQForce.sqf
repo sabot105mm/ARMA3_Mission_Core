@@ -37,6 +37,11 @@ MISSION_CORE_fnc_spawnHQForce = {
             _vehPos = [_vehPos, _targetPos, _markerSize] call MISSION_CORE_fnc_safeVehicleSpawnPos;
             if (count _vehPos == 2) then { _vehPos pushBack 0; };
             private _tank = [selectRandom _mbtClasses, _vehPos] call MISSION_CORE_fnc_safeVehicleSpawn;
+            if (isNull _tank) then {
+                // No clean spot - give the armor-cap hold back and let the next pass retry later.
+                if (!isNil "MISSION_CORE_fnc_armorCapRelease") then { [_side, "mbt"] call MISSION_CORE_fnc_armorCapRelease; };
+                continue;
+            };
             private _grp = createGroup _side;
             _grp addVehicle _tank;
             private _tc = [];
@@ -75,6 +80,10 @@ MISSION_CORE_fnc_spawnHQForce = {
         _apcPos = [_apcPos, _targetPos, _markerSize] call MISSION_CORE_fnc_safeVehicleSpawnPos;
         if (count _apcPos == 2) then { _apcPos pushBack 0; };
         private _apc = [selectRandom _apcClasses, _apcPos] call MISSION_CORE_fnc_safeVehicleSpawn;
+        if (isNull _apc) then {
+            // No clean spot - give the armor-cap hold back and let the spawning system retry later.
+            if (!isNil "MISSION_CORE_fnc_armorCapRelease") then { [_side, "mech"] call MISSION_CORE_fnc_armorCapRelease; };
+        } else {
         private _grp = createGroup _side;
         _grp addVehicle _apc;
         private _driver = _grp createUnit [_crewClass, _apcPos, [], 0, "NONE"];
@@ -142,6 +151,7 @@ MISSION_CORE_fnc_spawnHQForce = {
                     _grp setSpeedMode "FULL";
                 };
             };
+        };
         };
     };
     // HQ alert script - puts all groups on high alert when enemies approach

@@ -60,6 +60,21 @@ MISSION_CORE_fnc_sendCounterAttack = {
     // Never send the squad to the map origin [0,0,0] or into the sea.
     _targetPos = [_targetPos, getPos (leader _group)] call MISSION_CORE_fnc_safeWaypointPos;
     if (_blocked) exitWith { false };
+    // WATER-BORNE SQUAD. A leg that materialised over open water rides in boats
+    // (fn_boatApproach.sqf: MISSION_CORE_fnc_mountFootInBoats + fn_boatApproach). It is neither
+    // foot nor truck:
+    // the boat branch drives the boats to the approach point, disembarks them, then finishes
+    // exactly like the "within 700m" foot branch below. Placed BEFORE the foot long-haul gate -
+    // a riding squad is mounted (vehicle != self), so it would skip that gate anyway, but this
+    // also guarantees no re-abstraction of a squad that has almost finished its ride.
+    if (_group getVariable ["MISSION_CORE_BOAT_TRANSIT", false]) exitWith {
+        diag_log format ["BOAT TRANSIT: %1 boat approach to %2 (%3 men riding)", groupId _group, _targetPos, count units _group];
+        _group setVariable ["MISSION_CORE_IDLE", false];
+        _group setVariable ["MISSION_CORE_PATROLLING", false];
+        _group setVariable ["MISSION_CORE_ORDER", _order];
+        [_group, _targetPos, _targetSize, side (leader _group)] spawn MISSION_CORE_fnc_boatApproach;
+        true
+    };
     // FOOT LONG-HAUL -> ABSTRACT LEG. A foot-only squad ordered into a fight reinforceAbstractMinDist
     // or farther is never marched (or trucked) across the map: it becomes an ABSTRACT LEG
     // (fn_abstractLeg) carrying THE SAME squad. The squad is parked out of the world while the abstract

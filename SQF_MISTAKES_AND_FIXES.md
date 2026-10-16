@@ -461,6 +461,48 @@ meaning, or one of the three is wrong in a way no type system will catch.
 
 ---
 
+## 14. `select` on an Object where a position was expected
+
+**Mistake.** Shared an ellipse-test code block between two call sites, but fed it an object from one
+of them. The block reads a position array:
+
+```sqf
+private _inside = {
+    params ["_p"];
+    private _dx = (_p select 0) - (_locPos select 0);
+    ...
+};
+```
+
+The garrison tag passed the unit OBJECT straight from `allUnits`:
+```sqf
+if ([_x] call _inside) exitWith { _defended = true; };   // _x is an Object
+```
+while the group scan below it correctly passed `getPos _x`. Same block, two contracts.
+
+**RPT.**
+```
+ 9:54:19 Error in expression <de = {params ["_p"];
+ private _dx = (_p select 0) - (_locPos select 0);
+ ...
+ 9:54:19   Error position: <select 0) - (_locPos select 0);
+ 9:54:19   Error select: Type Object, expected Array,String,Config entry
+ 9:54:19 File ...fn_redforRecapture.sqf..., line 61
+```
+
+**Cause.** `select` on an Object is a RUNTIME type error (`Type Object, expected Array/String/Config
+entry`), not a parse error — the file compiled clean, so every static validator still passed. The two
+call sites just disagreed on what type `_p` is.
+
+**Fix.** Always hand a position to a geometry test: `[getPos _x] call _inside`. When a block is
+shared, give it ONE contract and convert with `getPos` at EVERY call site.
+
+**Lesson.** Geometry predicates take positions, never agents. A block called from more than one place
+with different caller conversions is the classic source: the first site works, the second raises a
+runtime type error that no brace counter or pattern matcher can see.
+
+---
+
 ## Rules to follow when writing SQF in this mission
 
 1. **Fix the highest RPT line number first.** It is the root cause; everything below it is cascade.
@@ -497,3 +539,6 @@ meaning, or one of the three is wrong in a way no type system will catch.
     summary, which prints `( = 0 [ = 0 { = 0` for a file with an unbalanced closer, because the
     counter clamps at zero. The actual finding is the per-line `EXTRA )` several lines above it.
     Always surface the per-line diagnostics and assert on them by name.
+19. **Geometry predicates take positions, never agents.** If a block is shared between call sites,
+    every caller must `getPos _x` before calling — a mixed call site raises a runtime `select`-on-
+    Object type error that all static validators pass clean. See section 14.

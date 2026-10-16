@@ -91,8 +91,16 @@ MISSION_CORE_fnc_straightPlan = {
         ((_startPos select 1) + (_endPos select 1)) / 2,
         0
     ];
-    private _parts = [_startPos, _mid, _endPos] call MISSION_CORE_fnc_routeCum;
-    [[_startPos, _mid, _endPos], (_parts select 0), (_parts select 1)]
+    // routeCum takes ONE argument (params ["_path"]), so the polyline has to be
+    // wrapped: `[_startPos, _mid, _endPos] call routeCum` binds _path to the
+    // START POSITION alone, the guard then sees three scalars, and the function
+    // returns [[], 0]. Every caller of this function (routePlan's fallback, the
+    // abstract leg's own fallback) silently got cum=[] dist=0 and reported an
+    // empty plan - which is why a refused pair logged "straight-line leg" one
+    // line before "declined", and why no ROUTE PLAN fallback line ever appeared.
+    private _poly = [_startPos, _mid, _endPos];
+    private _parts = [_poly] call MISSION_CORE_fnc_routeCum;
+    [_poly, (_parts select 0), (_parts select 1)]
 };
 
 // Position at fraction _frac (0..1) along a polyline. One linear walk.

@@ -405,8 +405,14 @@ class MISSION_CORE_TUNE {
     // present the quiet pause above is re-armed; the bleed only begins once BOTH are gone for
     // reinfDecayPauseSeconds. Without it, a fight whose player stepped away but whose AI assault is
     // still pressing bled its budget out from under it.
-    spawnerSlotCap = 5;             // markers per side allowed to spawn troops at once (10 total). An
-    // exhausted provider gives its slot back (fn_reevalSpawnerSlots) and the next marker that needs
+    spawnerSlotCap = 5;             // BASE markers per side allowed to spawn troops at once. Covers the
+    // FIRST contested marker (and quiet-time replenish); the effective cap scales with the fight.
+    spawnerSlotPerContest = 5;      // Extra spawner slots per contested marker OWNED by that side
+    // BEYOND the first: effectiveCap = spawnerSlotCap + spawnerSlotPerContest * max(0, contested-1).
+    // So 1 contested = 5, 2 = 10, 3 = 15... A flat cap starved the extra fronts - once the base slots
+    // were held, each additional contested marker could not claim a slot and simultaneous defenses on
+    // one side froze mid-fight.
+    // An exhausted provider gives its slot back (fn_reevalSpawnerSlots) and the next marker that needs
     // one claims it on demand - a marker that gave up no longer holds its slot forever.
     reinfForceSpawnMaxDist = 1000;  // fn_ensureMarkerActive only force-builds a garrison when a living
     // player is within this many metres of the marker CENTER. The AI contests and dispatches
@@ -548,6 +554,11 @@ class MISSION_CORE_TUNE {
     // right on the boundary. Route-reached and deadline materialisations never revert - a
     // squad about to assault the contested marker stays visible and handoff takes it over.
     abstractWatchAwayRadius = 1600;
+    // A player-materialised squad is NEVER passed back to the abstract state while it is still
+    // this close to its own destination (the frozen target marker, leg row index 3). Protects a
+    // squad that is closing on a nearby objective from being parked mid-approach just because
+    // the player who materialised it walked away. Set above routeLegFinalRadius (1000).
+    abstractWatchMinDist = 1500;
 
     // ----- ROUTE LEG WAYPOINTS (shared by convoys, tank columns and troop legs) -----
     // Stride between generated waypoints. A materialised convoy used to take the remaining

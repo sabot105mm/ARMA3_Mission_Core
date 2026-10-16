@@ -42,7 +42,6 @@ call compile preprocessFileLineNumbers "fnc\commander\fn_markerCapacity.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_countMarkerGarrison.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_countInitialGarrison.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_retreatGarrison.sqf";
-call compile preprocessFileLineNumbers "fnc\commander\fn_overwatchArtillery.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_countReplenishGroups.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_countFootSquads.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_isMarkerContested.sqf";
@@ -81,10 +80,15 @@ call compile preprocessFileLineNumbers "fnc\commander\fn_queuedReinforce.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_queuedArmorReinf.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_occupationMonitor.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_captureMarkerForPlayers.sqf";
+// REDFOR recapture depends on MISSION_CORE_fnc_setMarkerOwner (occupationMonitor above),
+// so it compiles after it.
+call compile preprocessFileLineNumbers "fnc\commander\fn_redforRecapture.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_replenishLoop.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_deactivateNeighborMarkers.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_renewDefenses.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_assaultStaging.sqf";
+// BLUFOR staged-squad load-out (own-vehicle cargo fill / far-foot transport); called by serverStageGroup.
+call compile preprocessFileLineNumbers "fnc\commander\fn_bluforStageTransport.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_aiAssaultLoop.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_aiCommanderLoop.sqf";
 call compile preprocessFileLineNumbers "fnc\commander\fn_armorCommanderLoop.sqf";

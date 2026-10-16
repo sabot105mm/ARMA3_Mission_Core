@@ -35,15 +35,17 @@ MISSION_CORE_fnc_builderSpawnDefense = {
             } forEach _objs;
         };
         case "tank": {
-            _grp = createGroup WEST;
             private _veh = [_class, _pos, false, _dir] call MISSION_CORE_fnc_safeVehicleSpawn;
-            _grp addVehicle _veh;
-            private _crew = [];
-            for "_c" from 1 to 3 do { _crew pushBack (_grp createUnit ["B_crew_F", _pos, [], 0, "NONE"]); };
-            _crew params [["_d", objNull], ["_g", objNull], ["_c2", objNull]];
-            if (!isNull _d && { isNull (driver _veh) }) then { _d moveInDriver _veh; };
-            if (!isNull _g && { isNull (gunner _veh) }) then { _g moveInGunner _veh; };
-            if (!isNull _c2 && { isNull (commander _veh) }) then { _c2 moveInCommander _veh; };
+            if (!isNull _veh) then {
+                _grp = createGroup WEST;
+                _grp addVehicle _veh;
+                private _crew = [];
+                for "_c" from 1 to 3 do { _crew pushBack (_grp createUnit ["B_crew_F", _pos, [], 0, "NONE"]); };
+                _crew params [["_d", objNull], ["_g", objNull], ["_c2", objNull]];
+                if (!isNull _d && { isNull (driver _veh) }) then { _d moveInDriver _veh; };
+                if (!isNull _g && { isNull (gunner _veh) }) then { _g moveInGunner _veh; };
+                if (!isNull _c2 && { isNull (commander _veh) }) then { _c2 moveInCommander _veh; };
+            };
         };
         case "emplace": {
             _grp = createGroup WEST;
@@ -198,13 +200,16 @@ MISSION_CORE_fnc_playerDefenseLoop = {
                                 if (!isNull _mortar && { alive _mortar }) then {
                                     // Unified artillery targeting: mortars shell enemy infantry
                                     // (same fn as the AI mortars), SPGs handle armor separately.
-                                    private _target = [_mortar, EAST] call MISSION_CORE_fnc_artilleryInfantryTarget;
-                                    if (count _target > 0) then {
-                                        private _lastFire = _grp getVariable ["MISSION_CORE_MORTAR_LAST_FIRE", -99999];
-                                        if (time - _lastFire > 45) then {
-                                            private _shells = (magazinesAmmo _mortar) select { (_x select 1) > 0 && { (_x select 0) find "Smoke" == -1 } };
-                                            if (count _shells > 0) then {
-                                                private _mag = _shells select 0;
+                                    // Round first: the target scan needs the magazine name so only
+                                    // candidates the ballistics can REACH are considered (min+max
+                                    // range - the exact point later fired at, no scatter here).
+                                    private _shells = (magazinesAmmo _mortar) select { (_x select 1) > 0 && { (_x select 0) find "Smoke" == -1 } };
+                                    if (count _shells > 0) then {
+                                        private _mag = _shells select 0;
+                                        private _target = [_mortar, EAST, _mag select 0] call MISSION_CORE_fnc_artilleryInfantryTarget;
+                                        if (count _target > 0) then {
+                                            private _lastFire = _grp getVariable ["MISSION_CORE_MORTAR_LAST_FIRE", -99999];
+                                            if (time - _lastFire > 45) then {
                                                 private _cmdr = leader _grp;
                                                 if (!isNull _cmdr && { alive _cmdr }) then {
                                                     _grp setVariable ["MISSION_CORE_MORTAR_LAST_FIRE", time];

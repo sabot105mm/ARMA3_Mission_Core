@@ -229,7 +229,11 @@ MISSION_CORE_fnc_abstractLegDispatch = {
         if (count (_flat select 0) >= 2) then {
             _path = _flat select 0;
             _cum = _flat select 1;
-            _travel = _flat select 2;
+            // straightPlan hands back METRES (routePlan's own fallback converts to
+            // seconds before returning), and _travel is seconds everywhere this row
+            // is read - ETA, progress fraction, materialize scheduling. Storing the
+            // raw distance here made a straight leg look 14x slower than it walks.
+            _travel = (_flat select 2) / _speed;
             diag_log format ["ABSTRACT LEG: %1 (%2 -> %3) no road route - straight-line leg (gate %4m)", _kind, _fromName, _toName, round _gateDist];
         };
     };
@@ -370,6 +374,10 @@ MISSION_CORE_fnc_abstractClaimedSquad = {
             _x enableSimulationGlobal true;
             _x setPos [_at select 0, _at select 1, 0];
         } forEach units _g;
+        // The squad was parked and re-dropped at the abstract point - if that point is open
+        // water (a strait or island hop the road route crossed), embark everyone before they
+        // hit the drink. fn_mountFootInBoats no-ops on dry land.
+        [_g, _at] call MISSION_CORE_fnc_mountFootInBoats;
         _g setVariable ["MISSION_CORE_ABSTRACT_CLAIMED", nil];
         diag_log format ["ABSTRACT CLAIM: %1 materialised (id %2) at %3% of route, %4m from target", groupId _g, _row select 15, round (_frac * 100), round ((getPosATL (leader _g)) distance2D (_row select 3))];
         _g

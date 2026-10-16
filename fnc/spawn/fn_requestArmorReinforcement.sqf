@@ -24,7 +24,6 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
     if (!_fromQueue && { time - _lastReinf < 300 }) exitWith {
         diag_log format ["DYNAMIC ARMOR REINF: %1 reinforcement on cooldown (last=%2)", _sideKey, _lastReinf];
     };
-    if (!_fromQueue) then { MISSION_CORE_ARMOR_REINF_COOLDOWN set [_sideKey, time]; };
     private _factionData = if (_side == WEST) then { MISSION_CORE_BLUFOR_DATA } else { MISSION_CORE_REDFOR_DATA };
     private _vehMap = _factionData select 7;
     private _mbtClasses = _vehMap getOrDefault ["mbt", []];
@@ -37,9 +36,6 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
     private _ammoCostArmor = ["ammoCostArmorReinf", 3] call MISSION_CORE_fnc_tune;
     if (_targetName != "" && { ([_targetName] call MISSION_CORE_fnc_getAmmoFraction) < 0.3 }) exitWith {
         diag_log format ["DYNAMIC ARMOR REINF: %1 low on ammo - no armor reinforcement", _targetName];
-    };
-    if (_targetName != "") then {
-        [_targetName, _ammoCostArmor] call MISSION_CORE_fnc_consumeAmmo;
     };
     // Tank pool refill: if the target marker owns a tank pool and is BELOW it (a tank died),
     // the replacement MUST be an MBT - the pool drives the slot, not the 3:1 mech/inf bias.
@@ -99,6 +95,12 @@ MISSION_CORE_fnc_requestArmorReinforcement = {
                 };
             };
         };
+    };
+    // Pay only once a slot is actually resolved - an early return (cooldown / low ammo / bad side)
+    // must not burn the side cooldown or consume ammo. Queued retries keep the original stamp.
+    if (!_fromQueue) then { MISSION_CORE_ARMOR_REINF_COOLDOWN set [_sideKey, time]; };
+    if (_targetName != "") then {
+        [_targetName, _ammoCostArmor] call MISSION_CORE_fnc_consumeAmmo;
     };
     if (_slot == "inf") exitWith {
         private _mSize = if (count _tlEntry > 8) then { _tlEntry select 8 } else { [200, 200] };
@@ -255,16 +257,6 @@ MISSION_CORE_fnc_materializeArmorOrder = {
     if (!isNull _d && isNull (driver _veh)) then { _d moveInDriver _veh; };
     if (!isNull _g && isNull (gunner _veh)) then { _g moveInGunner _veh; };
     if (!isNull _c && isNull (commander _veh)) then { _c moveInCommander _veh; };
-    _veh setVariable ["MISSION_CORE_REINF_TARGET", _targetPos];
-    _veh setVariable ["MISSION_CORE_REINF_LOCNAME", _targetName];
-    _veh addEventHandler ["Killed", {
-        params ["_v"];
-        private _s = _side;
-        private _t = _v getVariable ["MISSION_CORE_REINF_TARGET", [0, 0, 0]];
-        private _tn = _v getVariable ["MISSION_CORE_REINF_LOCNAME", ""];
-        if (_t isEqualTo [0, 0, 0] && _tn == "") exitWith {};
-        [_s, _t, _tn] call MISSION_CORE_fnc_requestArmorReinforcement;
-    }];
     [_veh, _grp, _side] call MISSION_CORE_fnc_guardSpawnKill;
     _grp setBehaviour "AWARE"; _grp setCombatMode "YELLOW"; _grp setSpeedMode "FULL";
     private _isBLU = if (_side == WEST) then { "BLUFOR" } else { "REDFOR" };

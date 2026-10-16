@@ -180,10 +180,12 @@ MISSION_CORE_fnc_tankReserveSpawn = {
     // engine in the water reports Drowned on the spawn frame, so the stock tank would sit
     // half-sunk at the factory until something moved it. Land check therefore runs after the
     // final position gate, not before it.
-    _pos = [_pos, _pos, [100, 100]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    private _safePark = [_pos, _pos, [100, 100]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    if (count _safePark >= 2) then { _pos = _safePark; };
     _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos;
     if (count _pos == 2) then { _pos pushBack 0; };
     private _veh = [selectRandom _mbtClasses, _pos, true, (random 360)] call MISSION_CORE_fnc_safeVehicleSpawn;
+    if (isNull _veh) exitWith { objNull };
     _veh lock 0;
     _veh setVariable ["MISSION_CORE_TANK_RESERVE", true];
     _veh setVariable ["MISSION_CORE_TANK_HOME", _name];
@@ -364,6 +366,18 @@ MISSION_CORE_fnc_consumePoolTankForSide = {
         };
     };
     _src
+};
+
+// Give ONE armor pool point back to a side - the inverse of consumePoolTankForSide. Used when a
+// pool point was consumed for a vehicle that then FAILED to spawn safely (no free spot): the point
+// returns to the side's start-pool bonus so it is not silently lost while the request waits.
+MISSION_CORE_fnc_returnPoolTankForSide = {
+    params ["_side"];
+    if (_side == WEST) then {
+        if (isNil "MISSION_CORE_ARMOR_POOL_BONUS") then { MISSION_CORE_ARMOR_POOL_BONUS = 0; };
+        MISSION_CORE_ARMOR_POOL_BONUS = MISSION_CORE_ARMOR_POOL_BONUS + 1;
+    };
+    true
 };
 
 // Broadcast the current BLUFOR armor-pool count so every HQ recruit menu can show availability.

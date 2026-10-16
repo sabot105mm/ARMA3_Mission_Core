@@ -5,9 +5,10 @@
 // grant manpower credit to the contested marker that matures based on average travel time.
 // This behavior must never be reduced below 3 senders. Do not change.
 
-// PERMANENT RULE: at most spawnerSlotCap markers PER SIDE may spawn troops at once. Slots are keyed
-// [_side, markerName] so the two sides have independent pools - a marker-dense enemy neighborhood
-// can no longer starve our own providers out of the shared pool.
+// PERMANENT RULE: a side may hold at most a SCALED number of spawner slots at once -
+// spawnerSlotCap (base, covers the first contested marker) + spawnerSlotPerContest * max(0, contested
+// it owns - 1). Slots are keyed [_side, markerName] so the two sides have independent pools - a
+// marker-dense enemy neighborhood can no longer starve our own providers out of the shared pool.
 //
 // A marker that gives up (its reinforcement pool is exhausted) does NOT hold its slot forever.
 // MISSION_CORE_fnc_reevalSpawnerSlots prunes holders that can no longer field men; the freed
@@ -19,7 +20,17 @@ MISSION_CORE_fnc_spawnerSlotFree = {
     if (isNil "MISSION_CORE_ACTIVE_SPAWNERS") then { MISSION_CORE_ACTIVE_SPAWNERS = createHashMap; };
     private _key = [_side, _markerName];
     if (MISSION_CORE_ACTIVE_SPAWNERS getOrDefault [_key, false]) exitWith { true };
-    private _cap = (["spawnerSlotCap", 5] call MISSION_CORE_fnc_tune);
+    private _baseCap = (["spawnerSlotCap", 5] call MISSION_CORE_fnc_tune);
+    // SCALE WITH THE FIGHT. A flat per-side cap starves the extra fronts: once the first
+    // spawnerSlotCap markers hold their slots, the 6th, 7th... contested marker on the same side can
+    // never claim one, so simultaneous defenses freeze. The base floor already covers the FIRST
+    // contested marker (and quiet-time replenish); each contested marker BEYOND the first adds its
+    // own allowance on top, so every extra fight still gets spawn capacity. The projection is
+    // fn_getContestedMarkers (the sanctioned join over MISSION_CORE_CONTESTED), side-filtered on
+    // OWNERSHIP - exactly the markers this side has to field a garrison for.
+    private _perContest = (["spawnerSlotPerContest", 5] call MISSION_CORE_fnc_tune);
+    private _contestedCount = count ([_side] call MISSION_CORE_fnc_getContestedMarkers);
+    private _cap = _baseCap + (_perContest * (0 max (_contestedCount - 1)));
     // Count only this side's slots. A flat `count MISSION_CORE_ACTIVE_SPAWNERS` would double the
     // effective cap now that both sides live in the same map.
     //

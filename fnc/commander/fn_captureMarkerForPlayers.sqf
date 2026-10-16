@@ -61,6 +61,10 @@ MISSION_CORE_fnc_captureMarkerForPlayers = {
     private _spentBudget = MISSION_CORE_REINF_SENT getOrDefault [_locName, 0];
     MISSION_CORE_REINF_SENT deleteAt _locName;
     MISSION_CORE_REINF_EXHAUSTED deleteAt _locName;
+    // Drop the last-committed reinforcement pool too: it was the OLD owner's pool, and the retake
+    // gets a fresh one from the next sweep. Without this a captured marker would keep a stale
+    // solvent pool and stay temp-flipped in the recruit UI forever.
+    if (!isNil "MISSION_CORE_REINF_POOL") then { MISSION_CORE_REINF_POOL deleteAt _locName; };
     if (_spentBudget > 0) then {
         diag_log format ["DYNAMIC CAPTURE: %1 reinforcement budget cleared (%2 men spent) - new owner, new contest", _locName, _spentBudget];
     };

@@ -3,10 +3,11 @@
 // RIGHT BEFORE the spawn, all of the following happen in one call:
 //   1. wrecked vehicles inside the immediate landing footprint are DELETED - a fresh vehicle
 //      must never materialize on / beside a burned-out hull from an earlier fight,
-//   2. the spot is verified clear of ANY living land vehicle - CREWED OR EMPTY (alive covers
-//      parked unoccupied hulls and crewed armor alike) - plus dry-ground, no-flagged-spawn-kill
-//      and no-hard-geometry checks; when blocked and re-roll is allowed, a clean spot is
-//      re-rolled nearby via safeVehicleSpawnPos / findVehiclePos,
+//   2. the spot is verified clear of ANY land vehicle - CREWED OR EMPTY, DEAD OR ALIVE (a burned
+//      hull counts) - plus dry-ground, no-flagged-spawn-kill and no-hard-geometry checks; when
+//      blocked and re-roll is allowed, a clean spot is re-rolled nearby via safeVehicleSpawnPos /
+//      findVehiclePos, and if NO clean spot exists the spawn is REFUSED (returns objNull) so the
+//      caller can wait and retry - it is never force-spawned onto an occupied spot,
 //   3. the world's accumulated dead bodies/wrecks are purged (permanent vehicle-spawn rule -
 //      liftSpawn, which every createVehicle here routes through, runs the global sweep).
 // then the vehicle is created at a lifted ground position and aligned along the road.
@@ -15,7 +16,8 @@
 //                              pass false to pin the exact spot (player-requested spawns).
 //   _heading (default 0)     = 0 faces the vehicle along the road under it; any other compass
 //                              bearing applies that exact heading.
-// Returns the created vehicle (objNull when arguments are invalid).
+// Returns the created vehicle, or objNull when arguments are invalid OR no clean spot could be
+// found (the caller should then wait and retry - never assume a vehicle exists).
 MISSION_CORE_fnc_safeVehicleSpawn = {
     params ["_cls", "_pos", ["_reRoll", true], ["_heading", 0]];
     if (isNil "_cls" || { typeName _cls != "STRING" } || { _cls == "" }) exitWith { objNull };
@@ -39,9 +41,17 @@ MISSION_CORE_fnc_safeVehicleSpawn = {
             } forEach _sizes;
         };
     };
+    // NO force-spawn fallback. If the spot (and every re-roll) is still occupied, refuse: return
+    // objNull so the caller WAITS and retries, rather than materialising the vehicle on top of
+    // another. The old behaviour dropped it on the blocked spot as a "last resort" - that is what
+    // produced stacked armor.
+    if (!([_vehPos] call MISSION_CORE_fnc_isSafeVehicleSpawnPos)) exitWith { objNull };
     // (3) Global dead-body purge runs inside liftSpawn on the way to createVehicle.
     private _veh = createVehicle [_cls, [_vehPos] call MISSION_CORE_fnc_liftSpawn, [], 5, "CAN_COLLIDE"];
     if (isNull _veh) exitWith { objNull };
+    // Timestamp the spot we just filled so the safe-spawn list holds it out of rotation for the
+    // temp-ban window (it re-enters automatically after 30s).
+    [_vehPos] call MISSION_CORE_fnc_markSafeSpotUsed;
     if (_heading == 0) then { [_veh] call MISSION_CORE_fnc_alignVehicleToRoad; } else { _veh setDir _heading; };
     // CREW GET-OUT watcher. Attached here because this is the single funnel every ground vehicle
     // is created through (depot stock, materialized convoys, garrison rebuilds, HQ deploys, foot

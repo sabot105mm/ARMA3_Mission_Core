@@ -22,7 +22,6 @@ MISSION_CORE_fnc_findVehicleColumnPos = {
     private _result = [];
     private _roads = _center nearRoads _radius;
     if (count _roads == 0) exitWith { _result };
-    private _existingVehs = vehicles select { alive _x && { _x isKindOf "LandVehicle" } };
     // Score every road segment: dry, clear of geometry, not a flagged spawn-kill.
     private _good = [];
     {
@@ -41,7 +40,7 @@ MISSION_CORE_fnc_findVehicleColumnPos = {
     for "_i" from 0 to ((count _good) - 1) do {
         private _e = _good select _i;
         if ((_e select 0) > 1) then { continue; };
-        if (_existingVehs findIf { (_e select 1) distance _x < 40 } > -1) then { continue; };
+        if (count ([(_e select 1), 40] call MISSION_CORE_fnc_landVehiclesNear) > 0) then { continue; };
         _seedIdx = _i;
         break;
     };
@@ -64,7 +63,7 @@ MISSION_CORE_fnc_findVehicleColumnPos = {
             if (_spots findIf { _p distance2D _x < 20 } == -1) then {
                 private _nb = nearestObjects [_p, ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"], 8];
                 private _nt = [_p, 8] call MISSION_CORE_fnc_countTerrainBlockers;
-                if (count _nb + _nt <= 1) then { _spots pushBack _p; };
+                if (count _nb + _nt <= 1 && { count ([_p, 40] call MISSION_CORE_fnc_landVehiclesNear) == 0 }) then { _spots pushBack _p; };
             };
             _frontier pushBack _x;
         } forEach (roadsConnectedTo _seg);
@@ -107,7 +106,10 @@ MISSION_CORE_fnc_alignGroupVehiclesToRoad = {
         } else {
             if (!isNil "MISSION_CORE_fnc_findVehiclePos") then { _spot = [_center, _size, 30, 0] call MISSION_CORE_fnc_findVehiclePos; };
         };
-        if (count _spot >= 2) then { _veh setPosATL _spot; };
+        if (count _spot >= 2) then {
+            _veh setPosATL _spot;
+            [_spot] call MISSION_CORE_fnc_markSafeSpotUsed;
+        };
         [_veh] call MISSION_CORE_fnc_alignVehicleToRoad;
     } forEach _vehs;
 };

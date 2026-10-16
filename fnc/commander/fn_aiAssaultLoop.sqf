@@ -392,6 +392,7 @@ MISSION_CORE_fnc_aiAssaultLoop = {
                                     private _spot = if (_mc - 1 < count _colSpots) then { _colSpots select (_mc - 1) } else { _spawnPos };
                                     if (count _spot == 2) then { _spot pushBack 0; };
                                     private _tv = [selectRandom _mbtClasses, _spot] call MISSION_CORE_fnc_safeVehicleSpawn;
+                                    if (isNull _tv) then { continue; };
                                     _col addVehicle _tv;
                                     _colVehs pushBack _tv;
                                     for "_tc" from 1 to 3 do { _col createUnit ["O_crew_F", _spot, [], 0, "NONE"]; };

@@ -1,4 +1,31 @@
 
+// Recruit-queue gate engine - the ONE place that decides whether the spawn box has room RIGHT NOW.
+// It never scans independently: it reuses the exact finders the spawn paths themselves run, with
+// the exact object-detection distances those finders use -
+//   * groups of vehicles: findVehicleColumnPos (one dry, geometry-light road spot per vehicle,
+//     NO parked land vehicle within 40m, buildings/fences/terrain clear within 8m, spots >= 20m
+//     apart, no flagged spawn-kill),
+//   * a single vehicle: findVehiclePos + isSafeVehicleSpawnPos (road-first, cached flats, the
+//     same 40m / 8m / dry / unsafe rules).
+// Callers pass the SAME _size the spawn will use, so the gate is exactly as strict as the landing
+// zone itself - never wider, so a fresh town never reports "occupied" just because ambient
+// vehicles far outside the spawn box got scanned in.
+//   [_center, _size, _count] call MISSION_CORE_fnc_vehicleSpawnRoom;
+// Returns true when all _count vehicles fit, false when the box is full (caller queues).
+MISSION_CORE_fnc_vehicleSpawnRoom = {
+    params ["_center", ["_size", [200, 200]], ["_count", 1]];
+    private _room = true;
+    if (_count <= 0) exitWith { _room };
+    if (isNil "_center" || { !(_center isEqualType []) } || { count _center < 2 }) exitWith { _room };
+    if (_count > 1) then {
+        _room = count ([_center, _size, _count, 30] call MISSION_CORE_fnc_findVehicleColumnPos) >= _count;
+    } else {
+        private _spot = [_center, _size, 20, 0, false] call MISSION_CORE_fnc_findVehiclePos;
+        if (count _spot >= 2) then { _room = [_spot] call MISSION_CORE_fnc_isSafeVehicleSpawnPos; };
+    };
+    _room
+};
+
 MISSION_CORE_fnc_findVehiclePos = {
     params ["_center", ["_size", [200, 200]], ["_attempts", 20], ["_dir", 0], ["_lax", false]];
     private _a = _size select 0;
@@ -16,13 +43,13 @@ MISSION_CORE_fnc_findVehiclePos = {
     // cached flat spots / random scan below when there is no usable road.
     private _roads = _center nearRoads ((_a max _b) * 1.25);
     if (count _roads > 0) then {
-        private _existingVehs = vehicles select { alive _x && { _x isKindOf "LandVehicle" } };
         private _roadBest = _center;
         private _roadScore = 99999;
-        // Track the best road that is ALSO >=40m from any parked land vehicle. Repeated spawns to
-        // the same marker (re-purchased vehicles, reinforcements) must never re-land on the exact
-        // road spot the previous vehicle sits on - the plain _roadBest fallback below ignored
-        // vehicles entirely and re-picked the same deterministic road every time, stacking spawns.
+        // Track the best road that is ALSO >=40m from any parked or wrecked land vehicle. Repeated
+        // spawns to the same marker (re-purchased vehicles, reinforcements) must never re-land on
+        // the exact road spot the previous vehicle sits on - the plain _roadBest fallback below
+        // ignored vehicles entirely and re-picked the same deterministic road every time, stacking
+        // spawns.
         private _roadBestClear = _center;
         private _roadScoreClear = 99999;
         private _rMax = ((count _roads) - 1) min (_attempts - 1);
@@ -30,7 +57,7 @@ MISSION_CORE_fnc_findVehiclePos = {
             private _rcand = getPosATL (_roads select _r);
             private _nearBuildings = nearestObjects [_rcand, ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"], 8];
             private _nTerrain = [_rcand, 8] call MISSION_CORE_fnc_countTerrainBlockers;
-            private _nearVeh = _existingVehs findIf { _rcand distance _x < 40 } > -1;
+            private _nearVeh = count ([_rcand, 40] call MISSION_CORE_fnc_landVehiclesNear) > 0;
             private _roadScoreNow = count _nearBuildings + _nTerrain;
             if (_roadScoreNow < _roadScore) then { _roadScore = _roadScoreNow; _roadBest = _rcand; };
             if (!_nearVeh && _roadScoreNow < _roadScoreClear) then { _roadScoreClear = _roadScoreNow; _roadBestClear = _rcand; };
@@ -72,9 +99,8 @@ MISSION_CORE_fnc_findVehiclePos = {
         };
     };
     if (!_clear) then {
-        // Spread new vehicles at least 40m from any existing land vehicle so defense/reinforcement
-        // squads never stack on top of each other in a single kill pocket.
-        private _existingVehs = vehicles select { alive _x && { _x isKindOf "LandVehicle" } };
+        // Spread new vehicles at least 40m from any existing (or wrecked) land vehicle so
+        // defense/reinforcement squads never stack on top of each other in a single kill pocket.
         // Track the least-obstructed candidate as a fallback: a spawn should never land inside
         // geometry, so instead of returning the last random attempt (which can be a bad spot that
         // makes the vehicle explode on spawn) we remember the cleanest one found. A SEPARATE
@@ -105,7 +131,7 @@ MISSION_CORE_fnc_findVehiclePos = {
                 // obstacle. Troops may spawn next to a couple of minor objects.
                 private _nearBuildings = nearestObjects [_cand, ["Building", "House", "Strategic", "Fortress", "Wall", "Fence"], _clearR];
                 private _nTerrain = [_cand, _clearR] call MISSION_CORE_fnc_countTerrainBlockers;
-                private _nearVeh = _existingVehs findIf { _cand distance _x < 40 } > -1;
+                private _nearVeh = count ([_cand, 40] call MISSION_CORE_fnc_landVehiclesNear) > 0;
                 private _score = count _nearBuildings + _nTerrain;
                 if (_score < _bestScore) then { _bestScore = _score; _best = _cand; };
                 if (!_nearVeh && _score < _bestClearScore) then { _bestClearScore = _score; _bestClear = _cand; _foundClearCand = true; };

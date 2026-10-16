@@ -287,6 +287,19 @@ MISSION_CORE_fnc_replenishLoop = {
                     if (_replenished > 0) then { sleep 5; };
                 };
             };
+            // GARRISON ARMOR TOP-UP (REQUEST). A garrison tank/APC never orders its own replacement
+            // on death (that death->order path was removed). Instead its marker's armor allowance is
+            // re-requested here, in the same cycle that refills foot - and ONLY while the marker is
+            // NOT contested, because a contested marker already receives MBTs from the neighbor
+            // counter-attack pool (placeCounterAttackTanks). The request flows through
+            // requestArmorReinforcement, whose per-side cooldown, low-ammo gate and caps-full queue
+            // do the pacing; the tank-pool gap below makes it an MBT pool refill, never foot.
+            if (_supplyOpen && { !_contested } && { !_retreated }) then {
+                private _tankPool = [_loc] call MISSION_CORE_fnc_markerTankPool;
+                if (_tankPool > 0 && { ([_loc] call MISSION_CORE_fnc_countMBTByMarker) < _tankPool }) then {
+                    [_owner, _locPos, _locName] call MISSION_CORE_fnc_requestArmorReinforcement;
+                };
+            };
         } forEach _candidates;
     };
 };

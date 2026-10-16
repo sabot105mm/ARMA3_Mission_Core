@@ -78,10 +78,9 @@ MISSION_CORE_fnc_mountInfantry = {
     if (isNil "MISSION_CORE_TRUCK_SAFE_SPOTS") then { MISSION_CORE_TRUCK_SAFE_SPOTS = createHashMap; };
     if (isNil "MISSION_CORE_TRUCK_LAST_POS") then { MISSION_CORE_TRUCK_LAST_POS = createHashMap; };
     _pos = [_pos] call MISSION_CORE_fnc_ensureLandPos;
-    private _existingVehs = vehicles select { alive _x && { _x isKindOf "LandVehicle" } };
     private _spotFree = {
         params ["_p"];
-        _existingVehs findIf { _p distance _x < 40 } == -1
+        count ([_p, 40] call MISSION_CORE_fnc_landVehiclesNear) == 0
     };
     // The regular "safe-to-spawn" check used everywhere else, extended for trucks: isDryPos, not
     // a spawn-kill flagged spot, no vehicle parked on it, and clear of geometry. findVehiclePos
@@ -148,6 +147,7 @@ MISSION_CORE_fnc_mountInfantry = {
     };
     MISSION_CORE_TRUCK_LAST_POS set [_savedKey, _pos];
     private _truck = [_vehClass, _pos] call MISSION_CORE_fnc_safeVehicleSpawn;
+    if (isNull _truck) exitWith { objNull };
     _grp addVehicle _truck;
     _truck setVariable ["MISSION_CORE_TRUCK_ORIGIN", _pos];
     private _hasGun = [_truck] call MISSION_CORE_fnc_hasMountedGun;

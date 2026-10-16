@@ -116,6 +116,7 @@ MISSION_CORE_fnc_tankDeployAbstract = {
     if (count _spawn < 2) then { _spawn = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
     if (count _spawn == 2) then { _spawn pushBack 0; };
     _spawn = [_spawn, _spawnPos, [150, 150]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    if (count _spawn < 2) then { _spawn = [_spawnPos] call MISSION_CORE_fnc_ensureLandPos; };
     if (count _spawn == 2) then { _spawn pushBack 0; };
     // Column the tanks: an abstract arrival delivers _count tanks in a line on the road rather
     // than stacking them all on the single safe spot.
@@ -126,6 +127,7 @@ MISSION_CORE_fnc_tankDeployAbstract = {
         private _spot = if (_i - 1 < count _colSpots) then { _colSpots select (_i - 1) } else { _spawn };
         if (count _spot == 2) then { _spot pushBack 0; };
         private _veh = [_vehClass, _spot] call MISSION_CORE_fnc_safeVehicleSpawn;
+        if (isNull _veh) then { continue; };
         _vehs pushBack _veh;
         _grp addVehicle _veh;
         for "_c" from 1 to 3 do { _grp createUnit [_crewClass, _spot, [], 0, "NONE"]; };
@@ -327,11 +329,36 @@ MISSION_CORE_fnc_tankOrderLoop = {
             if (_shipped == 0) then { _keepOrders pushBack _x; };
         } forEach MISSION_CORE_TANK_ORDERS;
         MISSION_CORE_TANK_ORDERS = _keepOrders;
+        MISSION_CORE_TANK_LOOP_STAGE = "idle";
+    };
+};
 
-        // ---- Advance shipments: abstract travel, materialize near players, deploy on arrival.
-        private _players = allPlayers select { alive _x };
-        private _keepShip = [];
-        {
+// ---- Advance shipments: abstract travel, materialize near players, deploy on arrival.
+//
+// SPLIT OUT OF THE ORDER LOOP (2026-10-07). This block used to run inside
+// MISSION_CORE_fnc_tankOrderLoop, whose 10s tick is shared with the manpower sweep - and that
+// sweep blocks the loop for ~300s a pass (supervisor: "BUSY 301s in stage manpowerTick"). A
+// shipment's position is time-interpolated, so the materialize check only ran about twice a
+// trip and the abstract column JUMPED ~4km between looks: the trigger could fire with the
+// column already sitting on the player instead of approaching from range (live 15:25:07,
+// "materialized convoy factory_2 -> outpost_16 destroyed en route" spawned on the player). On
+// its own 5s schedule the column closes in visible ~70m steps, so a player is caught at the
+// 1200m trigger instead of at 0m.
+MISSION_CORE_fnc_tankShipmentTick = {
+    if (isNil "MISSION_CORE_TANK_SHIPMENTS") exitWith {};
+    // Contested zone centres, built ONCE per tick (same idiom as the ammo sweep's zone list).
+    private _zonePos = [];
+    if (!isNil "MISSION_CORE_CONTESTED" && { !isNil "MISSION_CORE_CACHED_POSITIONS" } && { count MISSION_CORE_CONTESTED > 0 }) then {
+        _zonePos = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) in MISSION_CORE_CONTESTED }) apply { _x select 1 };
+    };
+    // Snapshot for forEach, plus the live array for the in-place write-back below. forEach runs
+    // over a copy, so the order loop's dispatch pushBack (appends only) can land mid-tick
+    // without moving an index under us.
+    private _list = MISSION_CORE_TANK_SHIPMENTS select { count _x > 0 };
+    private _live = MISSION_CORE_TANK_SHIPMENTS;
+    private _players = allPlayers select { alive _x };
+    private _keepShip = [];
+    {
             _x params ["_sSide", "_sDepot", "_sTarget", "_sTPos", "_sCount", "_sPath", "_sCum", "_sTravel", "_sDepart", "_sState", "_sVehs", "_sGrp", "_sCid", "_sMkr", ["_sAssault", false]];
             // Target was captured while the column was en route - the shipment is lost.
             private _sTL = MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _sTarget };
@@ -493,12 +520,50 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     diag_log format ["DYNAMIC TANK: %1 -> %2 arrived abstractly (no player near) - %3 tanks added to pool, none spawned", _sDepot, _sTarget, _sCount];
                 } else {
                     private _curPos = [_sPath, _sCum, _frac] call MISSION_CORE_fnc_convoyPosAt;
-                if (_players findIf { _x distance _curPos < 1200 } != -1) then {
+                    // Nearest player to the column's live position, measured once here so the
+                    // trigger and the keep-clear offset below read the same number.
+                    private _pDist = 1e9;
+                    private _nearP = objNull;
+                    {
+                        private _d = _x distance2D _curPos;
+                        if (_d < _pDist) then { _pDist = _d; _nearP = _x; };
+                    } forEach _players;
+                    // TRIGGER. (1) A player inside the watch radius - the original condition,
+                    // lifted out of a hard-coded 1200m and made tunable, so the column is
+                    // still out on the road when it is first seen; (2) an ASSAULT column
+                    // inside the contested-marker radius, so reinforcements materialise into
+                    // the fight they were ordered for even when nobody is standing watch.
+                    // Non-assault deliveries never use (2): they are barred from contested
+                    // markers outright by the order gate above.
+                    private _pRange = ["tankMaterializeRange", 1200] call MISSION_CORE_fnc_tune;
+                    private _zRange = ["tankMaterializeContestedRange", 800] call MISSION_CORE_fnc_tune;
+                    private _nearZone = false;
+                    if (_sAssault && { count _zonePos > 0 }) then {
+                        _nearZone = (_zonePos findIf { _x distance2D _curPos < _zRange }) != -1;
+                    };
+                    if (_pDist < _pRange || _nearZone) then {
                     // PLAYER-PROXIMITY MATERIALIZE: the column has come within 1200m of a player, so
                     // spawn the tanks so the player can SEE them arriving, give them a MOVE waypoint to
                     // the destination, and let them drive there. On arrival they DESPAWN back into the
                     // target's tank pool - they are never left standing as defenders (standing tanks
                     // were getting re-tasked to defend a neighbor and never taking part in their fight).
+                    // KEEP CLEAR OF THE PLAYER. The trigger only says "close enough to watch";
+                    // the SPAWN POINT must still stand off them, or a player moving along the
+                    // route gets a column dropped in their lap - exactly what happened at
+                    // 15:25:07. If the trigger fired with the column nearer than the clear
+                    // radius, push the spawn point straight away from that player; the
+                    // safe-pos helpers below then re-seat it on passable ground. The +75 is
+                    // the column's own half-width, so the rearmost tank clears them too.
+                    private _clear = ["tankMaterializeClear", 400] call MISSION_CORE_fnc_tune;
+                    if (!isNull _nearP && { _pDist < _clear }) then {
+                        private _off = (_clear - _pDist) + 75;
+                        private _dir = _nearP getDir _curPos;
+                        private _pc = +_curPos;
+                        _pc set [0, (_pc select 0) + (_off * (sin _dir))];
+                        _pc set [1, (_pc select 1) + (_off * (cos _dir))];
+                        _curPos = _pc;
+                        diag_log format ["DYNAMIC TANK: materialize spawn pushed %1m clear of player (trigger fired at %2m)", round _off, round _pDist];
+                    };
                     private _factionData = if (_sSide == WEST) then { MISSION_CORE_BLUFOR_DATA } else { MISSION_CORE_REDFOR_DATA };
                     private _mbtClasses = (_factionData select 7) getOrDefault ["mbt", []];
                     if (count _mbtClasses == 0) then { _keepShip pushBack _x; continue; };
@@ -508,6 +573,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     if (count _spawn < 2) then { _spawn = [_curPos] call MISSION_CORE_fnc_ensureLandPos; };
                     if (count _spawn == 2) then { _spawn pushBack 0; };
                     _spawn = [_spawn, _curPos, [150, 150]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+                    if (count _spawn < 2) then { _spawn = [_curPos] call MISSION_CORE_fnc_ensureLandPos; };
                     if (count _spawn == 2) then { _spawn pushBack 0; };
                     // Column the tanks: the materialized convoy spawns as a road line instead of all
                     // tanks stacked on one spot (convoy driving style, closely spaced).
@@ -518,6 +584,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
                         private _spot = if (_i - 1 < count _colSpots) then { _colSpots select (_i - 1) } else { _spawn };
                         if (count _spot == 2) then { _spot pushBack 0; };
                         private _veh = [selectRandom _mbtClasses, _spot] call MISSION_CORE_fnc_safeVehicleSpawn;
+                        if (isNull _veh) then { continue; };
                         _vehs pushBack _veh;
                         _grp addVehicle _veh;
                         for "_c" from 1 to 3 do { _grp createUnit [_crewClass, _spot, [], 0, "NONE"]; };
@@ -643,7 +710,7 @@ MISSION_CORE_fnc_tankOrderLoop = {
                     _x set [10, _vehs];
                     _x set [11, _grp];
                     _keepShip pushBack _x;
-                    diag_log format ["DYNAMIC TANK: player-proximity materialized %1 tanks near %2", _sCount, _curPos];
+                    diag_log format ["DYNAMIC TANK: materialized %1 tanks at %2 (nearest player %3m at trigger, contested-trigger %4, target %5)", _sCount, _curPos, round _pDist, _nearZone, _sTarget];
                 } else {
                     // Abstract tank that was never physically spawned - keep it in flight. It must
                     // NOT be counted as "lost in transit" just because it was not materialized. A
@@ -653,12 +720,33 @@ MISSION_CORE_fnc_tankOrderLoop = {
                 };
             };
             };
-            // Filtered: a record tombstoned by a lost shipment is empty, and every
-        // branch below reads record fields off it. Skipping empties here also
-        // compacts them, since the array is rebuilt from the kept list below.
-    } forEach (MISSION_CORE_TANK_SHIPMENTS select { count _x > 0 });
-        MISSION_CORE_TANK_SHIPMENTS = _keepShip;
-        MISSION_CORE_TANK_LOOP_STAGE = "idle";
+            // WRITE-BACK, IN PLACE. Every record this tick did NOT keep is tombstoned on the
+        // live array by index, then the array is compacted with the same "drop empties" filter
+        // the old rebuild used. What must NOT happen is the old `= _keepShip` wholesale
+        // replacement: this tick now runs WHILE the order loop is free to dispatch (appends)
+        // and while recon is free to strike a column (MISSION_CORE_fnc_armorShipmentLose
+        // indexes the array), and a replacement built from a snapshot taken before those
+        // writes would swallow a fresh dispatch and resurrect a struck one. The compaction
+        // reads the LIVE array, so both survive it.
+    } forEach _list;
+    for "_k" from 0 to (count _live - 1) do {
+        private _r = _live select _k;
+        if (count _r == 0) then { continue; };
+        if ((_keepShip findIf { _x isEqualTo _r }) == -1) then { _live set [_k, []]; };
+    };
+    if (_live findIf { count _x == 0 } != -1) then {
+        MISSION_CORE_TANK_SHIPMENTS = _live select { count _x > 0 };
+    };
+};
+
+// Own 5s schedule, heartbeat at the top of each pass (same idiom as the order loop) so the
+// supervisor below can tell "stalled" from "busy" for this tick too.
+MISSION_CORE_fnc_tankShipmentLoop = {
+    diag_log "DYNAMIC TANK: shipment tick loop started";
+    while { true } do {
+        missionNamespace setVariable ["MISSION_CORE_TANK_SHIP_TICK", time];
+        call MISSION_CORE_fnc_tankShipmentTick;
+        sleep 5;
     };
 };
 
@@ -673,6 +761,22 @@ MISSION_CORE_fnc_tankOrderSupervisor = {
     while { true } do {
         sleep 30;
         missionNamespace setVariable ["MISSION_CORE_TANK_LOOP_SUPERVISOR_TICK", time];
+        // SHIPMENT TICK WATCH (the advance/materialize block, split out into its own loop).
+        // Same 5-minute rule and the same handle test, but its OWN heartbeat: a dead shipment
+        // tick would freeze every column on the map while the order loop below kept looking
+        // perfectly healthy.
+        private _sStale = time - (missionNamespace getVariable ["MISSION_CORE_TANK_SHIP_TICK", -1e10]);
+        if (_sStale > 300) then {
+            private _sh = missionNamespace getVariable ["MISSION_CORE_TANK_SHIP_HANDLE", scriptNull];
+            if (scriptDone _sh) then {
+                diag_log format ["DYNAMIC TANK: supervisor - shipment tick DEAD after %1s, restarting", round _sStale];
+                missionNamespace setVariable ["MISSION_CORE_TANK_SHIP_TICK", time];
+                MISSION_CORE_TANK_SHIP_HANDLE = [] spawn MISSION_CORE_fnc_tankShipmentLoop;
+            } else {
+                diag_log format ["DYNAMIC TANK: supervisor - shipment tick BUSY %1s, not restarting", round _sStale];
+                missionNamespace setVariable ["MISSION_CORE_TANK_SHIP_TICK", time];
+            };
+        };
         private _stale = time - (missionNamespace getVariable ["MISSION_CORE_TANK_LOOP_TICK", -1e10]);
         if (_stale > 300) then {
             private _h = missionNamespace getVariable ["MISSION_CORE_TANK_LOOP_HANDLE", scriptNull];

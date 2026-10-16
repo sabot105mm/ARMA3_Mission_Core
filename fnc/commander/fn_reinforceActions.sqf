@@ -116,9 +116,19 @@ MISSION_CORE_fnc_reinforceResetZone = {
 //   importance 1  reinfDecayOrdinary  - very slow, the budget stays effectively spent
 //   importance 2  reinfDecayImportant - about twice as fast
 //   importance 3+ reinfDecayCritical  - fastest, so a high-value marker can be re-fought
-// A zone that is ACTIVELY contested never decays at all, so the 200 stays hard for the entire fight
-// that spent it. Dormancy reuses the same contestedGraceSeconds window the give-up sweep uses, so a
-// marker flickering in and out of contested does not slowly refund itself between fights.
+//
+// TWO PRESENCE SIGNALS, AND ONLY THOSE, KEY the bleed. Membership in MISSION_CORE_CONTESTED is NOT
+// a gate: a marker whose contest latch flickered off is not "over", and one still latched is not
+// automatically held. (The only remaining use of the latch is the cosmetic 45s flicker grace below.)
+//   1. ASSAULT PRESENCE - the existing give-up-sweep test: a RELEASED assault group with a living man
+//      on the marker (the _heldNow set built below). While it holds, the fight is not over. Once its
+//      men are DEAD / KIA it is gone. Re-arms the quiet pause while it holds.
+//   2. PLAYER PRESENCE - a living player within reinfDecayPlayerRadius of the marker center. Re-arms
+//      the same quiet pause.
+// The zone bleeds ONLY when BOTH are gone, and only after the quiet pause below:
+// QUIET PAUSE - decay starts only once the marker has had NEITHER a held assault group NOR a living
+// player near it for reinfDecayPauseSeconds (5 minutes). Any assault that returns, or any player who
+// comes back, re-stamps the pause and stops the bleed from exactly where it left it.
 MISSION_CORE_fnc_reinforceDecayBudget = {
     if (isNil "MISSION_CORE_REINF_SENT") exitWith {};
     private _keys = keys MISSION_CORE_REINF_SENT;
@@ -126,12 +136,52 @@ MISSION_CORE_fnc_reinforceDecayBudget = {
     if (isNil "MISSION_CORE_REINF_EXHAUSTED") then { MISSION_CORE_REINF_EXHAUSTED = createHashMap; };
     if (isNil "MISSION_CORE_CONTESTED") then { MISSION_CORE_CONTESTED = createHashMap; };
     if (isNil "MISSION_CORE_CONTESTED_LAST") then { MISSION_CORE_CONTESTED_LAST = createHashMap; };
+    if (isNil "MISSION_CORE_REINF_DECAY_ASSAULT_LAST") then { MISSION_CORE_REINF_DECAY_ASSAULT_LAST = createHashMap; };
 
     private _grace = ["contestedGraceSeconds", 45] call MISSION_CORE_fnc_tune;
     private _rateOrdinary = ["reinfDecayOrdinary", 1] call MISSION_CORE_fnc_tune;
     private _rateImportant = ["reinfDecayImportant", 2] call MISSION_CORE_fnc_tune;
     private _rateCritical = ["reinfDecayCritical", 6] call MISSION_CORE_fnc_tune;
     private _cap = call MISSION_CORE_fnc_reinfMenCap;
+    private _pause = ["reinfDecayPauseSeconds", 300] call MISSION_CORE_fnc_tune;
+
+    // ONE sweep over both assault registers for the whole call, not a per-marker walk: build the
+    // set of marker names that currently have a RELEASED assault group with a living man within
+    // assaultHoldContestedRadius of the marker center - the same presence test the give-up sweep
+    // uses (fn_markerHeldByLiveAssault), batched here so ~N decay keys cost one register pass.
+    // A group whose men are all DEAD / KIA is no longer present, so this is also the "assault is
+    // gone" signal the bleed waits on.
+    private _heldNow = createHashMap;
+    if (!isNil "MISSION_CORE_CACHED_POSITIONS") then {
+        private _holdR = ["assaultHoldContestedRadius", 800] call MISSION_CORE_fnc_tune;
+        {
+            private _grpVar = _x;
+            if (isNil _grpVar) then { continue; };
+            private _tracked = missionNamespace getVariable [_grpVar, objNull];
+            if !(_tracked isEqualType createHashMap) then { continue; };
+            {
+                private _gKey = _x;
+                private _adata = _tracked getOrDefault [_gKey, []];
+                if ((_adata isEqualType [])) then {
+                    if (count _adata < 7) then { continue; };
+                    // Only a RELEASED (advancing) group contests - staging / hold / wiped groups do not.
+                    if ((_adata select 5) != "active") then { continue; };
+                    private _heldName = _adata select 1;
+                    if (_heldNow getOrDefault [_heldName, false]) then { continue; };
+                    private _entry = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _heldName }) param [0, []];
+                    if (count _entry == 0) then { continue; };
+                    private _heldPos = _entry select 1;
+                    private _heldOwner = _entry select 4;
+                    private _attackerSide = _adata select 4;
+                    if ((_heldOwner getFriend _attackerSide) >= 0.6) then { continue; };
+                    private _ag = _adata select 0;
+                    if (isNull _ag) then { continue; };
+                    if ((units _ag findIf { !isNull _x && { alive _x } && { (_x distance2D _heldPos) < _holdR } }) == -1) then { continue; };
+                    _heldNow set [_heldName, true];
+                };
+            } forEach (keys _tracked);
+        } forEach ["MISSION_CORE_ATTACK_GROUPS", "MISSION_CORE_ATTACK_GROUPS_RELAY"];
+    };
 
     {
         private _cName = _x;
@@ -140,8 +190,45 @@ MISSION_CORE_fnc_reinforceDecayBudget = {
             MISSION_CORE_REINF_SENT deleteAt _cName;
             continue;
         };
-        // Actively contested right now - the 200 stays hard for the whole fight that spent it.
-        if (_cName in MISSION_CORE_CONTESTED) then { continue; };
+        // NO CONTESTED GATE. The spend predicate is the fight itself, not the contest latch: a
+        // marker whose latch flickered off (player stepped into a different marker, garrison
+        // momentarily silent) must NOT be treated as over. The bleed is keyed off the two REAL
+        // presence signals below only.
+        // ASSAULT PRESENCE - a released assault group with a living man on the marker (the
+        // _heldNow set built above). While it holds, the fight is not over and the budget stays
+        // hard; the clock is re-armed so the bleed waits for the group to be DEAD / KIA.
+        if (_heldNow getOrDefault [_cName, false]) then {
+            MISSION_CORE_REINF_DECAY_ASSAULT_LAST set [_cName, time];
+            continue;
+        };
+        // PLAYER PRESENCE - the SECOND "the fight is still on" signal, a peer of the assault check
+        // above. A living player near the marker CENTER re-arms the SAME quiet clock, so the bleed
+        // only begins after BOTH the assault groups are dead AND no player is left around for
+        // reinfDecayPauseSeconds. Both terms matter: dropping either one is what let a marker that
+        // had merely gone quiet bleed its spent budget back under the fight.
+        if (!isNil "MISSION_CORE_CACHED_POSITIONS") then {
+            private _pEntry = (MISSION_CORE_CACHED_POSITIONS select { (_x select 0) == _cName }) param [0, []];
+            if (count _pEntry > 0) then {
+                private _pPos = _pEntry select 1;
+                private _pR = ["reinfDecayPlayerRadius", 800] call MISSION_CORE_fnc_tune;
+                if (allPlayers findIf { alive _x && { _x distance2D _pPos < _pR } } != -1) then {
+                    MISSION_CORE_REINF_DECAY_ASSAULT_LAST set [_cName, time];
+                    continue;
+                };
+            };
+        };
+        // 5-MINUTE QUIET PAUSE. Decay starts only once the marker has had NEITHER a released assault
+        // group NOR a living player near it for reinfDecayPauseSeconds. First sighting starts the
+        // window now; any assault OR player that returns on a later tick re-stamps _lastNear above,
+        // so the bleed stops and the pause runs again from then. (The contestedGraceSeconds check
+        // that follows is the player-driven flicker guard; the pause is strictly longer, so it is the
+        // one that actually bites.)
+        private _lastNear = MISSION_CORE_REINF_DECAY_ASSAULT_LAST getOrDefault [_cName, -1];
+        if (_lastNear < 0) then {
+            MISSION_CORE_REINF_DECAY_ASSAULT_LAST set [_cName, time];
+            continue;
+        };
+        if (time - _lastNear < _pause) then { continue; };
         // Same grace window as the give-up sweep: not quiet for long enough yet, so a marker
         // flickering between contested and dormant never bleeds.
         private _last = MISSION_CORE_CONTESTED_LAST getOrDefault [_cName, -1e10];

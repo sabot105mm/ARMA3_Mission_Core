@@ -84,14 +84,17 @@ MISSION_CORE_fnc_artilleryDanger = {
 
 // Target selection: the nearest enemy armored vehicle (tank/APC) within range that at least one
 // friendly AI unit within 1200m of it knows about (knowsAbout > 0.4). Returns a position.
+// Optional _mag filters candidates to those the round can actually REACH (inRangeOfArtillery
+// covers both the ballistic minimum and maximum - a 400m shot from an MLRS can never fly).
 MISSION_CORE_fnc_artilleryTarget = {
-    params ["_veh", "_enemy"];
+    params ["_veh", "_enemy", ["_mag", ""]];
     private _rangeCap = if (_veh isKindOf "StaticMortar") then { 1700 } else { 10000 };
     private _candidates = vehicles select {
         alive _x &&
         { side _x == _enemy } &&
         { _x isKindOf "Tank_F" || { _x isKindOf "Tank" } || { _x isKindOf "Wheeled_APC" } || { _x isKindOf "Tracked_APC" } } &&
-        { _x distance2D _veh < _rangeCap }
+        { _x distance2D _veh < _rangeCap } &&
+        { _mag == "" || { (getPos _x) inRangeOfArtillery [[_veh], _mag] } }
     };
     private _best = [];
     private _bestD = 1e10;
@@ -111,15 +114,17 @@ MISSION_CORE_fnc_artilleryTarget = {
 
 // Mortar target selection: the nearest enemy INFANTRY (not armor) that a friendly AI unit nearby
 // knows about (knowsAbout > 0.4). Returns a position. SPGs use fn_artilleryTarget (tanks/APCs).
+// Optional _mag filters candidates to those the round can actually REACH (min+max ballistic range).
 MISSION_CORE_fnc_artilleryInfantryTarget = {
-    params ["_veh", "_enemy"];
+    params ["_veh", "_enemy", ["_mag", ""]];
     private _rangeCap = if (_veh isKindOf "StaticMortar") then { 1700 } else { 10000 };
     private _friendly = side _veh;
     private _candidates = allUnits select {
         alive _x &&
         { side _x == _enemy } &&
         { _x isKindOf "Man" } &&
-        { _x distance2D _veh < _rangeCap }
+        { _x distance2D _veh < _rangeCap } &&
+        { _mag == "" || { (getPos _x) inRangeOfArtillery [[_veh], _mag] } }
     };
     private _best = [];
     private _bestD = 1e10;
@@ -140,8 +145,10 @@ MISSION_CORE_fnc_artilleryInfantryTarget = {
 // Fallback target when no tanks are spotted: the center of the nearest marker owned by the
 // player's side (never our own territory) that has an alive player within 600m of it and is in
 // range. Firing at these betrays the piece's position, so the driver repositions afterwards.
+// Optional _veh+_mag: when both are given, a marker only counts if the round can REACH its
+// center (engine-authoritative min+max range) - callers without them keep the plain rangeCap scan.
 MISSION_CORE_fnc_artilleryMarkerTarget = {
-    params ["_side", "_refPos", "_rangeCap"];
+    params ["_side", "_refPos", "_rangeCap", ["_veh", objNull], ["_mag", ""]];
     private _players = allPlayers select { alive _x };
     if (count _players == 0) exitWith { [] };
     private _best = [];
@@ -152,7 +159,11 @@ MISSION_CORE_fnc_artilleryMarkerTarget = {
         private _playerNear = _players findIf { _x distance2D _mPos < 600 } > -1;
         if (!_playerNear) then { continue; };
         private _d = _mPos distance2D _refPos;
-        if (_d < _rangeCap && { _d < _bestD }) then { _bestD = _d; _best = _mPos; };
+        if (_d < _rangeCap && { _d < _bestD }) then {
+            if !(isNull _veh || { _mag == "" } || { _mPos inRangeOfArtillery [[_veh], _mag] }) then { continue; };
+            _bestD = _d;
+            _best = _mPos;
+        };
     } forEach MISSION_CORE_CACHED_POSITIONS;
     _best
 };
@@ -343,6 +354,10 @@ MISSION_CORE_fnc_spawnArtillery = {
         MISSION_CORE_ARTY set [_sideKey, [grpNull, objNull, time + 300]];
     };
     private _veh = [_vehClass, _pos, false] call MISSION_CORE_fnc_safeVehicleSpawn;
+    if (isNull _veh) exitWith {
+        // No clean spot at the battery home right now - retry later instead of stacking the piece.
+        MISSION_CORE_ARTY set [_sideKey, [grpNull, objNull, time + 30]];
+    };
     _veh setVehicleAmmo 1;
     _veh setVehicleAmmoDef 1;
     private _grp = createVehicleCrew _veh;
@@ -383,7 +398,29 @@ MISSION_CORE_fnc_artilleryDriver = {
         };
         private _pos = getPos _veh;
 
-        // 0. Despawn when the shells run out (monitor respawns it after the cooldown)
+        // 0. RELOAD when the piece is below half the magazine count it spawned with (the 50%
+        //    rule): top ammo/fuel back up instead of limping toward the dry-piece despawn.
+        //    Baseline is captured lazily on the first tick (spawn code just setVehicleAmmo 1,
+        //    so all magazines are full then). 60s cooldown stops a reload loop; the out-of-
+        //    ammo despawn below stays as the safety net (reachable only if ammo somehow
+        //    empties within 60s of a reload).
+        if (isNil { _veh getVariable "MISSION_CORE_ARTY_MAGS_SPAWN" }) then {
+            _veh setVariable ["MISSION_CORE_ARTY_MAGS_SPAWN", count magazinesAmmo [_veh, true]];
+        };
+        private _magsNow = count magazinesAmmo [_veh, false];
+        private _spawnMags = _veh getVariable ["MISSION_CORE_ARTY_MAGS_SPAWN", 0];
+        private _lastReload = _veh getVariable ["MISSION_CORE_ARTY_LAST_RELOAD", -99999];
+        if (_spawnMags > 0 && { _magsNow * 2 < _spawnMags } && { time - _lastReload > 60 }) then {
+            _veh setVariable ["MISSION_CORE_ARTY_LAST_RELOAD", time];
+            _veh setVehicleAmmo 1;
+            _veh setVehicleAmmoDef 1;
+            _veh setFuel 1;
+            [_grp, "Baseplate, resupply complete - full loadout restored."] call MISSION_CORE_fnc_artillerySideChat;
+            [getPos _veh, 2, 800] call MISSION_CORE_fnc_artilleryPlaySound;
+            diag_log format ["AI ARTY: %1 reload - magazines %2 of spawn count %3, ammo and fuel restored", _sideKey, _magsNow, _spawnMags];
+        };
+
+        // 1. Despawn when the shells run out (monitor respawns it after the cooldown)
         private _shellTotal = 0;
         {
             if ((_x select 0) find "Smoke" == -1) then { _shellTotal = _shellTotal + (_x select 1); };
@@ -396,7 +433,7 @@ MISSION_CORE_fnc_artilleryDriver = {
             diag_log format ["AI ARTY: %1 out of ammo, despawning (respawn in 10min)", _sideKey];
         };
 
-        // 1. MLRS/SPG keep 1000m+ from the nearest threat and re-locate if pressed. Mortars stay
+        // 2. MLRS/SPG keep 1000m+ from the nearest threat and re-locate if pressed. Mortars stay
         //    inside their contested marker - they never relocate away from it. For a BLUFOR SPG
         //    the threat anchor also covers the nearest enemy (assault) marker: during an assault
         //    the piece hangs back at standoff and never advances up to the objective.
@@ -432,7 +469,7 @@ MISSION_CORE_fnc_artilleryDriver = {
             continue;
         };
 
-        // 2. Fire a 3-round burst, then pause 1-3 minutes before the next. Mortars shell enemy
+        // 3. Fire a 3-round burst, then pause 1-3 minutes before the next. Mortars shell enemy
         //    infantry; a BLUFOR SPG shells enemy infantry (garrison + assault support) with armor
         //    as its fallback, and a REDFOR SPG keeps shelling enemy tanks/APCs.
         if (time - _lastFire > (60 + random 120)) then {
@@ -449,46 +486,57 @@ MISSION_CORE_fnc_artilleryDriver = {
             } else { [] };
             private _preferLaser = count _laserTarget > 0;
 
-            private _isInfantryTarget = false;
-            private _target = if (_preferLaser) then {
-                _laserTarget
-            } else {
-                if (_isMortar) then {
-                    [_veh, _enemy] call MISSION_CORE_fnc_artilleryInfantryTarget;
+            // ROUND FIRST: the target filters below need the magazine name to ask
+            // inRangeOfArtillery (ballistic min AND max - a 400m shot from an MLRS can never
+            // fly, and that dead order is what used to reach doArtilleryFire).
+            private _mag = [_veh, _preferLaser] call MISSION_CORE_fnc_pickArtilleryMag;
+            // A laser round that cannot REACH the painted dot is worthless - drop the dot and
+            // fall back to a standard round on normal targets.
+            if (_preferLaser && { count _mag > 0 } && { !(_laserTarget inRangeOfArtillery [[_veh], _mag select 0]) }) then {
+                diag_log format ["AI ARTY: %1 laser dot %2 out of range for %3 - dropping to standard rounds", _sideKey, _laserTarget, _mag select 0];
+                _preferLaser = false;
+                _laserTarget = [];
+                _mag = [_veh, false] call MISSION_CORE_fnc_pickArtilleryMag;
+            };
+            if (count _mag > 0) then {
+                private _magName = _mag select 0;
+                private _isInfantryTarget = false;
+                private _target = if (_preferLaser) then {
+                    _laserTarget
                 } else {
-                    // Self-propelled gun target selection. For BLUFOR the SPG must also engage enemy
-                    // INFANTRY (it used to shell only armor) - this covers both garrison defense and
-                    // assault support. Spotted infantry is preferred, armor is the fallback.
-                    if (_side == WEST) then {
-                        private _inf = [_veh, _enemy] call MISSION_CORE_fnc_artilleryInfantryTarget;
-                        if (count _inf > 0) then {
-                            _isInfantryTarget = true;
-                            _inf
-                        } else {
-                            [_veh, _enemy] call MISSION_CORE_fnc_artilleryTarget;
-                        };
+                    if (_isMortar) then {
+                        [_veh, _enemy, _magName] call MISSION_CORE_fnc_artilleryInfantryTarget;
                     } else {
-                        [_veh, _enemy] call MISSION_CORE_fnc_artilleryTarget;
+                        // Self-propelled gun target selection. For BLUFOR the SPG must also engage enemy
+                        // INFANTRY (it used to shell only armor) - this covers both garrison defense and
+                        // assault support. Spotted infantry is preferred, armor is the fallback.
+                        if (_side == WEST) then {
+                            private _inf = [_veh, _enemy, _magName] call MISSION_CORE_fnc_artilleryInfantryTarget;
+                            if (count _inf > 0) then {
+                                _isInfantryTarget = true;
+                                _inf
+                            } else {
+                                [_veh, _enemy, _magName] call MISSION_CORE_fnc_artilleryTarget;
+                            };
+                        } else {
+                            [_veh, _enemy, _magName] call MISSION_CORE_fnc_artilleryTarget;
+                        };
                     };
                 };
-            };
-            private _markerFire = false;
-            if (!_preferLaser && { count _target == 0 }) then {
-                // No tanks spotted: seldom (25% chance, 5min cooldown) shell a player-held marker
-                // center instead - it reveals the piece, so it repositions after firing
-                if (time - _lastMarkerFire > 300 && { random 1 < 0.25 }) then {
-                    private _m = [_side, _pos, _rangeCap] call MISSION_CORE_fnc_artilleryMarkerTarget;
-                    if (count _m > 0) then {
-                        _target = _m;
-                        _markerFire = true;
-                        _lastMarkerFire = time;
+                private _markerFire = false;
+                if (!_preferLaser && { count _target == 0 }) then {
+                    // No tanks spotted: seldom (25% chance, 5min cooldown) shell a player-held marker
+                    // center instead - it reveals the piece, so it repositions after firing
+                    if (time - _lastMarkerFire > 300 && { random 1 < 0.25 }) then {
+                        private _m = [_side, _pos, _rangeCap, _veh, _magName] call MISSION_CORE_fnc_artilleryMarkerTarget;
+                        if (count _m > 0) then {
+                            _target = _m;
+                            _markerFire = true;
+                            _lastMarkerFire = time;
+                        };
                     };
                 };
-            };
-            if (count _target > 0) then {
-                // weaponLockSystem round selection: laser round for a laser dot, standard round otherwise
-                private _mag = [_veh, _preferLaser] call MISSION_CORE_fnc_pickArtilleryMag;
-                if (count _mag > 0) then {
+                if (count _target > 0) then {
                     private _cmdr = leader _grp;
                     if (!isNull _cmdr && { alive _cmdr }) then {
                         private _tp = if (_preferLaser) then {
@@ -496,47 +544,54 @@ MISSION_CORE_fnc_artilleryDriver = {
                         } else {
                             [_veh, _target, _isInfantryTarget] call MISSION_CORE_fnc_scatterArtilleryPoint;
                         };
-                        private _rounds = if (_preferLaser) then { 1 } else { 3 };
-                        _cmdr doArtilleryFire [_tp, _mag select 0, _rounds];
-
-                        // Audible fire at the barrel + at the target, then let the side know the
-                        // battery is up. inRangeOfArtillery flags an out-of-range shot, and
-                        // getArtilleryETA reports the impact time on the fire chat.
-                        [_tp, 3, _rangeCap] call MISSION_CORE_fnc_artilleryPlaySound;
-                        [_pos, 3, 1200] call MISSION_CORE_fnc_artilleryPlaySound;
-                        private _inRange = _tp inRangeOfArtillery [[_veh], _mag select 0];
-                        private _eta = -1;
-                        try {
-                            private _e = _cmdr getArtilleryETA [_tp, _mag select 0];
-                            if (!isNil "_e") then { _eta = _e; };
-                        } catch { };
-                        private _etaStr = if (_eta > 0) then { format ["Impact in %1s.", round _eta] } else { "Impact imminent." };
-                        if (!_inRange) then {
-                            [_grp, format ["Baseplate, TARGET OUT OF RANGE - unable to engage at %1m.", round (_veh distance2D _tp)]] call MISSION_CORE_fnc_artillerySideChat;
-                        } else {
-                            [_grp, format ["Battery, rounds away - %1x %2. %3", _rounds, _mag select 0, _etaStr]] call MISSION_CORE_fnc_artillerySideChat;
+                        // FINAL GATE: never order a shot the ballistics can't deliver. Candidate
+                        // selection already filtered by inRangeOfArtillery, but scatter can push a
+                        // near-minimum target below the weapon's minimum - fall back to the exact
+                        // (unscattered) point, then hold fire with a log when even that is unreachable.
+                        private _fireOK = _tp inRangeOfArtillery [[_veh], _magName];
+                        if (!_fireOK && { _target inRangeOfArtillery [[_veh], _magName] }) then {
+                            _tp = _target;
+                            _fireOK = true;
                         };
+                        if (_fireOK) then {
+                            private _rounds = if (_preferLaser) then { 1 } else { 3 };
+                            _cmdr doArtilleryFire [_tp, _magName, _rounds];
 
-                        _lastFire = time;
-                        if (_markerFire) then { _reposition = true; };
-                        diag_log format ["AI ARTY: %1 fired %2x %3 at %4 (%5m), inRange=%6, ETA=%7%8", _sideKey, _rounds, _mag select 0, _target, round (_veh distance2D _target), _inRange, _eta, if (_preferLaser) then { " LASER-GUIDED" } else { if (_markerFire) then { " marker - repositioning" } else { "" } }];
+                            // Audible fire at the barrel + at the target, then let the side know the
+                            // battery is up. getArtilleryETA reports the impact time on the fire chat.
+                            [_tp, 3, _rangeCap] call MISSION_CORE_fnc_artilleryPlaySound;
+                            [_pos, 3, 1200] call MISSION_CORE_fnc_artilleryPlaySound;
+                            private _eta = -1;
+                            try {
+                                private _e = _cmdr getArtilleryETA [_tp, _magName];
+                                if (!isNil "_e") then { _eta = _e; };
+                            } catch { };
+                            private _etaStr = if (_eta > 0) then { format ["Impact in %1s.", round _eta] } else { "Impact imminent." };
+                            [_grp, format ["Battery, rounds away - %1x %2. %3", _rounds, _magName, _etaStr]] call MISSION_CORE_fnc_artillerySideChat;
 
-                        // Reload feedback a moment later: clank at the tube + a side chat once the
-                        // battery is back up.
-                        [_grp, _veh] spawn {
-                            params ["_grp", "_veh"];
-                            sleep 15;
-                            if (!isNull _veh && { alive _veh }) then {
-                                [getPos _veh, 2, 800] call MISSION_CORE_fnc_artilleryPlaySound;
-                                [_grp, "Baseplate, reloaded and standing by."] call MISSION_CORE_fnc_artillerySideChat;
+                            _lastFire = time;
+                            if (_markerFire) then { _reposition = true; };
+                            diag_log format ["AI ARTY: %1 fired %2x %3 at %4 (%5m), ETA=%6%7", _sideKey, _rounds, _magName, _target, round (_veh distance2D _target), _eta, if (_preferLaser) then { " LASER-GUIDED" } else { if (_markerFire) then { " marker - repositioning" } else { "" } }];
+
+                            // Reload feedback a moment later: clank at the tube + a side chat once the
+                            // battery is back up.
+                            [_grp, _veh] spawn {
+                                params ["_grp", "_veh"];
+                                sleep 15;
+                                if (!isNull _veh && { alive _veh }) then {
+                                    [getPos _veh, 2, 800] call MISSION_CORE_fnc_artilleryPlaySound;
+                                    [_grp, "Baseplate, reloaded and standing by."] call MISSION_CORE_fnc_artillerySideChat;
+                                };
                             };
+                        } else {
+                            diag_log format ["AI ARTY: %1 no in-range aim point near %2 for %3 (%4m) - holding fire", _sideKey, _target, _magName, round (_veh distance2D _target)];
                         };
                     };
                 };
             };
         };
 
-        // 3. After a marker-center bombardment the position is compromised - shift to a fresh spot
+        // 4. After a marker-center bombardment the position is compromised - shift to a fresh spot
         //    (MLRS/SPG only; mortars hold their position inside the contested marker).
         if (_reposition && { !_isStatic }) then {
             _reposition = false;

@@ -51,6 +51,10 @@ MISSION_CORE_fnc_groupMaintenance = {
             ];
             _nextHeartbeat = time + 30;
         };
+        // Recruit vehicle waiting list: drain ONE queued recruit spawn per marker as soon as a safe
+        // spot frees. Runs before the field-empty continues below - a queued spawn is real work even
+        // when the spawned-groups list is momentarily empty.
+        [] call MISSION_CORE_fnc_recruitVehicleQueueTick;
         if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { continue; };
         // Nothing is on the field - no marker is active - so there is nothing to maintain. The
         // proximity spawner / battle loop put groups back on the map; until then every tick below

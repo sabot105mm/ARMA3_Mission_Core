@@ -4,7 +4,12 @@ MISSION_CORE_fnc_restartPatrol = {
     // Groups on a one-way attack task never revert to their old patrol waypoints - they stay on
     // the task. Defend/engage groups are temporary combat states and may resume patrol.
     // "staging" is the staged-assault edge hold: those groups are committed to an assault.
-    if ((_group getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "counterattack", "reinforce", "staging"]) exitWith {};
+    // "artillery" is a permanent hold - a gun battery NEVER drops its target marker and goes back
+    // to patrol (its fire is driven by MISSION_CORE_ARTY_CTRL, which is keyed on the standoff
+    // marker, not on waypoints). Also hard-block any group tagged MISSION_CORE_ARTILLERY, so an
+    // arty group is protected even if its ORDER variable is momentarily something else.
+    if ((_group getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "counterattack", "reinforce", "staging", "artillery"]) exitWith {};
+    if (_group getVariable ["MISSION_CORE_ARTILLERY", false]) exitWith {};
     // Quadrant-committed groups stay on their sector sweep - never revert them to a whole-marker
     // random patrol (that scatters them across the center and the far side).
     if ((_group getVariable ["MISSION_CORE_ORDER", ""]) == "engage" && { (_group getVariable ["MISSION_CORE_QUAD_MARKER", ""]) != "" }) exitWith {};

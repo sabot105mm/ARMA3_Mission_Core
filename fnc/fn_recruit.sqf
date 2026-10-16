@@ -24,6 +24,21 @@ MISSION_CORE_RECRUIT_WP_BEHAVIOUR = "AWARE";
 
 if (isNil "MISSION_CORE_ATTACK_GROUPS") then { MISSION_CORE_ATTACK_GROUPS = createHashMap; };
 
+// RECRUIT-VIEW SIDE. The side a marker should PRESENT AS in the recruit menu. A marker whose
+// MISSION_CORE_CONTESTED entry is TEMP-FLIPPED (no live threat within the grace window, but the
+// zone's reinforcement pool is still solvent) is shown as the PLAYER's side so it can be picked
+// from the deploy / garrison lists while the fight is merely quiet. This is MENU-ONLY: the real
+// owner in MISSION_CORE_LOCATIONS (select 5) is never touched, so everything that keys on real
+// ownership - attack-group staging, hold refill, garrison replenishment - keeps waiting until the
+// marker is FULLY uncontested (pool == 0, a real clear). Temp-flip lives in value element 2.
+MISSION_CORE_fnc_recruitViewSide = {
+    params ["_name", "_realSide"];
+    if (isNil "MISSION_CORE_CONTESTED") exitWith { _realSide };
+    private _v = MISSION_CORE_CONTESTED getOrDefault [_name, []];
+    if ((count _v) > 2 && { _v select 2 }) exitWith { WEST };
+    _realSide
+};
+
 // -------------------------------------------------------------------
 // SERVER-AUTHORITATIVE ATTACK TAB (Milestone 1 of the MP conversion)
 //
@@ -130,7 +145,9 @@ MISSION_CORE_fnc_initRecruitment = {
             };
             private _near = false;
             {
-                if ((_x select 5) == WEST) then {
+                // A temp-flipped marker (quiet but still pool-solvent) counts as the player's side
+                // here too, so the menu opens for a player standing on it - recruiting only.
+                if (([_x select 0, _x select 5] call MISSION_CORE_fnc_recruitViewSide) == WEST) then {
                     // True marker-area membership: inArea respects the marker's real shape (ELLIPSE
                     // or RECTANGLE), its size and its rotation, so the menu opens anywhere inside the
                     // marker - including the corners of a rectangular/square marker, not just a circle
@@ -266,7 +283,8 @@ MISSION_CORE_fnc_attackGroupTryRefill = {
 
     private _spawnPos = getPosATL (leader _grp);
     if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
-    _spawnPos = [_spawnPos, _spawnPos, [60, 60]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    private _safeSpawn = [_spawnPos, _spawnPos, [60, 60]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    if (count _safeSpawn >= 2) then { _spawnPos = _safeSpawn; };
     if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
 
     // Pre-check both resources BEFORE consuming anything so a short pool/manpower never strands a
@@ -294,11 +312,17 @@ MISSION_CORE_fnc_attackGroupTryRefill = {
     // Spawn the missing armored vehicles + crew into the group.
     {
         private _v = [_x, _spawnPos] call MISSION_CORE_fnc_safeVehicleSpawn;
-        private _vGrp = createVehicleCrew _v;
-        { if (!isNull _x) then { [_x] joinSilent _grp; }; } forEach units _vGrp;
-        [_v] joinSilent _grp;
-        if (!isNull _vGrp) then { deleteGroup _vGrp; };
-        _v setVariable ["MISSION_CORE_BLUFOR", true];
+        if (isNull _v) then {
+            // No clean spot at the group right now - give the consumed pool point back and let the
+            // next monitor pass retry once a spot frees. Never stack the refill on the group.
+            if (!isNil "MISSION_CORE_fnc_returnPoolTankForSide") then { [WEST] call MISSION_CORE_fnc_returnPoolTankForSide; };
+        } else {
+            private _vGrp = createVehicleCrew _v;
+            { if (!isNull _x) then { [_x] joinSilent _grp; }; } forEach units _vGrp;
+            [_v] joinSilent _grp;
+            if (!isNull _vGrp) then { deleteGroup _vGrp; };
+            _v setVariable ["MISSION_CORE_BLUFOR", true];
+        };
     } forEach _vehGot;
 
     // Spawn missing infantry to bring the group back up to template strength.
@@ -449,7 +473,7 @@ MISSION_CORE_fnc_recruitMenuPopulateAttack = {
     // idle group can be redeployed to any marker - enemy = assault, BLUFOR = move+hold there).
     private _targetList = _disp displayCtrl 1632;
     lbClear _targetList;
-    private _redLocs = MISSION_CORE_LOCATIONS select { (_x select 5) == EAST };
+    private _redLocs = MISSION_CORE_LOCATIONS select { ([_x select 0, _x select 5] call MISSION_CORE_fnc_recruitViewSide) == EAST };
     _redLocs = [_redLocs, [], { player distance ((_x select 1) select 0) }, "ASCEND"] call BIS_fnc_sortBy;
     {
         private _name = _x select 0;
@@ -460,7 +484,7 @@ MISSION_CORE_fnc_recruitMenuPopulateAttack = {
         _targetList lbSetData [lbSize _targetList - 1, _name];
         _targetList lbSetColor [lbSize _targetList - 1, [1,0.55,0.55,1]];
     } forEach _redLocs;
-    private _blueLocs = MISSION_CORE_LOCATIONS select { (_x select 5) == WEST };
+    private _blueLocs = MISSION_CORE_LOCATIONS select { ([_x select 0, _x select 5] call MISSION_CORE_fnc_recruitViewSide) == WEST };
     _blueLocs = [_blueLocs, [], { player distance ((_x select 1) select 0) }, "ASCEND"] call BIS_fnc_sortBy;
     {
         private _name = _x select 0;
@@ -713,7 +737,7 @@ MISSION_CORE_fnc_recruitMenuPopulateDefend = {
     // one value, the one writer. No local broadcast copy that can lag or disagree with it.
     if (isNil "MISSION_CORE_CONTESTED") then { MISSION_CORE_CONTESTED = createHashMap; };
     if (isNil "MISSION_CORE_ASSAULT_TARGET") then { MISSION_CORE_ASSAULT_TARGET = ""; };
-    private _bluLocs = MISSION_CORE_LOCATIONS select { (_x select 5) == WEST };
+    private _bluLocs = MISSION_CORE_LOCATIONS select { ([_x select 0, _x select 5] call MISSION_CORE_fnc_recruitViewSide) == WEST };
     _bluLocs = [_bluLocs, [], { player distance ((_x select 1) select 0) }, "ASCEND"] call BIS_fnc_sortBy;
     private _savedSel = MISSION_CORE_RECRUIT_GARRISON_MARKER;
     private _savedIdx = -1;
@@ -1518,6 +1542,7 @@ MISSION_CORE_fnc_recruitSpawnTransport = {
     if (count _vPos == 0) then { _vPos = player getPos [15, _dir]; };
 
     private _veh = [_vehClass, _vPos, false, _dir] call MISSION_CORE_fnc_safeVehicleSpawn;
+    if (isNull _veh) exitWith { false };
 
     // No separate driver crew: the squad's own group drives the transport. One member takes the
     // driver seat, the rest fill the cargo seats. Because the squad group itself is driving, an
@@ -1817,18 +1842,16 @@ MISSION_CORE_fnc_bluforStandoff = {
 };
 
 // Minimum ballistic range (m) an assault-arty platoon can lay its rounds at - the standoff must sit
-// at least this far from the target or the gun barks "Invalid coordinates. Cease fire." MLRS rockets
-// need 1000m; SPG howitzers 825m. Returns the strictest piece in the platoon so a mixed group is
-// served. Heuristic mirrors fn_isArtyTemplate's class-name detection (mlrs / m270 / grad = rockets).
+// at least this far from the target or the gun barks "Invalid coordinates. Cease fire." MLRS/rocket
+// rounds need >= 1000m; SPG howitzers 825m. Returns the strictest piece in the platoon so a mixed
+// group is served. Delegates the per-vehicle split to fn_serverArtyMinRange, which reads it from
+// the rounds the vehicle throws (rocket/missile ammo), never a class-name guess.
 MISSION_CORE_fnc_assaultArtyMinRange = {
     params ["_grp"];
     private _minR = 825;
     {
         private _v = vehicle _x;
-        if (_v isKindOf "LandVehicle") then {
-            private _ln = toLower (typeOf _v);
-            if (_ln find "mlrs" > -1 || { _ln find "m270" > -1 } || { _ln find "grad" > -1 }) then { _minR = _minR max 1000; };
-        };
+        if (_v isKindOf "LandVehicle") then { _minR = _minR max ([_v] call MISSION_CORE_fnc_serverArtyMinRange); };
     } forEach units _grp;
     _minR
 };

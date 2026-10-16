@@ -30,10 +30,11 @@ MISSION_CORE_fnc_despawnLocation = {
         diag_log format ["DYNAMIC SPAWNER TRACK: %1 despawn could not resolve side - slot not released", _locName];
     };
     diag_log format ["DYNAMIC SPAWN: despawning %1", _locName];
-    if (_locName in allMapMarkers) then {
-        _locName setMarkerAlpha 0;
-        _locName setMarkerText "";
-    };
+    // The marker STAYS on the map. Despawn used to hide it (alpha 0 + label cleared), which
+    // made a deactivated marker look deleted and - combined with the deactivated marker
+    // being skipped by the replenish loop - left it uncapturable by either side forever.
+    // The location keeps its map moniker, colour label and ellipse: it is simply dormant,
+    // and the redfor recapture loop / proximity spawner both keep working against it.
     // A deactivated marker that was cut off after a neighbor's capture may receive manpower
     // from neighbors again once it is deactivated
     if (isNil "MISSION_CORE_MANPOWER_CUTOFF") then { MISSION_CORE_MANPOWER_CUTOFF = createHashMap; };

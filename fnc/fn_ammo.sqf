@@ -723,7 +723,7 @@ MISSION_CORE_fnc_ammoRequestTick = {
 // HEARTBEAT-FIRST. MISSION_CORE_AMMO_LOOP_TICK is written at the TOP of every iteration, before
 // any work, so a tick that errors partway through still leaves a fresh timestamp behind: the
 // supervisor then cannot confuse "this loop crashed" with "this loop is busy". Same idiom and
-// same 90s threshold as MISSION_CORE_PLAYER_ARTY in fn_recruitServer.sqf.
+// same 90s threshold as MISSION_CORE_ARTY_CTRL_STATE in fnc\commander\fn_artyController.sqf.
 //
 // WHY A SUPERVISOR IS REQUIRED AND try/catch IS NOT. The loop died for real on 17:05:05 with no
 // restart until 17:21:48 and no AMMO line for sixteen minutes, while every other loop kept

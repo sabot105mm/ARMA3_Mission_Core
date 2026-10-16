@@ -218,6 +218,16 @@ if (isServer) then {
     // started here too; it is spawned rather than called so init is never blocked.
     call compile preprocessFileLineNumbers "fnc\commander\fn_abstractLeg.sqf";
     [] spawn MISSION_CORE_fnc_abstractLegLoop;
+    // Water-borne leg materialise (boats sized to the squad, shore-crossing waypoint, eject
+    // fnc). Its own module so the leg logic and sendCounterAttack stay lean - the materialise
+    // callbacks and the boat branch call it at runtime, so compile order is not load-bearing.
+    call compile preprocessFileLineNumbers "fnc\commander\fn_boatApproach.sqf";
+    // Overwatcher for materialised abstract legs: cause-tracks WHY each squad came into the
+    // world (player crossing by, or route/deadline arrival) and parks a player-deserted squad
+    // back onto its saved abstract route. Own module for the same reason as fn_boatApproach.
+    // Compile order not load-bearing - the leg callbacks reach it at runtime.
+    call compile preprocessFileLineNumbers "fnc\commander\fn_abstractWatcher.sqf";
+    [] spawn MISSION_CORE_fnc_abstractWatcherLoop;
     MISSION_CORE_CACHED_POSITIONS = MISSION_CORE_LOCATIONS call MISSION_CORE_fnc_cacheTerrain;
     // Publish the start-pool armor count immediately (publishArmorPool defined above) so client
     // recruit menus show the bonus tanks before the recruitTankManagerLoop's first 15s publish.
@@ -372,12 +382,19 @@ if (isServer) then {
     [] spawn MISSION_CORE_fnc_houseOccupationInit;
     [] spawn MISSION_CORE_fnc_spawnQueueLoop;
     [] spawn MISSION_CORE_fnc_groupMaintenance;
+    // REDFOR recapture of an unguarded player-held marker (owns its own 8s cadence;
+    // independent of groupMaintenance, which skips an empty spawned-groups field).
+    [] spawn MISSION_CORE_fnc_redforRecaptureLoop;
     [] spawn MISSION_CORE_fnc_defenseSpotLoop;
     [] spawn MISSION_CORE_fnc_truckCleanupLoop;
     [] spawn MISSION_CORE_fnc_orderedVehicleCleanupLoop;
     [] spawn MISSION_CORE_fnc_convoyLoop;
     [] spawn MISSION_CORE_fnc_reconLoop;
     MISSION_CORE_TANK_LOOP_HANDLE = [] spawn MISSION_CORE_fnc_tankOrderLoop;
+    // Advance/materialize block, split out of the order loop so it keeps its own 5s cadence
+    // while the manpower sweep starves the loop above (see fn_tankOrderLoop.sqf).
+    missionNamespace setVariable ["MISSION_CORE_TANK_SHIP_TICK", time];
+    MISSION_CORE_TANK_SHIP_HANDLE = [] spawn MISSION_CORE_fnc_tankShipmentLoop;
     [] spawn MISSION_CORE_fnc_tankOrderSupervisor;
     [] spawn MISSION_CORE_fnc_armorOrderLoop;
     if (MISSION_CORE_DEBUG_VISUALS) then { [] spawn MISSION_CORE_fnc_debugVisuals; };
@@ -430,7 +447,13 @@ if (isServer) then {
     // [] spawn MISSION_CORE_fnc_iconMarkers;
 
     // 7b. Garrison management (server-authoritative spawning for the GARRISON recruit tab).
+    call compile preprocessFileLineNumbers "fnc\fn_recruitVehicleQueue.sqf";
     call compile preprocessFileLineNumbers "fnc\fn_recruitServer.sqf";
+    // Per-side artillery controller: ONE fire loop per side gathers every registered piece
+    // (garrison + assault roles) and folds in the old per-group overwatch loop. Compiled HERE,
+    // right after fn_recruitServer, because the controller's fire logic reuses that file's
+    // spot/bracket/marker helpers at call time and the register calls land at runtime only.
+    call compile preprocessFileLineNumbers "fnc\commander\fn_artyController.sqf";
     // 7c. Server-authoritative ATTACK tab (Milestone 1 of the MP conversion): recruit assault
     // groups are now spawned/owned/monitored on the server; clients forward button presses
     // (fnc\fn_recruit.sqf) and render the netId mirror broadcast here.

@@ -16,7 +16,12 @@ MISSION_CORE_fnc_attackStuckWatchdogTick = {
         if (count _contested == 0) then { continue; };
         private _groups = MISSION_CORE_SPAWNED_GROUPS select {
             !isNull _x && { count units _x > 0 } && { _x getVariable [_sideVar, false] } &&
-            { (_x getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "counterattack", "reinforce", "staging"] }
+            { (_x getVariable ["MISSION_CORE_ORDER", ""]) in ["attack", "counterattack", "reinforce", "staging"] } &&
+            // PERMANENT RULE: artillery NEVER drops its target marker. A gun battery is excluded
+            // here by TAG, not just by order, so even a mis-set order can never let the stale-order
+            // release below send a battery back to patrol (which had silently killed its fire).
+            { !(_x getVariable ["MISSION_CORE_ARTILLERY", false]) } &&
+            { (_x getVariable ["MISSION_CORE_ARMOR_SLOT", ""]) != "arty" }
         };
         {
             private _grp = _x;

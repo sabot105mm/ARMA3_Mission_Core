@@ -7,6 +7,18 @@ MISSION_CORE_fnc_spawnAssaultGroup = {
     params ["_templates", "_side", "_faction", "_importance", "_originPos", "_targetPos", ["_originName", ""], ["_staged", false], ["_tgtName", ""], ["_srcSize", [200, 200]]];
     if (count _templates == 0) exitWith { grpNull };
     private _tmpl = selectRandom _templates;
+    // GLOBAL FOOT-CAP GATE (PERMANENT RULE): a done-away with the ONE spawner that ignored the global
+    // foot-squad cap. This is the AI counter-attack / staged-assault spawner, and it was the only path
+    // that could mint pure-foot squads while the side was already at/over footSquadCapSquads - which
+    // pushed the mission-wide foot count past the ceiling and starved every reinforcement dispatch
+    // (fn_neighborCounterAttack / fn_queuedCounterAttackInf) behind a permanently saturated budget.
+    // Pure-foot only (no vehicles in the template); armor/mech are gated separately by armorCapOpen.
+    // Returning grpNull makes the callers break their spawn loops cleanly (see fn_assembleAssault /
+    // fn_assaultStaging), exactly like an armor-cap denial.
+    if (({ !(_x isKindOf "Man") } count (_tmpl select 1) == 0) && { ([_side] call MISSION_CORE_fnc_countFootSquads) >= (["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune) }) exitWith {
+        diag_log format ["AI ASSAULT: %1 foot template %2 skipped for %3 - global foot squad cap full (%4/%5)", _side, _tmpl select 0, _originName, round ([_side] call MISSION_CORE_fnc_countFootSquads), ["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune];
+        grpNull
+    };
     private _spawnPos = [_originPos, [200, 200], 20, random 360] call MISSION_CORE_fnc_findVehiclePos;
     private _grp = [(_tmpl select 0), _spawnPos, _side, _faction, "AWARE", "FULL", _importance, _originPos, [200, 200]] call MISSION_CORE_fnc_spawnGroup;
     if (isNull _grp) exitWith { grpNull };

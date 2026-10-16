@@ -176,6 +176,8 @@ MISSION_CORE_fnc_serverStageGroup = {
         diag_log "BLUFOR STAGED: shared staging core missing (fn_assaultStaging.sqf not compiled)";
     };
     private _stagePos = [_grp, _srcPos, _srcSize, _tgtPos] call MISSION_CORE_fnc_stageGroupAtEdge;
+    // Get the staged squad onto wheels: own-vehicle groups fill cargo, far foot groups spawn one.
+    [_grp, _tgtPos] call MISSION_CORE_fnc_bluforStageTransport;
     private _dir = _srcPos getDir _tgtPos;
     (leader _grp) addEventHandler ["Killed", { _this call MISSION_CORE_fnc_serverStagedLeaderTorch; }];
     diag_log format ["BLUFOR STAGED: %1 staged at %2 on bearing %3 toward %4", groupId _grp, _stagePos, round _dir, _tgtName];
@@ -206,6 +208,7 @@ MISSION_CORE_fnc_serverSpawnTransport = {
     if (count _vPos == 0) then { _vPos = _caller getPos [15, _dir]; };
 
     private _veh = [_vehClass, _vPos, false, _dir] call MISSION_CORE_fnc_safeVehicleSpawn;
+    if (isNull _veh) exitWith { false };
 
     private _units = units _grp;
     if (count _units > 0) then { (_units select 0) moveInDriver _veh; };
@@ -306,7 +309,8 @@ MISSION_CORE_fnc_serverGroupTryRefill = {
 
     private _spawnPos = getPosATL (leader _grp);
     if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
-    _spawnPos = [_spawnPos, _spawnPos, [60, 60]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    private _safeSpawn = [_spawnPos, _spawnPos, [60, 60]] call MISSION_CORE_fnc_safeVehicleSpawnPos;
+    if (count _safeSpawn >= 2) then { _spawnPos = _safeSpawn; };
     if (count _spawnPos == 2) then { _spawnPos pushBack 0; };
 
     if (isNil "MISSION_CORE_fnc_poolTanksForSide" || { isNil "MISSION_CORE_fnc_consumePoolTankForSide" }) exitWith {
@@ -329,11 +333,17 @@ MISSION_CORE_fnc_serverGroupTryRefill = {
 
     {
         private _v = [_x, _spawnPos] call MISSION_CORE_fnc_safeVehicleSpawn;
-        private _vGrp = createVehicleCrew _v;
-        { if (!isNull _x) then { [_x] joinSilent _grp; }; } forEach units _vGrp;
-        [_v] joinSilent _grp;
-        if (!isNull _vGrp) then { deleteGroup _vGrp; };
-        _v setVariable ["MISSION_CORE_BLUFOR", true];
+        if (isNull _v) then {
+            // No clean spot at the group right now - give the consumed pool point back and let the
+            // next monitor pass retry once a spot frees. Never stack the refill on the group.
+            if (!isNil "MISSION_CORE_fnc_returnPoolTankForSide") then { [WEST] call MISSION_CORE_fnc_returnPoolTankForSide; };
+        } else {
+            private _vGrp = createVehicleCrew _v;
+            { if (!isNull _x) then { [_x] joinSilent _grp; }; } forEach units _vGrp;
+            [_v] joinSilent _grp;
+            if (!isNull _vGrp) then { deleteGroup _vGrp; };
+            _v setVariable ["MISSION_CORE_BLUFOR", true];
+        };
     } forEach _vehGot;
 
     // Tracked hulls bought here come out of the shared vehicle pool, so they are the most expensive
@@ -356,6 +366,21 @@ MISSION_CORE_fnc_serverGroupTryRefill = {
         };
     };
 
+    // REPLENISH ALSO RE-SUPPLIES THE FORCE'S VEHICLES, not just its men. A hold group that has
+    // just taken a marker gets its hulls back to fighting trim: repaired to 0 damage, refilled to
+    // the CLASS-DEFAULT ammo loadout, and refueled. setVehicleAmmoDef (relative to the class's
+    // magazines[]) is used rather than setVehicleAmmo (relative to what little is left) - the same
+    // rule the player-arty rearm uses. New spawns arrive clean; this also covers the survivors that
+    // fought through the capture, and every turret here is crewed by server-side AI.
+    {
+        private _v = vehicle _x;
+        if (_v != _x && { alive _v }) then {
+            _v setDamage 0;
+            _v setVehicleAmmoDef 1;
+            _v setFuel 1;
+        };
+    } forEach units _grp;
+
     [_grp, _target, _wps, _tmpl, _side, _status, _targetPos]
 };
 
@@ -363,47 +388,25 @@ MISSION_CORE_fnc_serverGroupTryRefill = {
 // REQUEST HANDLERS (remoteExec'd from the client recruit menu)
 // -------------------------------------------------------------------
 
-// NEW-DEPLOY REQUEST: [player, template, targetName, drawnWaypoints]
-MISSION_CORE_fnc_assaultServerRequestNew = {
-    params ["_caller", "_template", "_targetName", "_wps"];
-    if (isNull _caller) exitWith {};
-    if !(alive _caller) exitWith {};
-    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith { [_caller, "Too far from base."] call MISSION_CORE_fnc_assaultServerHint; };
+// The actual spawn + registration for an assault recruit (the old tail of assaultServerRequestNew).
+// Called immediately by the request, or later by the recruit spawn queue once a safe spot frees.
+// Manpower was already charged by the caller; a failed spawn refunds it here.
+MISSION_CORE_fnc_assaultServerRequestNewSpawnNow = {
+    params ["_caller", "_side", "_template", "_targetName", "_wps", "_spawnPos", "_srcSize", "_targetPos", "_cost"];
     _template params ["_grpName", "_grpUnits", "_unitCount", ["_subCat", ""], ["_catName", ""]];
-    if (_unitCount <= 0) exitWith {};
-
-    private _locIdx = MISSION_CORE_LOCATIONS findIf { (_x select 0) == _targetName };
-    if (_locIdx < 0) exitWith { [_caller, format ["Target marker %1 not found.", _targetName]] call MISSION_CORE_fnc_assaultServerHint; };
-    private _targetPos = ((MISSION_CORE_LOCATIONS select _locIdx) select 1) select 0;
-
-    // Spawn at the WEST marker the CALLER is inside (server scan).
-    private _spawnPos = getPosATL _caller;
-    private _srcSize = [200, 200];
-    {
-        if ((_x select 5) == WEST) then {
-            private _mPos = ((_x select 1) select 0);
-            private _mSize = ((_x select 1) select 1);
-            private _a = if (count _mSize > 0) then { _mSize select 0 } else { 200 };
-            private _b = if (count _mSize > 1) then { _mSize select 1 } else { 200 };
-            private _d = _caller distance _mPos;
-            if (_d < ((_a max _b) * 0.5 + 100)) exitWith {
-                _spawnPos = _mPos;
-                if (count _mSize > 0) then { _srcSize = +_mSize; };
-            };
-        };
-    } forEach MISSION_CORE_LOCATIONS;
-
     private _faction = MISSION_CORE_BLUFOR_DATA select 3;
     private _cfgPath = configFile >> "CfgGroups" >> "West" >> _faction >> _catName >> _grpName;
-    if !(isClass _cfgPath) exitWith { [_caller, format ["CfgGroups entry %1 not found.", _grpName]] call MISSION_CORE_fnc_assaultServerHint; };
-
-    private _costPer = if (isNil "MISSION_CORE_MANPOWER_PER_UNIT") then { 10 } else { MISSION_CORE_MANPOWER_PER_UNIT };
-    private _cost = _unitCount * _costPer;
-    if !([_cost] call MISSION_CORE_fnc_drawManpower) exitWith {
-        [_caller, format ["Not enough manpower! Need %1 MP.", _cost]] call MISSION_CORE_fnc_assaultServerHint;
+    if !(isClass _cfgPath) exitWith {
+        [_cost] call MISSION_CORE_fnc_refundManpower;
+        [_caller, format ["CfgGroups entry %1 not found - manpower refunded.", _grpName]] call MISSION_CORE_fnc_assaultServerHint;
+    };
+    private _locIdx = MISSION_CORE_LOCATIONS findIf { (_x select 0) == _targetName };
+    if (_locIdx < 0) exitWith {
+        [_cost] call MISSION_CORE_fnc_refundManpower;
+        [_caller, "Target no longer exists - manpower refunded."] call MISSION_CORE_fnc_assaultServerHint;
     };
 
-    private _grp = [_spawnPos, side _caller, _cfgPath] call BIS_fnc_spawnGroup;
+    private _grp = [_spawnPos, _side, _cfgPath] call BIS_fnc_spawnGroup;
     if (isNull _grp) exitWith {
         [_cost] call MISSION_CORE_fnc_refundManpower;
         [_caller, "Failed to spawn group."] call MISSION_CORE_fnc_assaultServerHint;
@@ -520,6 +523,59 @@ MISSION_CORE_fnc_assaultServerRequestNew = {
     call MISSION_CORE_fnc_assaultServerMirror;
 };
 
+// NEW-DEPLOY REQUEST: [player, template, targetName, drawnWaypoints]
+MISSION_CORE_fnc_assaultServerRequestNew = {
+    params ["_caller", "_template", "_targetName", "_wps"];
+    if (isNull _caller) exitWith {};
+    if !(alive _caller) exitWith {};
+    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith { [_caller, "Too far from base."] call MISSION_CORE_fnc_assaultServerHint; };
+    _template params ["_grpName", "_grpUnits", "_unitCount", ["_subCat", ""], ["_catName", ""]];
+    if (_unitCount <= 0) exitWith {};
+
+    private _locIdx = MISSION_CORE_LOCATIONS findIf { (_x select 0) == _targetName };
+    if (_locIdx < 0) exitWith { [_caller, format ["Target marker %1 not found.", _targetName]] call MISSION_CORE_fnc_assaultServerHint; };
+    private _targetPos = ((MISSION_CORE_LOCATIONS select _locIdx) select 1) select 0;
+
+    // Spawn at the WEST marker the CALLER is inside (server scan).
+    private _spawnPos = getPosATL _caller;
+    private _srcSize = [200, 200];
+    private _srcName = "";
+    {
+        if ((_x select 5) == WEST) then {
+            private _mPos = ((_x select 1) select 0);
+            private _mSize = ((_x select 1) select 1);
+            private _a = if (count _mSize > 0) then { _mSize select 0 } else { 200 };
+            private _b = if (count _mSize > 1) then { _mSize select 1 } else { 200 };
+            private _d = _caller distance _mPos;
+            if (_d < ((_a max _b) * 0.5 + 100)) exitWith {
+                _spawnPos = _mPos;
+                _srcName = _x select 0;
+                if (count _mSize > 0) then { _srcSize = +_mSize; };
+            };
+        };
+    } forEach MISSION_CORE_LOCATIONS;
+
+    private _faction = MISSION_CORE_BLUFOR_DATA select 3;
+    private _cfgPath = configFile >> "CfgGroups" >> "West" >> _faction >> _catName >> _grpName;
+    if !(isClass _cfgPath) exitWith { [_caller, format ["CfgGroups entry %1 not found.", _grpName]] call MISSION_CORE_fnc_assaultServerHint; };
+
+    private _costPer = if (isNil "MISSION_CORE_MANPOWER_PER_UNIT") then { 10 } else { MISSION_CORE_MANPOWER_PER_UNIT };
+    private _cost = _unitCount * _costPer;
+    if !([_cost] call MISSION_CORE_fnc_drawManpower) exitWith {
+        [_caller, format ["Not enough manpower! Need %1 MP.", _cost]] call MISSION_CORE_fnc_assaultServerHint;
+    };
+
+    // Queue gate: assault groups land on a ROAD COLUMN (spawned at the marker center, then
+    // road-aligned); they do NOT use the cached flat spots. So the gate asks the column finder for
+    // one clean road spot per LandVehicle in the template - the WHOLE group must fit before it is
+    // released, and it drains only when that many spots free up. Manpower is already charged.
+    private _vehCount = { _x isKindOf "LandVehicle" } count (_template select 1);
+    private _spawned = [_srcName, "MISSION_CORE_fnc_assaultServerRequestNewSpawnNow", [_caller, side _caller, _template, _targetName, _wps, _spawnPos, _srcSize, _targetPos, _cost], _caller, "MISSION_CORE_fnc_assaultMarkerColumnClear", [_srcName, _vehCount]] call MISSION_CORE_fnc_queueRecruitVehicleSpawn;
+    if (!_spawned) then {
+        [_caller, format ["Safe spawn spots at %1 are occupied - the group is queued and deploys as soon as %2 vehicle slot(s) free.", _srcName, _vehCount]] call MISSION_CORE_fnc_assaultServerHint;
+    };
+};
+
 // IDLE-REDEPLOY REQUEST: [player, groupId, targetName, drawnWaypoints]
 MISSION_CORE_fnc_assaultServerRequestIdle = {
     params ["_caller", "_grpId", "_targetName", "_freshWps"];
@@ -597,50 +653,19 @@ MISSION_CORE_fnc_assaultServerRequestIdle = {
     call MISSION_CORE_fnc_assaultServerMirror;
 };
 
-// RE-RECRUIT REQUEST: [player, wipedGroupId] - reuses the wiped id.
-MISSION_CORE_fnc_assaultServerRERecruit = {
-    params ["_caller", "_wipedId"];
-    if (isNull _caller) exitWith {};
-    if !(alive _caller) exitWith {};
-    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith { [_caller, "Too far from base."] call MISSION_CORE_fnc_assaultServerHint; };
-    if (isNil "MISSION_CORE_ATTACK_GROUPS") exitWith { [_caller, "No wiped groups to re-recruit."] call MISSION_CORE_fnc_assaultServerHint; };
-    private _data = MISSION_CORE_ATTACK_GROUPS getOrDefault [_wipedId, []];
-    if (count _data == 0) exitWith { [_caller, "That group no longer exists."] call MISSION_CORE_fnc_assaultServerHint; };
-    _data params ["_oldGrp", "_target", "_wps", "_template", "_side", "_status", "_targetPos"];
-    if (_status != "wiped") exitWith {};
-
-    private _locIdx = MISSION_CORE_LOCATIONS findIf { (_x select 0) == _target };
-    if (_locIdx < 0) exitWith { [_caller, "Target no longer exists."] call MISSION_CORE_fnc_assaultServerHint; };
-    if (((MISSION_CORE_LOCATIONS select _locIdx) select 5) == WEST) exitWith {
-        [_caller, format ["%1 is already under BLUFOR control!", _target]] call MISSION_CORE_fnc_assaultServerHint;
-    };
-
+// The actual spawn + registration for a re-recruited group (the old tail of assaultServerRERecruit).
+// Called immediately by the request, or later by the recruit spawn queue once a safe spot frees.
+// Manpower was already charged by the caller; a failed spawn refunds it here.
+MISSION_CORE_fnc_assaultServerRERecruitSpawnNow = {
+    params ["_caller", "_side", "_wipedId", "_template", "_target", "_wps", "_spawnPos", "_targetPos", "_cost"];
     _template params ["_grpName", "_grpUnits", "_unitCount", ["_subCat", ""], ["_catName", ""]];
-    private _costPer = if (isNil "MISSION_CORE_MANPOWER_PER_UNIT") then { 10 } else { MISSION_CORE_MANPOWER_PER_UNIT };
-    private _cost = _unitCount * _costPer;
-    if !([_cost] call MISSION_CORE_fnc_drawManpower) exitWith {
-        [_caller, format ["Not enough manpower! Need %1 MP.", _cost]] call MISSION_CORE_fnc_assaultServerHint;
-    };
-
-    private _spawnPos = getPosATL _caller;
-    {
-        if ((_x select 5) == WEST) then {
-            private _mPos = ((_x select 1) select 0);
-            private _mSize = ((_x select 1) select 1);
-            private _a = if (count _mSize > 0) then { _mSize select 0 } else { 200 };
-            private _b = if (count _mSize > 1) then { _mSize select 1 } else { 200 };
-            private _d = _caller distance _mPos;
-            if (_d < ((_a max _b) * 0.5 + 100)) exitWith { _spawnPos = _mPos; };
-        };
-    } forEach MISSION_CORE_LOCATIONS;
-
     private _faction = MISSION_CORE_BLUFOR_DATA select 3;
     private _cfgPath = configFile >> "CfgGroups" >> "West" >> _faction >> _catName >> _grpName;
     if !(isClass _cfgPath) exitWith {
         [_cost] call MISSION_CORE_fnc_refundManpower;
-        [_caller, format ["CfgGroups entry %1 not found.", _grpName]] call MISSION_CORE_fnc_assaultServerHint;
+        [_caller, format ["CfgGroups entry %1 not found - manpower refunded.", _grpName]] call MISSION_CORE_fnc_assaultServerHint;
     };
-    private _grp = [_spawnPos, side _caller, _cfgPath] call BIS_fnc_spawnGroup;
+    private _grp = [_spawnPos, _side, _cfgPath] call BIS_fnc_spawnGroup;
     if (isNull _grp) exitWith {
         [_cost] call MISSION_CORE_fnc_refundManpower;
         [_caller, "Failed to spawn group."] call MISSION_CORE_fnc_assaultServerHint;
@@ -679,16 +704,28 @@ MISSION_CORE_fnc_assaultServerRERecruit = {
     _grp setVariable ["MISSION_CORE_BLUFOR", true];
     _grp setVariable ["MISSION_CORE_ORDER", "attack"];
 
-    if (!(vehicle (leader _grp) != leader _grp) && { count _wps > 0 }) then {
-        private _usedTransport = [_grp, _wps, _targetPos, _caller] call MISSION_CORE_fnc_serverSpawnTransport;
-        if (!_usedTransport) then {
+    // Arty re-recruit: a rebuilt artillery platoon must go back through serverArtyDeploy, NOT the
+    // normal assault-waypoint path. serverArtyDeploy parks every gun at the best standoff and
+    // re-registers each vehicle into MISSION_CORE_ARTY_CTRL - without this branch the new tubes were
+    // sent marching to the objective and never fired again (the previous tubes' netId entries had
+    // already been pruned when they died). Mirrors the arty handling in RequestNew / RequestIdle.
+    private _isArty = [_template] call MISSION_CORE_fnc_serverIsArtyTemplate;
+    private _newStatus = "active";
+    if (_isArty) then {
+        [_grp, _targetPos, _spawnPos] call MISSION_CORE_fnc_serverArtyDeploy;
+        _newStatus = "hold";
+    } else {
+        if (!(vehicle (leader _grp) != leader _grp) && { count _wps > 0 }) then {
+            private _usedTransport = [_grp, _wps, _targetPos, _caller] call MISSION_CORE_fnc_serverSpawnTransport;
+            if (!_usedTransport) then {
+                [netId _grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypointsNet;
+            };
+        } else {
             [netId _grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypointsNet;
         };
-    } else {
-        [netId _grp, _wps, _targetPos] call MISSION_CORE_fnc_applyAssaultWaypointsNet;
     };
 
-    MISSION_CORE_ATTACK_GROUPS set [_wipedId, [_grp, _target, _wps, _template, WEST, "active", _targetPos]];
+    MISSION_CORE_ATTACK_GROUPS set [_wipedId, [_grp, _target, _wps, _template, WEST, _newStatus, _targetPos]];
     if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
     MISSION_CORE_SPAWNED_GROUPS pushBack _grp;
     if (isNil "MISSION_CORE_ASSAULT_OWNERS") then { MISSION_CORE_ASSAULT_OWNERS = createHashMap; };
@@ -696,6 +733,55 @@ MISSION_CORE_fnc_assaultServerRERecruit = {
 
     [_caller, format ["Group #%1 re-recruited! %2 men -> %3 (-%4 MP)", _wipedId, _unitCount, _target, _cost]] call MISSION_CORE_fnc_assaultServerHint;
     call MISSION_CORE_fnc_assaultServerMirror;
+};
+
+// RE-RECRUIT REQUEST: [player, wipedGroupId] - reuses the wiped id.
+MISSION_CORE_fnc_assaultServerRERecruit = {
+    params ["_caller", "_wipedId"];
+    if (isNull _caller) exitWith {};
+    if !(alive _caller) exitWith {};
+    if !([_caller] call MISSION_CORE_fnc_serverCallerCanRecruit) exitWith { [_caller, "Too far from base."] call MISSION_CORE_fnc_assaultServerHint; };
+    if (isNil "MISSION_CORE_ATTACK_GROUPS") exitWith { [_caller, "No wiped groups to re-recruit."] call MISSION_CORE_fnc_assaultServerHint; };
+    private _data = MISSION_CORE_ATTACK_GROUPS getOrDefault [_wipedId, []];
+    if (count _data == 0) exitWith { [_caller, "That group no longer exists."] call MISSION_CORE_fnc_assaultServerHint; };
+    _data params ["_oldGrp", "_target", "_wps", "_template", "_side", "_status", "_targetPos"];
+    if (_status != "wiped") exitWith {};
+
+    private _locIdx = MISSION_CORE_LOCATIONS findIf { (_x select 0) == _target };
+    if (_locIdx < 0) exitWith { [_caller, "Target no longer exists."] call MISSION_CORE_fnc_assaultServerHint; };
+    if (((MISSION_CORE_LOCATIONS select _locIdx) select 5) == WEST) exitWith {
+        [_caller, format ["%1 is already under BLUFOR control!", _target]] call MISSION_CORE_fnc_assaultServerHint;
+    };
+
+    _template params ["_grpName", "_grpUnits", "_unitCount", ["_subCat", ""], ["_catName", ""]];
+    private _costPer = if (isNil "MISSION_CORE_MANPOWER_PER_UNIT") then { 10 } else { MISSION_CORE_MANPOWER_PER_UNIT };
+    private _cost = _unitCount * _costPer;
+    if !([_cost] call MISSION_CORE_fnc_drawManpower) exitWith {
+        [_caller, format ["Not enough manpower! Need %1 MP.", _cost]] call MISSION_CORE_fnc_assaultServerHint;
+    };
+
+    private _spawnPos = getPosATL _caller;
+    private _srcName = "";
+    {
+        if ((_x select 5) == WEST) then {
+            private _mPos = ((_x select 1) select 0);
+            private _mSize = ((_x select 1) select 1);
+            private _a = if (count _mSize > 0) then { _mSize select 0 } else { 200 };
+            private _b = if (count _mSize > 1) then { _mSize select 1 } else { 200 };
+            private _d = _caller distance _mPos;
+            if (_d < ((_a max _b) * 0.5 + 100)) exitWith { _spawnPos = _mPos; _srcName = _x select 0; };
+        };
+    } forEach MISSION_CORE_LOCATIONS;
+
+    // Queue gate: assault groups land on a ROAD COLUMN (spawned at the marker center, then
+    // road-aligned); they do NOT use the cached flat spots. So the gate asks the column finder for
+    // one clean road spot per LandVehicle in the template - the WHOLE group must fit before it is
+    // released, and it drains only when that many spots free up. Manpower is already charged.
+    private _vehCount = { _x isKindOf "LandVehicle" } count (_template select 1);
+    private _spawned = [_srcName, "MISSION_CORE_fnc_assaultServerRERecruitSpawnNow", [_caller, side _caller, _wipedId, _template, _target, _wps, _spawnPos, _targetPos, _cost], _caller, "MISSION_CORE_fnc_assaultMarkerColumnClear", [_srcName, _vehCount]] call MISSION_CORE_fnc_queueRecruitVehicleSpawn;
+    if (!_spawned) then {
+        [_caller, format ["Safe spawn spots at %1 are occupied - group #%2 queued, it deploys as soon as %3 vehicle slot(s) free.", _srcName, _wipedId, _vehCount]] call MISSION_CORE_fnc_assaultServerHint;
+    };
 };
 
 // RELEASE STAGED REQUEST: [player|objNull, onlyTargets]. objNull caller = auto-advance

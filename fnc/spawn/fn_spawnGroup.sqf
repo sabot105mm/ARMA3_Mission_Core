@@ -70,8 +70,10 @@ MISSION_CORE_fnc_spawnGroup = {
                 // ONE-STOP SAFE VEHICLE SPAWN: wrecks near the spot deleted + living-vehicle (crewed
                 // or empty) check + re-roll + global dead purge + road alignment all in one call.
                 private _veh = [_uClass, _vehPos] call MISSION_CORE_fnc_safeVehicleSpawn;
-                _grp addVehicle _veh;
-                _vehList pushBack _veh;
+                if (!isNull _veh) then {
+                    _grp addVehicle _veh;
+                    _vehList pushBack _veh;
+                };
             };
         };
     } forEach _units;

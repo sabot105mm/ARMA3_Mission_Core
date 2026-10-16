@@ -115,7 +115,7 @@ MISSION_CORE_fnc_requestReinforcement = {
         // pending count, so a burst that hoisted this would mint _groupCount legs in one go.
         private _footCap = ["footSquadCapSquads", 10] call MISSION_CORE_fnc_tune;
         if (!([EAST, "inf", _locPos] call MISSION_CORE_fnc_townCategoryCanUse) || { (([EAST] call MISSION_CORE_fnc_countFootSquads) + ([] call MISSION_CORE_fnc_countPendingAbstractLegs)) >= _footCap }) then {
-            ["MISSION_CORE_fnc_queuedReinforce", format ["reinf_%1_%2", _providerName, _locName], [EAST, _x, _spawnPos, _factionData select 3, _importance, _locPos, _mSize, _providerName]] call MISSION_CORE_fnc_enqueueSpawn;
+            ["MISSION_CORE_fnc_queuedReinforce", format ["reinf_%1_%2", _providerName, _locName], [EAST, _x, _spawnPos, _factionData select 3, _importance, _locPos, _mSize, _providerName, _locName]] call MISSION_CORE_fnc_enqueueSpawn;
         } else {
 // LONG HAUL? Send it as an abstract leg instead of putting a squad on the map.
             // Only trips at 1500m+ (reinforceAbstractMinDist) and only when both ends are named
@@ -145,8 +145,11 @@ MISSION_CORE_fnc_requestReinforcement = {
                     if (!isNull _g) then {
                         _g setVariable ["MISSION_CORE_MARKER_CENTER", _row select 3];
                         if (isNil "MISSION_CORE_SPAWNED_GROUPS") then { MISSION_CORE_SPAWNED_GROUPS = []; };
-                        MISSION_CORE_SPAWNED_GROUPS pushBack _g;
-                        // THE SUPPLY FOLLOWS THE MEN. startConvoy debits the provider, so for a
+MISSION_CORE_SPAWNED_GROUPS pushBack _g;
+                    // Raised over open water (a strait / island hop)? Embark the squad into
+                    // boats sized to fit it before anyone swims. No-op on dry land.
+                    [_g, _at] call MISSION_CORE_fnc_mountFootInBoats;
+                    // THE SUPPLY FOLLOWS THE MEN. startConvoy debits the provider, so for a
                         // leg it runs HERE - when the squad exists - and not at leg dispatch.
                         // One convoy of one, exactly what the direct path contributes per squad
                         // via _supplyGiven. PERMANENT RULE preserved: a recipient that is
@@ -155,8 +158,12 @@ MISSION_CORE_fnc_requestReinforcement = {
                         // record, so a provider whose pool moved on in the meantime simply
                         // gets no truck - it is never pushed below zero.
                         if (!isNil "MISSION_CORE_CONTESTED" && { !((_pl select 5) in MISSION_CORE_CONTESTED) }) then {
-                            [_pl select 4, _pl select 5, 1] call MISSION_CORE_fnc_startConvoy;
-                            diag_log format ["ABSTRACT LEG: reinf %1 -> %2 convoy dispatched (1 supply) - squad spawned", _pl select 4, _pl select 5];
+                            private _sentConv = [_pl select 4, _pl select 5, 1] call MISSION_CORE_fnc_startConvoy;
+                            if (_sentConv) then {
+                                diag_log format ["ABSTRACT LEG: reinf %1 -> %2 convoy dispatched (1 supply) - squad spawned", _pl select 4, _pl select 5];
+                            } else {
+                                diag_log format ["ABSTRACT LEG: reinf %1 -> %2 supply convoy refused - recipient contested or BLUFOR-held", _pl select 4, _pl select 5];
+                            };
                         } else {
                             diag_log format ["ABSTRACT LEG: reinf %1 -> %2 supply convoy skipped - recipient contested", _pl select 4, _pl select 5];
                         };
@@ -224,7 +231,13 @@ MISSION_CORE_fnc_requestReinforcement = {
     if (!isNil "MISSION_CORE_CONTESTED" && { _locName in MISSION_CORE_CONTESTED }) then {
         diag_log format ["DYNAMIC SUPPLY REINF: %1 -> %2 supply convoy skipped - recipient contested", _providerName, _locName];
     } else {
-        [_providerName, _locName, _supplyGiven] call MISSION_CORE_fnc_startConvoy;
-        diag_log format ["DYNAMIC SUPPLY REINF: %1 -> %2 convoy dispatched (%3 supply)", _providerName, _locName, _supplyGiven];
+        private _sent = [_providerName, _locName, _supplyGiven] call MISSION_CORE_fnc_startConvoy;
+        if (_sent) then {
+            diag_log format ["DYNAMIC SUPPLY REINF: %1 -> %2 convoy dispatched (%3 supply)", _providerName, _locName, _supplyGiven];
+        } else {
+            // startConvoy refuses (contested again, or the recipient flipped BLUFOR since this
+            // reinforcement started) - the supply stays with the provider. Never report success.
+            diag_log format ["DYNAMIC SUPPLY REINF: %1 -> %2 convoy refused (%3 supply withheld)", _providerName, _locName, _supplyGiven];
+        };
     };
 };

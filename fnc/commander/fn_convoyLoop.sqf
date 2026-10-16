@@ -178,6 +178,17 @@ MISSION_CORE_fnc_startConvoy = {
         diag_log format ["DYNAMIC CONVOY: %1 -> %2 supply convoy skipped - recipient contested", _providerName, _recipientName];
         false
     };
+    // PERMANENT RULE: never ship supply INTO a BLUFOR-held marker. Detached from the contested
+    // gate above - a base the players just captured stays off the logistics network even when the
+    // retake has not turned it contested yet. The previous owner may still field men to win it
+    // back, but the truck never rolls its cargo into enemy-held ground. Reads the LIVE cached
+    // owner row: fn_captureMarkerForPlayers flips cached positions the instant ownership changes,
+    // so a convoy dispatched after a capture (like the re-sends fired by an in-flight
+    // reinforcement) is refused instead of delivering supply to the base that took it.
+    if ((_recvRec select 4) == WEST) exitWith {
+        diag_log format ["DYNAMIC CONVOY: %1 -> %2 supply convoy skipped - recipient is BLUFOR-held", _providerName, _recipientName];
+        false
+    };
     if (_cost < 0) then { _cost = _supplyAmount + ceil (_supplyAmount * 0.1); };
     private _provSupply = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_providerName, 0];
     MISSION_CORE_LOCATION_SUPPLY set [_providerName, _provSupply - _cost];
@@ -282,12 +293,21 @@ MISSION_CORE_fnc_convoyLoop = {
             if (_state == 0) then {
                 private _frac = ((time - _departTime) / _travelTime) min 1;
                 if (_frac >= 1) then {
-                    private _recvSupply = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_recv, 0];
-                    MISSION_CORE_LOCATION_SUPPLY set [_recv, _recvSupply + _amount];
-                    // Not pushing this record onto _keep retires it, which is what lets
-                    // reconTickHousekeep see the cid go stale and drop the intel marker.
-                    diag_log format ["DYNAMIC CONVOY: %1 -> %2 delivered %3 supply (abstract), record retired cid %4", _prov, _recv, _amount, _x select 10];
-                    if (!isNil "MISSION_CORE_fnc_reconDropRoute") then { [_roadPath] call MISSION_CORE_fnc_reconDropRoute; };
+                    // The destination may have flipped BLUFOR while this order was in flight. Never
+                    // hand cargo to the base that took it - void the order, refund the debit and
+                    // retire the record (an abstract order owns nothing to tear down).
+                    private _recvIdxA = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _recv };
+                    if (_recvIdxA >= 0 && { ((MISSION_CORE_CACHED_POSITIONS select _recvIdxA) select 4) == WEST }) then {
+                        MISSION_CORE_LOCATION_SUPPLY set [_prov, (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_prov, 0]) + (_x select 16)];
+                        diag_log format ["DYNAMIC CONVOY: %1 -> %2 voided at arrival (abstract) - recipient is BLUFOR-held, %3 supply refunded", _prov, _recv, _amount];
+                    } else {
+                        private _recvSupply = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_recv, 0];
+                        MISSION_CORE_LOCATION_SUPPLY set [_recv, _recvSupply + _amount];
+                        // Not pushing this record onto _keep retires it, which is what lets
+                        // reconTickHousekeep see the cid go stale and drop the intel marker.
+                        diag_log format ["DYNAMIC CONVOY: %1 -> %2 delivered %3 supply (abstract), record retired cid %4", _prov, _recv, _amount, _x select 10];
+                        if (!isNil "MISSION_CORE_fnc_reconDropRoute") then { [_roadPath] call MISSION_CORE_fnc_reconDropRoute; };
+                    };
                 } else {
                     private _curPos = [_roadPath, _cum, _frac] call MISSION_CORE_fnc_convoyPosAt;
                     private _nearPlayer = _players findIf { _x distance _curPos < 1200 } != -1;
@@ -376,15 +396,25 @@ MISSION_CORE_fnc_convoyLoop = {
                     private _leadIn = ((_x select 15) >= 0);
                     private _grace = (["convoyStragglerGrace", 90] call MISSION_CORE_fnc_tune);
                     if (_allClose || { _leadIn && { time - (_x select 15) > _grace } }) then {
-                        private _recvSupply = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_recv, 0];
-                        MISSION_CORE_LOCATION_SUPPLY set [_recv, _recvSupply + _amount];
-                        // Also retires the record (not pushed onto _keep) so the intel
-                        // marker is dropped by reconTickHousekeep on its next pass, and
-                        // retires the blue routine route polyline if recon drew one for it.
-                        diag_log format ["DYNAMIC CONVOY: %1 -> %2 delivered %3 supply, record retired cid %4", _prov, _recv, _amount, _x select 10];
-                        if (!isNil "MISSION_CORE_fnc_reconDropRoute") then { [_roadPath] call MISSION_CORE_fnc_reconDropRoute; };
-                        { if (!isNull _x) then { { deleteVehicle _y; } forEach crew _x; deleteVehicle _x; }; } forEach _trucks;
-                        { if (!isNull _x) then { { if (!isNull _y) then { deleteVehicle _y; }; } forEach units _x; deleteGroup _x; }; } forEach _groups;
+                        // Same arrival guard as the abstract path: if the destination flipped
+                        // BLUFOR while the column drove, wave it off instead of delivering - the
+                        // cargo is refunded (never given to the base that took it) and the trucks
+                        // are retired with the record.
+                        private _recvIdxB = MISSION_CORE_CACHED_POSITIONS findIf { (_x select 0) == _recv };
+                        if (_recvIdxB >= 0 && { ((MISSION_CORE_CACHED_POSITIONS select _recvIdxB) select 4) == WEST }) then {
+                            MISSION_CORE_LOCATION_SUPPLY set [_prov, (MISSION_CORE_LOCATION_SUPPLY getOrDefault [_prov, 0]) + (_x select 16)];
+                            diag_log format ["DYNAMIC CONVOY: %1 -> %2 voided at arrival - recipient is BLUFOR-held, %3 supply refunded", _prov, _recv, _amount];
+                        } else {
+                            private _recvSupply = MISSION_CORE_LOCATION_SUPPLY getOrDefault [_recv, 0];
+                            MISSION_CORE_LOCATION_SUPPLY set [_recv, _recvSupply + _amount];
+                            // Also retires the record (not pushed onto _keep) so the intel
+                            // marker is dropped by reconTickHousekeep on its next pass, and
+                            // retires the blue routine route polyline if recon drew one for it.
+                            diag_log format ["DYNAMIC CONVOY: %1 -> %2 delivered %3 supply, record retired cid %4", _prov, _recv, _amount, _x select 10];
+                            if (!isNil "MISSION_CORE_fnc_reconDropRoute") then { [_roadPath] call MISSION_CORE_fnc_reconDropRoute; };
+                        };
+                        { if (!isNull _x) then { { deleteVehicle _x; } forEach crew _x; deleteVehicle _x; }; } forEach _trucks;
+                        { if (!isNull _x) then { { if (!isNull _x) then { deleteVehicle _x; }; } forEach units _x; deleteGroup _x; }; } forEach _groups;
                     } else {
                         _keep pushBack _x;
                     };

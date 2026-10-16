@@ -229,7 +229,17 @@ MISSION_CORE_fnc_huntDispatch = {
     if (count _srcCands == 0) then { _srcCands = _cands; };  // all else fails: any marker
     // Sort nearest-first, keep only markers within the source range, cap to max contingents.
     _srcCands = [_srcCands, [], { (_x select 1) distance2D _lkp }, "ASCEND"] call BIS_fnc_sortBy;
+    // RANGE GATE. Sorted nearest-first, so element 0 is the closest source there is. Captured
+    // before the filter purely so the drop below can say HOW far away the nearest one was - the
+    // filter itself is the same distance test the sort already ran.
+    private _nearestD = if (count _srcCands > 0) then { (_srcCands select 0 select 1) distance2D _lkp } else { -1 };
     _srcCands = _srcCands select { (_x select 1) distance2D _lkp <= _srcRange };
+    // Every candidate sat beyond the range, so this dispatch is dropped rather than fielded. The
+    // list can only be empty here for that reason: an empty _cands exits further up, and the
+    // contain-the-aim-point filter above falls back to _cands when it removes everything.
+    if (count _srcCands == 0 && {_nearestD >= 0}) then {
+        diag_log format ["PLAYER HUNT: %1 dropped dispatch - nearest source %2m from the point it would hunt (max %3m)", _side, round _nearestD, round _srcRange];
+    };
     _srcCands resize (_maxN min (count _srcCands));
 
     // COUNTER-ATTACK CURVE PACING (HUNT GATE, PERMANENT RULE): a source marker ACTIVELY
@@ -851,6 +861,18 @@ MISSION_CORE_fnc_queuedHuntContingent = {
     // The player this hunt was queued for may be gone by the time its turn comes. Nothing to hunt.
     if (isNull _player) exitWith {
         diag_log format ["DYNAMIC QUEUE: dropped hunt from %1 - target player no longer exists", _srcName];
+        true
+    };
+
+    // RANGE GATE, RE-CHECKED AT SPAWN. huntDispatch filtered candidates on the aim point when it
+    // queued this job, but a job sits behind marker work and the player moves meanwhile, so the
+    // measure that matters is where the quarry IS now. Source -> live player position, over
+    // huntSourceMaxRange, drops the job before any man is spent. Returning true consumes it: the
+    // turn is over and the source stays un-latched for the next director tick.
+    private _maxRange = ["huntSourceMaxRange", 1500] call MISSION_CORE_fnc_tune;
+    private _nowD = _srcPos distance2D (getPos _player);
+    if (_nowD > _maxRange) exitWith {
+        diag_log format ["DYNAMIC QUEUE: dropped hunt from %1 - quarry now %2m away (max %3m)", _srcName, round _nowD, round _maxRange];
         true
     };
 
